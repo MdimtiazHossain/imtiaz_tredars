@@ -6,30 +6,36 @@ boundary is visible in the code.
 
 ## First run
 
-**1. Create the role and databases** (once, as a PostgreSQL superuser). Edit the
-password in the file first:
+**1. Create the role, databases and `.env` in one step.** You are asked for the
+`postgres` superuser password once. The application's own password is generated,
+written to `.env` and never needs to be typed or remembered:
 
 ```bash
-"C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres -f server/db/setup.sql
+cd server && npm install && npm run db:bootstrap
 ```
 
-**2. Configure the environment.** Copy `.env.example` to `.env` and fill it in.
-`.env` is gitignored and must never be committed.
+This is also the fix if the `business_suite` password is ever lost — it resets
+it. The script is idempotent, so re-running it is safe. `.env` is gitignored and
+must never be committed.
 
-```bash
-cp server/.env.example server/.env
-```
+<details>
+<summary>Manual alternative</summary>
 
-Generate a signing secret:
+Edit the password in `db/setup.sql`, run it as a superuser with `psql -U postgres
+-f server/db/setup.sql`, then copy `.env.example` to `.env` and put the same
+password into both connection strings. `npm run db:configure` does that half
+interactively and verifies it before saving. Generate a signing secret with:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 ```
 
-**3. Create the schema and demo data:**
+</details>
+
+**2. Create the schema and demo data:**
 
 ```bash
-cd server && npm install && npm run db:setup
+cd server && npm run db:setup
 ```
 
 `db:setup` resets the schema, applies every migration and seeds demo data. It
