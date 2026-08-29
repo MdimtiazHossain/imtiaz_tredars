@@ -1,0 +1,139 @@
+/* Base rules carried over verbatim from the imported design's <helmet> block. */
+@import './design-base.css';
+
+/*
+ * Everything below is additive. The design is a fixed desktop composition, so
+ * these rules only take effect at widths the design does not cover, and use
+ * !important solely because the design styles elements inline.
+ */
+
+/* ----------------------------------------------------------------- boot */
+
+.app-boot {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  color: #6E6A64;
+  font-size: 13px;
+}
+
+.app-boot-spinner {
+  width: 26px;
+  height: 26px;
+  border: 2px solid #E3E0DA;
+  border-top-color: #8A2233;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.app-error {
+  margin: 48px auto;
+  max-width: 560px;
+  padding: 18px 20px;
+  border: 1px solid #E3E0DA;
+  border-left: 3px solid #B3261E;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.app-error h1 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.app-error pre {
+  margin: 10px 0 0;
+  padding: 10px;
+  background: #FAF9F7;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: #6E6A64;
+}
+
+/* ------------------------------------------------------ tablet and below */
+
+/* Split panes stack once the fixed side column no longer fits comfortably. */
+@media (max-width: 1180px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .split-aside-first > :first-child {
+    order: -1;
+  }
+}
+
+/* The sidebar becomes a horizontal nav strip so navigation stays reachable
+   without introducing a toggle the design does not specify. */
+@media (max-width: 960px) {
+  .app-shell {
+    flex-direction: column !important;
+  }
+
+  .app-sidebar {
+    width: 100% !important;
+    height: auto !important;
+    position: static !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid #E3E0DA;
+  }
+
+  .app-sidebar nav {
+    display: flex !important;
+    gap: 12px;
+    overflow-x: auto !important;
+    padding: 10px 12px !important;
+  }
+
+  .app-sidebar nav > div {
+    margin-bottom: 0 !important;
+    flex: none;
+  }
+
+  .app-sidebar nav > div > div:first-child {
+    white-space: nowrap;
+  }
+
+  /* The "signed in as" footer duplicates the header identity on narrow screens. */
+  .app-sidebar > div:last-child {
+    display: none;
+  }
+
+  .app-header {
+    flex-wrap: wrap !important;
+    padding: 10px 14px !important;
+  }
+
+  .app-main {
+    padding: 16px 14px 40px !important;
+  }
+}
+
+@media (max-width: 620px) {
+  .app-header > div:first-child {
+    max-width: none !important;
+    flex-basis: 100% !important;
+  }
+}
+
+/* Wide tables always scroll within their own card rather than the page. */
+.dt-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ------------------------------------------------------------ a11y polish */
+
+button:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid rgba(138, 34, 51, 0.55);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-boot-spinner {
+    animation-duration: 3s;
+  }
+}

@@ -1,0 +1,1392 @@
+<div class="app-shell" style="display:flex;min-height:100vh;align-items:stretch">
+  <aside class="app-sidebar" style="width:246px;flex:none;background:#FBFAF8;border-right:1px solid #E3E0DA;display:flex;flex-direction:column;position:sticky;top:0;height:100vh">
+    <div style="display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid #E3E0DA">
+      <div style="width:32px;height:32px;flex:none;border-radius:8px;background:#8A2233;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px">M</div>
+      <div style="min-width:0">
+        <div style="font-size:13.5px;font-weight:700;letter-spacing:-0.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ co.name }}</div>
+        <div style="font-size:11px;color:#8C877F">{{ co.sys }} · {{ co.fy }}</div>
+      </div>
+    </div>
+    <nav style="flex:1;overflow-y:auto;padding:12px 10px 20px">
+      <sc-for list="{{ nav }}" as="g" hint-placeholder-count="6">
+        <div style="margin-bottom:14px">
+          <div style="padding:0 10px 6px;font-size:10.5px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#A39D93">{{ g.g }}</div>
+          <div style="display:flex;flex-direction:column;gap:1px">
+            <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="2">
+              <button onClick="{{ it.onClick }}" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;cursor:pointer;padding:8px 10px;border-radius:7px;background:{{ it.bg }};color:{{ it.color }};font-weight:{{ it.weight }};font-size:13px;position:relative" style-hover="background:#F1EFEA">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.9"><path d="{{ it.icon }}"></path></svg>
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ it.label }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </nav>
+    <div style="padding:12px 14px;border-top:1px solid #E3E0DA;background:#F6F4F0">
+      <div style="font-size:11px;color:#8C877F;margin-bottom:4px">Signed in as</div>
+      <div style="font-size:12.5px;font-weight:600">{{ co.user }} · {{ role }}</div>
+    </div>
+  </aside>
+
+  <div class="app-body" style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <header class="app-header" style="position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:14px;padding:11px 22px;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);border-bottom:1px solid #E3E0DA">
+      <div style="position:relative;flex:1;max-width:440px">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#8C877F" stroke-width="1.4" style="position:absolute;left:11px;top:10px"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>
+        <input value="{{ q }}" onChange="{{ onQ }}" placeholder="Search invoice, customer, batch, crop, supplier…" style="width:100%;padding:9px 12px 9px 33px;border:1px solid #E3E0DA;border-radius:8px;background:#FBFAF8" />
+        <sc-if value="{{ sr.open }}">
+          <div style="position:absolute;top:44px;left:0;right:0;background:#fff;border:1px solid #E3E0DA;border-radius:10px;box-shadow:0 14px 40px rgba(26,24,23,.14);max-height:400px;overflow:auto;padding:6px">
+            <sc-for list="{{ sr.groups }}" as="g" hint-placeholder-count="2">
+              <div style="padding:4px 0">
+                <div style="padding:5px 10px;font-size:10.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#A39D93">{{ g.g }}</div>
+                <sc-for list="{{ g.items }}" as="r" hint-placeholder-count="2">
+                  <button onClick="{{ r.onClick }}" style="display:block;width:100%;text-align:left;border:0;background:transparent;cursor:pointer;padding:7px 10px;border-radius:7px" style-hover="background:#F6F4F0">
+                    <div style="font-size:13px;font-weight:600">{{ r.l }}</div>
+                    <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ r.s }}</div>
+                  </button>
+                </sc-for>
+              </div>
+            </sc-for>
+            <sc-if value="{{ sr.empty }}">
+              <div style="padding:26px 14px;text-align:center">
+                <div style="font-size:13px;font-weight:600">No match for “{{ sr.q }}”</div>
+                <div style="font-size:12px;color:#8C877F;margin-top:4px">Try an invoice number, batch code, mobile number or party name.</div>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+      </div>
+      <div style="display:flex;align-items:center;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px">
+        <sc-for list="{{ bizTabs }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:6px 12px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }};box-shadow:{{ t.sh }}">{{ t.l }}</button>
+        </sc-for>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-left:auto;position:relative">
+        <button onClick="{{ onNotif }}" style="position:relative;width:36px;height:36px;border:1px solid #E3E0DA;border-radius:8px;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:#F6F4F0">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#4A463F" stroke-width="1.35" stroke-linecap="round"><path d="M4 6.5a4 4 0 018 0c0 3 1 4 1 4H3s1-1 1-4M6.5 13a1.6 1.6 0 003 0"></path></svg>
+          <span style="position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:#8A2233;color:#fff;font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center">{{ notifCount }}</span>
+        </button>
+        <button onClick="{{ onUser }}" style="display:flex;align-items:center;gap:8px;border:1px solid #E3E0DA;border-radius:8px;background:#fff;cursor:pointer;padding:5px 10px 5px 6px" style-hover="background:#F6F4F0">
+          <span style="width:26px;height:26px;border-radius:7px;background:#1F4D2E;color:#fff;font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center">{{ co.init }}</span>
+          <span style="font-size:12.5px;font-weight:600">{{ role }}</span>
+        </button>
+        <sc-if value="{{ notifOpen }}">
+          <div style="position:absolute;top:44px;right:0;width:344px;background:#fff;border:1px solid #E3E0DA;border-radius:10px;box-shadow:0 14px 40px rgba(26,24,23,.14);overflow:hidden;z-index:40">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid #E3E0DA;background:#FAF9F7">
+              <span style="font-size:12.5px;font-weight:700">Notifications</span>
+              <span style="font-size:11.5px;color:#8C877F">{{ pendText }} approval</span>
+            </div>
+            <sc-for list="{{ notifs }}" as="n" hint-placeholder-count="4">
+              <button onClick="{{ n.onClick }}" style="display:flex;gap:10px;width:100%;text-align:left;border:0;border-bottom:1px solid #F0EEE9;background:transparent;cursor:pointer;padding:11px 14px" style-hover="background:#FAF9F7">
+                <span style="width:7px;height:7px;border-radius:50%;flex:none;margin-top:5px;background:{{ n.c }}"></span>
+                <span style="flex:1;min-width:0">
+                  <span style="display:block;font-size:12.5px;font-weight:600">{{ n.t }}</span>
+                  <span style="display:block;font-size:12px;color:#6E6A64;margin-top:2px">{{ n.d }}</span>
+                </span>
+                <span style="font-size:11px;color:#A39D93;flex:none">{{ n.ago }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ userOpen }}">
+          <div style="position:absolute;top:44px;right:0;width:240px;background:#fff;border:1px solid #E3E0DA;border-radius:10px;box-shadow:0 14px 40px rgba(26,24,23,.14);padding:12px 14px;z-index:40">
+            <div style="font-size:13px;font-weight:700">{{ co.user }}</div>
+            <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ role }} · {{ co.fy }}</div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid #F0EEE9;font-size:12px;color:#6E6A64">Role is a tweakable prop — switch it in Tweaks to see permission-based navigation.</div>
+          </div>
+        </sc-if>
+      </div>
+    </header>
+
+    <main class="app-main" style="flex:1;min-width:0;padding:20px 22px 48px">
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px">
+        <div>
+          <div style="font-size:11.5px;color:#8C877F;margin-bottom:5px">{{ co.name }} <span style="color:#CFC9C0">/</span> {{ titleMain }}</div>
+          <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.02em">{{ titleMain }}</h1>
+          <div style="margin-top:4px;font-size:13px;color:#6E6A64">{{ titleSub }}</div>
+        </div>
+      </div>
+
+      <sc-if value="{{ is.dashboard }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(226px,1fr));gap:12px">
+            <sc-for list="{{ dash.kpis }}" as="k" hint-placeholder-count="8">
+              <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:14px 15px">
+                <div style="font-size:11.5px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;color:#8C877F">{{ k.k }}</div>
+                <div style="margin-top:9px;font-family:'Roboto Mono',monospace;font-size:20px;font-weight:600;letter-spacing:-0.02em">{{ k.v }}</div>
+                <div style="margin-top:3px;font-size:11.5px;color:#A39D93">{{ k.sub }} · {{ k.note }}</div>
+                <div style="margin-top:8px;font-size:11.5px;font-weight:600;color:{{ k.upColor }}">{{ k.up }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:12px 14px">
+            <span style="font-size:11.5px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#8C877F;margin-right:4px">Quick actions</span>
+            <sc-for list="{{ dash.actions }}" as="a" hint-placeholder-count="8">
+              <button onClick="{{ a.onClick }}" style="border:1px solid #E3E0DA;background:#FBFAF8;border-radius:7px;padding:7px 12px;font-size:12.5px;font-weight:500;cursor:pointer" style-hover="border-color:#8A2233;color:#8A2233;background:#FBEEF0">{{ a.l }}</button>
+            </sc-for>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px">
+            <sc-for list="{{ dash.panels }}" as="p" hint-placeholder-count="2">
+              <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+                <div style="padding:13px 16px;background:{{ p.bg }};border-bottom:1px solid #E3E0DA">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="width:8px;height:8px;border-radius:50%;background:{{ p.color }}"></span>
+                    <span style="font-size:14px;font-weight:700;color:{{ p.color }}">{{ p.name }}</span>
+                  </div>
+                  <div style="margin-top:4px;font-size:11.5px;color:#6E6A64;font-family:'Roboto Mono',monospace">{{ p.tag }}</div>
+                </div>
+                <div style="padding:6px 16px 14px">
+                  <sc-for list="{{ p.rows }}" as="r" hint-placeholder-count="6">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F5F3EF">
+                      <span style="font-size:12.5px;color:#6E6A64">{{ r.k }}</span>
+                      <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ r.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:16px 18px 12px">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+              <div style="font-size:14px;font-weight:700">Sales and purchase trend</div>
+              <div style="display:flex;gap:14px;font-size:11.5px;color:#6E6A64">
+                <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#8A2233"></span>Sales</span>
+                <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#D9D5CD"></span>Purchase</span>
+                <span style="font-family:'Roboto Mono',monospace">in lakh BDT</span>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-end;gap:18px;height:186px;margin-top:16px;padding:0 4px">
+              <sc-for list="{{ dash.chart }}" as="b" hint-placeholder-count="7">
+                <div title="{{ b.tip }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:7px">
+                  <div style="font-family:'Roboto Mono',monospace;font-size:10.5px;color:#8C877F">{{ b.sText }}</div>
+                  <div style="display:flex;align-items:flex-end;gap:4px;height:150px">
+                    <div style="width:20px;border-radius:3px 3px 0 0;background:#8A2233;height:{{ b.sH }}"></div>
+                    <div style="width:20px;border-radius:3px 3px 0 0;background:#D9D5CD;height:{{ b.pH }}"></div>
+                  </div>
+                  <div style="font-size:11.5px;color:#6E6A64;font-weight:500">{{ b.l }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:15px 17px">
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:12px">Top customers</div>
+              <sc-for list="{{ dash.topCust }}" as="r" hint-placeholder-count="5">
+                <div style="margin-bottom:11px">
+                  <div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;margin-bottom:5px">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.n }}</span>
+                    <span style="font-family:'Roboto Mono',monospace;font-weight:600;flex:none">{{ r.v }}</span>
+                  </div>
+                  <div style="height:5px;background:#F1EFEA;border-radius:3px;overflow:hidden"><div style="height:5px;background:#3A5A8C;width:{{ r.w }}"></div></div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:15px 17px">
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:12px">Top companies</div>
+              <sc-for list="{{ dash.topCo }}" as="r" hint-placeholder-count="5">
+                <div style="margin-bottom:11px">
+                  <div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;margin-bottom:5px">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.n }}</span>
+                    <span style="font-family:'Roboto Mono',monospace;font-weight:600;flex:none">{{ r.v }}</span>
+                  </div>
+                  <div style="height:5px;background:#F1EFEA;border-radius:3px;overflow:hidden"><div style="height:5px;background:#2F6B3C;width:{{ r.w }}"></div></div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:15px 17px">
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:12px">Receivable aging</div>
+              <sc-for list="{{ dash.aging }}" as="r" hint-placeholder-count="4">
+                <div style="margin-bottom:11px">
+                  <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px">
+                    <span>{{ r.k }}</span><span style="font-family:'Roboto Mono',monospace;font-weight:600">{{ r.v }}</span>
+                  </div>
+                  <div style="height:5px;background:#F1EFEA;border-radius:3px;overflow:hidden"><div style="height:5px;width:{{ r.w }};background:{{ r.c }}"></div></div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:15px 17px">
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:12px">Low stock and ageing stock</div>
+              <sc-for list="{{ dash.low }}" as="r" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <div style="flex:1;min-width:0">
+                    <div style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.n }}</div>
+                    <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ r.d }}</div>
+                  </div>
+                  <div style="width:64px;height:5px;background:#F1EFEA;border-radius:3px;overflow:hidden;flex:none"><div style="height:5px;background:#A96A08;width:{{ r.p }}"></div></div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-size:13.5px;font-weight:700;margin-bottom:10px">Recent transactions</div>
+            <dc-import name="DataTable" t="{{ dash.recent }}" hint-size="100%,300px"></dc-import>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.croppurchase }}">
+        <div class="split split-main-first" style="display:grid;grid-template-columns:minmax(0,1fr) 344px;gap:16px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;background:#EDF4EE;border-bottom:1px solid #E3E0DA">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span style="width:8px;height:8px;border-radius:50%;background:#2F6B3C"></span>
+                  <span style="font-size:13.5px;font-weight:700;color:#2F6B3C">Bulk Crop Business</span>
+                  <span style="font-size:12px;color:#6E6A64">· Farmer / supplier → our godown</span>
+                </div>
+                <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600">{{ cp.purNo }}</span>
+              </div>
+              <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:13px">
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Supplier / Farmer</span>
+                  <select value="{{ cp.v.sup }}" onChange="{{ onCP.sup }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ cp.sups }}" as="s" hint-placeholder-count="3"><option value="{{ s.code }}">{{ s.name }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Purchase date</span>
+                  <input type="date" value="{{ cp.v.date }}" onChange="{{ onCP.date }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Crop</span>
+                  <select value="{{ cp.v.crop }}" onChange="{{ onCP.crop }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ cp.crops }}" as="c" hint-placeholder-count="4"><option value="{{ c }}">{{ c }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Grade / quality</span>
+                  <select value="{{ cp.v.grade }}" onChange="{{ onCP.grade }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ cp.grades }}" as="g" hint-placeholder-count="3"><option value="{{ g }}">{{ g }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Warehouse</span>
+                  <select value="{{ cp.v.wh }}" onChange="{{ onCP.wh }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ cp.whs }}" as="w" hint-placeholder-count="3"><option value="{{ w }}">{{ w }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Batch / lot (auto)</span>
+                  <input value="{{ cp.batchId }}" readOnly="{{ true }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#F6F4F0;font-family:'Roboto Mono',monospace;color:#6E6A64" />
+                </label>
+              </div>
+              <div style="margin:0 16px 16px;padding:12px 14px;border:1px solid #E3E0DA;border-radius:8px;background:#FBFAF8;display:flex;flex-wrap:wrap;gap:22px">
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Mobile</div>
+                  <div style="font-size:12.5px;font-weight:600;font-family:'Roboto Mono',monospace">{{ cp.sup.mobile }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Location</div>
+                  <div style="font-size:12.5px;font-weight:600">{{ cp.sup.upazila }}, {{ cp.sup.district }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Payment account</div>
+                  <div style="font-size:12.5px;font-weight:600">{{ cp.sup.bank }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Purchased to date</div>
+                  <div style="font-size:12.5px;font-weight:600;font-family:'Roboto Mono',monospace">{{ cp.supPurText }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Outstanding payable</div>
+                  <div style="font-size:12.5px;font-weight:700;font-family:'Roboto Mono',monospace;color:#B3261E">{{ cp.supOutText }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:16px">
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:13px">Weighment and rate</div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:13px">
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Gross quantity</span>
+                  <input type="number" value="{{ cp.v.qty }}" onChange="{{ onCP.qty }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Unit</span>
+                  <select value="{{ cp.v.unit }}" onChange="{{ onCP.unit }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ cp.units }}" as="u" hint-placeholder-count="3"><option value="{{ u }}">{{ u }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Moisture / dust deduction %</span>
+                  <input type="number" value="{{ cp.v.moist }}" onChange="{{ onCP.moist }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Purchase rate per unit</span>
+                  <input type="number" value="{{ cp.v.rate }}" onChange="{{ onCP.rate }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:0 26px;margin-top:14px;padding-top:13px;border-top:1px dashed #E3E0DA">
+                <div style="padding:4px 0"><span style="font-size:12px;color:#8C877F">Gross</span> <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;margin-left:6px">{{ cp.grossText }}</span></div>
+                <div style="padding:4px 0"><span style="font-size:12px;color:#8C877F">Deduction</span> <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;margin-left:6px;color:#A96A08">{{ cp.dedText }}</span></div>
+                <div style="padding:4px 0"><span style="font-size:12px;color:#8C877F">Net accepted</span> <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:700;margin-left:6px;color:#2F6B3C">{{ cp.netText }}</span></div>
+                <div style="padding:4px 0"><span style="font-size:12px;color:#8C877F">Last purchase rate</span> <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;margin-left:6px">{{ cp.lastText }}</span></div>
+                <div style="padding:4px 0"><span style="font-size:12.5px;font-weight:600;color:{{ cp.diffColor }}">{{ cp.diffText }}</span></div>
+              </div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:16px">
+              <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:13px">
+                <div style="font-size:13.5px;font-weight:700">Additional cost to landed value</div>
+                <div style="font-size:12px;color:#8C877F">Everything here is absorbed into cost per unit</div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:13px">
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Transport</span>
+                  <input type="number" value="{{ cp.v.transport }}" onChange="{{ onCP.transport }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Loading</span>
+                  <input type="number" value="{{ cp.v.loading }}" onChange="{{ onCP.loading }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Unloading</span>
+                  <input type="number" value="{{ cp.v.unloading }}" onChange="{{ onCP.unloading }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Other expense</span>
+                  <input type="number" value="{{ cp.v.other }}" onChange="{{ onCP.other }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Advance paid to farmer</span>
+                  <input type="number" value="{{ cp.v.advance }}" onChange="{{ onCP.advance }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Note</span>
+                  <input value="{{ cp.v.note }}" onChange="{{ onCP.note }}" placeholder="Truck no, chalan, weighbridge slip" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff" />
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:10px">Recent crop purchases</div>
+              <dc-import name="DataTable" t="{{ cp.log }}" hint-size="100%,300px"></dc-import>
+            </div>
+          </div>
+
+          <div style="position:sticky;top:78px;display:flex;flex-direction:column;gap:12px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="padding:12px 16px;border-bottom:1px solid #E3E0DA;background:#FAF9F7;font-size:13px;font-weight:700">Landed cost calculation</div>
+              <div style="padding:6px 16px 14px">
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Net quantity</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cp.netText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Purchase value</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cp.pvText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">+ Additional cost</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cp.addText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:2px solid #E3E0DA">
+                  <span style="font-size:13px;font-weight:700">Total landed cost</span><span style="font-family:'Roboto Mono',monospace;font-size:15px;font-weight:700">{{ cp.totalText }}</span>
+                </div>
+                <div style="margin-top:14px;padding:14px;border-radius:9px;background:#EDF4EE;border:1px solid #CFE3D4">
+                  <div style="font-size:11.5px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#2F6B3C">Actual cost {{ cp.perUnitLabel }}</div>
+                  <div style="margin-top:6px;font-family:'Roboto Mono',monospace;font-size:26px;font-weight:600;letter-spacing:-0.02em;color:#1F4D2E">{{ cp.cpuText }}</div>
+                  <div style="margin-top:5px;font-size:12px;color:#4A6B52">Total cost ÷ net quantity. This is the figure the sales team must beat.</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:10px 0 0">
+                  <span style="font-size:12.5px;color:#6E6A64">Advance paid</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cp.advText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0 0">
+                  <span style="font-size:12.5px;color:#6E6A64">Balance payable to farmer</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:700;color:#B3261E">{{ cp.balText }}</span>
+                </div>
+              </div>
+            </div>
+            <sc-if value="{{ cp.needAppr }}">
+              <div style="display:flex;gap:10px;padding:12px 14px;border-radius:9px;background:#FDF3E4;border:1px solid #EFD9AE">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#A96A08" stroke-width="1.4" style="flex:none;margin-top:1px"><path d="M8 2.5 14 13H2zM8 6.5v3M8 11h.01"></path></svg>
+                <div>
+                  <div style="font-size:12.5px;font-weight:700;color:#8A5A00">Approval required</div>
+                  <div style="font-size:12px;color:#6E6A64;margin-top:3px">Value exceeds the {{ cp.limitText }} limit. Posting will route this to the approval queue.</div>
+                </div>
+              </div>
+            </sc-if>
+            <div style="display:flex;gap:9px">
+              <button onClick="{{ onCP.draft }}" style="flex:1;padding:11px;border:1px solid #E3E0DA;background:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#F6F4F0">Save draft</button>
+              <button onClick="{{ onCP.post }}" style="flex:1.4;padding:11px;border:0;background:#8A2233;color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#741C2B">Post purchase</button>
+            </div>
+            <div style="font-size:11.5px;color:#8C877F;line-height:1.5">Posting increases batch stock, creates the supplier payable and writes the accounts entry. Posted entries are reversed, never deleted.</div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.dealersales }}">
+        <div class="split split-main-first" style="display:grid;grid-template-columns:minmax(0,1fr) 344px;gap:16px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;background:#EDF1F8;border-bottom:1px solid #E3E0DA">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span style="width:8px;height:8px;border-radius:50%;background:#3A5A8C"></span>
+                  <span style="font-size:13.5px;font-weight:700;color:#3A5A8C">Dealer Business</span>
+                  <span style="font-size:12px;color:#6E6A64">· our stock → dealer / retailer</span>
+                </div>
+                <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600">{{ ds.invNo }}</span>
+              </div>
+              <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:13px">
+                <label style="display:block">
+                  <span style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">
+                    <span>Customer</span>
+                    <button onClick="{{ ds.onNew }}" style="border:0;background:transparent;padding:0;cursor:pointer;font-size:11.5px;font-weight:600;color:#8A2233" style-hover="text-decoration:underline">+ Create customer</button>
+                  </span>
+                  <select value="{{ ds.v.cust }}" onChange="{{ onDS.cust }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ ds.custs }}" as="c" hint-placeholder-count="4"><option value="{{ c.code }}">{{ c.name }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Invoice date</span>
+                  <input type="date" value="{{ ds.v.date }}" onChange="{{ onDS.date }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Salesperson</span>
+                  <input value="{{ ds.v.sp }}" onChange="{{ onDS.sp }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Warehouse</span>
+                  <select value="{{ ds.v.wh }}" onChange="{{ onDS.wh }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ ds.whs }}" as="w" hint-placeholder-count="3"><option value="{{ w }}">{{ w }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Payment terms</span>
+                  <input value="{{ ds.v.terms }}" onChange="{{ onDS.terms }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff" />
+                </label>
+              </div>
+              <div style="margin:0 16px 16px;padding:13px 15px;border:1px solid #E3E0DA;border-radius:8px;background:#FBFAF8">
+                <div style="display:flex;flex-wrap:wrap;gap:0 26px;align-items:flex-end">
+                  <div>
+                    <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Credit limit</div>
+                    <div style="font-size:13px;font-weight:600;font-family:'Roboto Mono',monospace">{{ ds.limitText }}</div>
+                  </div>
+                  <div>
+                    <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Current outstanding</div>
+                    <div style="font-size:13px;font-weight:600;font-family:'Roboto Mono',monospace">{{ ds.outText }}</div>
+                  </div>
+                  <div>
+                    <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Available credit after this invoice</div>
+                    <div style="font-size:13px;font-weight:700;font-family:'Roboto Mono',monospace;color:{{ ds.availColor }}">{{ ds.availText }}</div>
+                  </div>
+                  <div style="margin-left:auto;font-size:11.5px;color:#8C877F">Auto-filled from the customer master on selection</div>
+                </div>
+                <sc-if value="{{ ds.overLimit }}">
+                  <div style="display:flex;gap:9px;margin-top:12px;padding:10px 12px;border-radius:7px;background:#FBEEF0;border:1px solid #EFC3CB">
+                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#B3261E" stroke-width="1.4" style="flex:none;margin-top:1px"><circle cx="8" cy="8" r="6"></circle><path d="M8 5v3.5M8 10.6h.01"></path></svg>
+                    <div style="font-size:12.5px;color:#8A2233"><strong>Credit limit exceeded.</strong> This invoice needs management approval or a part payment before it can be posted.</div>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid #E3E0DA">
+                <div style="font-size:13.5px;font-weight:700">Items <span style="font-weight:400;color:#8C877F">· {{ ds.lineCount }}</span></div>
+                <button onClick="{{ ds.onAdd }}" style="padding:8px 13px;border:1px solid #8A2233;color:#8A2233;background:#FBEEF0;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#F6DEE2">+ Add item</button>
+              </div>
+              <div style="padding:4px 16px 16px">
+                <div style="display:flex;gap:10px;padding:9px 0 7px;border-bottom:1px solid #E3E0DA;font-size:10.5px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#8C877F">
+                  <div style="flex:2.4">Product</div><div style="width:78px;text-align:right">Qty</div><div style="width:92px;text-align:right">Rate</div>
+                  <div style="width:66px;text-align:right">Disc %</div><div style="width:66px;text-align:right">Bonus</div><div style="width:104px;text-align:right">Net amount</div><div style="width:26px"></div>
+                </div>
+                <sc-for list="{{ ds.lines }}" as="l" hint-placeholder-count="2">
+                  <div style="display:flex;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid #F5F3EF">
+                    <div style="flex:2.4;min-width:0">
+                      <select value="{{ l.pid }}" onChange="{{ l.onProduct }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;background:#fff">
+                        <sc-for list="{{ l.products }}" as="p" hint-placeholder-count="3"><option value="{{ p.code }}">{{ p.name }}</option></sc-for>
+                      </select>
+                      <div style="font-size:11px;color:#8C877F;margin-top:4px">In stock {{ l.stockText }} · last sale rate {{ l.lastText }}</div>
+                    </div>
+                    <div style="width:78px"><input type="number" value="{{ l.qtyVal }}" onChange="{{ l.onQty }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right" /></div>
+                    <div style="width:92px"><input type="number" value="{{ l.rateVal }}" onChange="{{ l.onRate }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right" /></div>
+                    <div style="width:66px"><input type="number" value="{{ l.discVal }}" onChange="{{ l.onDisc }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right" /></div>
+                    <div style="width:66px"><input type="number" value="{{ l.bonusVal }}" onChange="{{ l.onBonus }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right" /></div>
+                    <div style="width:104px;text-align:right;font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ l.netText }}</div>
+                    <button onClick="{{ l.onDel }}" style="width:26px;height:26px;flex:none;border:1px solid #E3E0DA;background:#fff;border-radius:6px;cursor:pointer;color:#8C877F;font-size:14px;line-height:1" style-hover="border-color:#B3261E;color:#B3261E">×</button>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+
+          <div style="position:sticky;top:78px;display:flex;flex-direction:column;gap:12px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="padding:12px 16px;border-bottom:1px solid #E3E0DA;background:#FAF9F7;font-size:13px;font-weight:700">Invoice summary</div>
+              <div style="padding:6px 16px 14px">
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Gross sales</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ ds.grossText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Discount</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;color:#A96A08">{{ ds.discText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:2px solid #E3E0DA">
+                  <span style="font-size:13px;font-weight:700">Net invoice</span><span style="font-family:'Roboto Mono',monospace;font-size:15px;font-weight:700">{{ ds.netText }}</span>
+                </div>
+                <sc-if value="{{ ds.showProfit }}" hint-placeholder-val="{{ true }}">
+                  <div style="margin-top:13px;padding:13px;border-radius:9px;background:#EDF1F8;border:1px solid #CBD8EA">
+                    <div style="display:flex;justify-content:space-between">
+                      <span style="font-size:12px;color:#3A5A8C">Cost of goods</span><span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600">{{ ds.costText }}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-top:8px;align-items:baseline">
+                      <span style="font-size:12.5px;font-weight:700;color:#2A4470">Gross profit</span>
+                      <span style="font-family:'Roboto Mono',monospace;font-size:19px;font-weight:700;color:{{ ds.profitColor }}">{{ ds.profitText }}</span>
+                    </div>
+                    <div style="margin-top:4px;text-align:right;font-size:11.5px;color:#4A6280">Margin {{ ds.marginText }}</div>
+                  </div>
+                </sc-if>
+                <label style="display:block;margin-top:14px">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Received now (cash / bKash / bank)</span>
+                  <input type="number" value="{{ ds.v.paid }}" onChange="{{ onDS.paid }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                </label>
+                <div style="display:flex;justify-content:space-between;padding:11px 0 0">
+                  <span style="font-size:12.5px;color:#6E6A64">Balance receivable</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:700;color:#B3261E">{{ ds.dueText }}</span>
+                </div>
+              </div>
+            </div>
+            <button onClick="{{ ds.onPost }}" style="padding:12px;border:0;background:#8A2233;color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#741C2B">Post invoice</button>
+            <sc-if value="{{ ds.modal }}">
+              <div style="position:fixed;inset:0;z-index:60;background:rgba(26,24,23,.34);display:flex;align-items:flex-start;justify-content:center;padding:64px 20px;overflow:auto">
+                <div style="width:100%;max-width:620px;background:#fff;border:1px solid #E3E0DA;border-radius:12px;box-shadow:0 24px 60px rgba(26,24,23,.24);overflow:hidden">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #E3E0DA;background:#FAF9F7">
+                    <div>
+                      <div style="font-size:14.5px;font-weight:700">New customer</div>
+                      <div style="font-size:11.5px;color:#8C877F;margin-top:2px">Saved to the shared customer master and selected on this invoice</div>
+                    </div>
+                    <button onClick="{{ ds.onCancel }}" style="width:28px;height:28px;border:1px solid #E3E0DA;background:#fff;border-radius:7px;cursor:pointer;color:#6E6A64;font-size:15px;line-height:1" style-hover="border-color:#B3261E;color:#B3261E">×</button>
+                  </div>
+                  <div style="padding:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:13px">
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Customer name *</span>
+                      <input value="{{ ds.nc.name }}" onChange="{{ onNC.name }}" placeholder="Messrs. Karim Traders" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px" />
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Name in Bangla</span>
+                      <input value="{{ ds.nc.bn }}" onChange="{{ onNC.bn }}" placeholder="মেসার্স করিম ট্রেডার্স" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px" />
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Customer type</span>
+                      <select value="{{ ds.nc.type }}" onChange="{{ onNC.type }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                        <sc-for list="{{ ds.types }}" as="t" hint-placeholder-count="4"><option value="{{ t }}">{{ t }}</option></sc-for>
+                      </select>
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Contact person</span>
+                      <input value="{{ ds.nc.person }}" onChange="{{ onNC.person }}" placeholder="Md. Karim Uddin" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px" />
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Mobile *</span>
+                      <input value="{{ ds.nc.mobile }}" onChange="{{ onNC.mobile }}" placeholder="01XXX-XXXXXX" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">District</span>
+                      <select value="{{ ds.nc.district }}" onChange="{{ onNC.district }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                        <sc-for list="{{ ds.districts }}" as="d" hint-placeholder-count="4"><option value="{{ d }}">{{ d }}</option></sc-for>
+                      </select>
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Upazila</span>
+                      <input value="{{ ds.nc.upazila }}" onChange="{{ onNC.upazila }}" placeholder="Sherpur" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px" />
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Credit limit</span>
+                      <input type="number" value="{{ ds.nc.limit }}" onChange="{{ onNC.limit }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Credit days</span>
+                      <input type="number" value="{{ ds.nc.days }}" onChange="{{ onNC.days }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                    </label>
+                    <label style="display:block">
+                      <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Opening balance (due)</span>
+                      <input type="number" value="{{ ds.nc.opening }}" onChange="{{ onNC.opening }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                    </label>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-top:1px solid #E3E0DA;background:#FAF9F7">
+                    <span style="font-size:11.5px;color:#8C877F">Customer code is generated automatically</span>
+                    <span style="display:flex;gap:9px">
+                      <button onClick="{{ ds.onCancel }}" style="padding:10px 15px;border:1px solid #E3E0DA;background:#fff;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#F1EFEA">Cancel</button>
+                      <button onClick="{{ ds.onSave }}" style="padding:10px 17px;border:0;background:#8A2233;color:#fff;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#741C2B">Save customer</button>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+            <div style="font-size:11.5px;color:#8C877F;line-height:1.5">Posting reduces batch stock, raises the customer receivable, records the collection and computes line-wise profit.</div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.dealerpurchase }}">
+        <div class="split split-main-first" style="display:grid;grid-template-columns:minmax(0,1fr) 344px;gap:16px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;background:#EDF1F8;border-bottom:1px solid #E3E0DA">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span style="width:8px;height:8px;border-radius:50%;background:#3A5A8C"></span>
+                  <span style="font-size:13.5px;font-weight:700;color:#3A5A8C">Dealer Business</span>
+                  <span style="font-size:12px;color:#6E6A64">· principal company → our stock</span>
+                </div>
+                <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600">{{ dp.purNo }}</span>
+              </div>
+              <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:13px">
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Principal company</span>
+                  <select value="{{ dp.v.co }}" onChange="{{ onDP.co }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ dp.cos }}" as="c" hint-placeholder-count="4"><option value="{{ c.code }}">{{ c.name }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Company invoice no</span>
+                  <input value="{{ dp.v.inv }}" onChange="{{ onDP.inv }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Purchase date</span>
+                  <input type="date" value="{{ dp.v.date }}" onChange="{{ onDP.date }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Receiving warehouse</span>
+                  <select value="{{ dp.v.wh }}" onChange="{{ onDP.wh }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ dp.whs }}" as="w" hint-placeholder-count="3"><option value="{{ w }}">{{ w }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Payment terms</span>
+                  <input value="{{ dp.v.terms }}" onChange="{{ onDP.terms }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff" />
+                </label>
+              </div>
+              <div style="margin:0 16px 16px;padding:12px 15px;border:1px solid #E3E0DA;border-radius:8px;background:#FBFAF8;display:flex;flex-wrap:wrap;gap:0 26px">
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Contact person</div>
+                  <div style="font-size:12.5px;font-weight:600">{{ dp.co.person }} · {{ dp.co.mobile }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Credit days</div>
+                  <div style="font-size:12.5px;font-weight:600">{{ dp.co.days }} days</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Existing payable</div>
+                  <div style="font-size:12.5px;font-weight:600;font-family:'Roboto Mono',monospace">{{ dp.coBalText }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:3px">Payable after this bill</div>
+                  <div style="font-size:12.5px;font-weight:700;font-family:'Roboto Mono',monospace;color:#B3261E">{{ dp.payableText }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid #E3E0DA">
+                <div style="font-size:13.5px;font-weight:700">Items <span style="font-weight:400;color:#8C877F">· free quantity lowers the effective rate</span></div>
+                <button onClick="{{ dp.onAdd }}" style="padding:8px 13px;border:1px solid #8A2233;color:#8A2233;background:#FBEEF0;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#F6DEE2">+ Add item</button>
+              </div>
+              <div style="padding:4px 16px 16px">
+                <div style="display:flex;gap:10px;padding:9px 0 7px;border-bottom:1px solid #E3E0DA;font-size:10.5px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#8C877F">
+                  <div style="flex:2.4">Product</div><div style="width:72px;text-align:right">Qty</div><div style="width:62px;text-align:right">Free</div>
+                  <div style="width:86px;text-align:right">Rate</div><div style="width:62px;text-align:right">Disc %</div><div style="width:100px;text-align:right">Net amount</div><div style="width:26px"></div>
+                </div>
+                <sc-for list="{{ dp.lines }}" as="l" hint-placeholder-count="2">
+                  <div style="display:flex;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid #F5F3EF">
+                    <div style="flex:2.4;min-width:0">
+                      <select value="{{ l.pid }}" onChange="{{ l.onProduct }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;background:#fff">
+                        <sc-for list="{{ l.products }}" as="p" hint-placeholder-count="3"><option value="{{ p.code }}">{{ p.name }}</option></sc-for>
+                      </select>
+                      <div style="font-size:11px;color:#8C877F;margin-top:4px">In stock {{ l.stockText }} · last purchase rate {{ l.lastText }} · effective {{ l.effText }}</div>
+                    </div>
+                    <div style="width:72px"><input type="number" value="{{ l.qtyVal }}" onChange="{{ l.onQty }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right" /></div>
+                    <div style="width:62px"><input type="number" value="{{ l.freeVal }}" onChange="{{ l.onFree }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right" /></div>
+                    <div style="width:86px"><input type="number" value="{{ l.rateVal }}" onChange="{{ l.onRate }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right" /></div>
+                    <div style="width:62px"><input type="number" value="{{ l.discVal }}" onChange="{{ l.onDisc }}" style="width:100%;padding:8px 9px;border:1px solid #E3E0DA;border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right" /></div>
+                    <div style="width:100px;text-align:right;font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ l.netText }}</div>
+                    <button onClick="{{ l.onDel }}" style="width:26px;height:26px;flex:none;border:1px solid #E3E0DA;background:#fff;border-radius:6px;cursor:pointer;color:#8C877F;font-size:14px;line-height:1" style-hover="border-color:#B3261E;color:#B3261E">×</button>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:16px">
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:13px">Landed cost additions</div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:13px">
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Transport</span>
+                  <input type="number" value="{{ dp.v.transport }}" onChange="{{ onDP.transport }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Other cost</span>
+                  <input type="number" value="{{ dp.v.other }}" onChange="{{ onDP.other }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div style="position:sticky;top:78px;display:flex;flex-direction:column;gap:12px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="padding:12px 16px;border-bottom:1px solid #E3E0DA;background:#FAF9F7;font-size:13px;font-weight:700">Purchase summary</div>
+              <div style="padding:6px 16px 14px">
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Gross amount</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ dp.grossText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Trade discount</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;color:#2F6B3C">{{ dp.discText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Transport &amp; other</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ dp.addlText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:13px;font-weight:700">Net purchase</span><span style="font-family:'Roboto Mono',monospace;font-size:15px;font-weight:700">{{ dp.netText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0 0">
+                  <span style="font-size:12.5px;color:#6E6A64">Free goods received</span><span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600;color:#2F6B3C">{{ dp.freeText }}</span>
+                </div>
+              </div>
+            </div>
+            <sc-if value="{{ dp.needAppr }}">
+              <div style="display:flex;gap:10px;padding:12px 14px;border-radius:9px;background:#FDF3E4;border:1px solid #EFD9AE">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#A96A08" stroke-width="1.4" style="flex:none;margin-top:1px"><path d="M8 2.5 14 13H2zM8 6.5v3M8 11h.01"></path></svg>
+                <div>
+                  <div style="font-size:12.5px;font-weight:700;color:#8A5A00">Approval required</div>
+                  <div style="font-size:12px;color:#6E6A64;margin-top:3px">Above the {{ dp.limitText }} purchase limit.</div>
+                </div>
+              </div>
+            </sc-if>
+            <button onClick="{{ dp.onPost }}" style="padding:12px;border:0;background:#8A2233;color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#741C2B">Post purchase</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.inventory }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
+            <sc-for list="{{ inv.kpis }}" as="k" hint-placeholder-count="4">
+              <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:14px 15px">
+                <div style="font-size:11.5px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;color:#8C877F">{{ k.k }}</div>
+                <div style="margin-top:9px;font-family:'Roboto Mono',monospace;font-size:19px;font-weight:600">{{ k.v }}</div>
+                <div style="margin-top:3px;font-size:11.5px;color:#A39D93">{{ k.s }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+            <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px">
+              <sc-for list="{{ inv.tabs }}" as="t" hint-placeholder-count="3">
+                <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
+              </sc-for>
+            </div>
+            <div style="display:flex;align-items:center;gap:9px">
+              <span style="font-size:12px;color:#8C877F">Valuation</span>
+              <sc-for list="{{ valTabs }}" as="v" hint-placeholder-count="2">
+                <button onClick="{{ v.onClick }}" style="padding:7px 12px;border:1px solid {{ v.bd }};background:{{ v.bg }};color:{{ v.color }};border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer">{{ v.l }}</button>
+              </sc-for>
+              <span style="font-size:12px;color:#8C877F;margin-left:6px">Click a column header to sort</span>
+            </div>
+          </div>
+          <dc-import name="DataTable" t="{{ inv.table }}" hint-size="100%,520px"></dc-import>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.cropsales }}">
+        <div class="split split-main-first" style="display:grid;grid-template-columns:minmax(0,1fr) 344px;gap:16px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;background:#EDF4EE;border-bottom:1px solid #E3E0DA">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span style="width:8px;height:8px;border-radius:50%;background:#2F6B3C"></span>
+                  <span style="font-size:13.5px;font-weight:700;color:#2F6B3C">Bulk Crop Business</span>
+                  <span style="font-size:12px;color:#6E6A64">· our godown → buyer company</span>
+                </div>
+                <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600">{{ cs.salesNo }}</span>
+              </div>
+              <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:13px">
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Buyer company</span>
+                  <select value="{{ cs.v.buyer }}" onChange="{{ onCS.buyer }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ cs.buyers }}" as="b" hint-placeholder-count="4"><option value="{{ b }}">{{ b }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Sales date</span>
+                  <input type="date" value="{{ cs.v.date }}" onChange="{{ onCS.date }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Crop</span>
+                  <select value="{{ cs.v.crop }}" onChange="{{ onCS.crop }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff">
+                    <sc-for list="{{ cs.crops }}" as="c" hint-placeholder-count="4"><option value="{{ c }}">{{ c }}</option></sc-for>
+                  </select>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Sales rate per MT</span>
+                  <input type="number" value="{{ cs.v.rate }}" onChange="{{ onCS.rate }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#fff;font-family:'Roboto Mono',monospace" />
+                </label>
+              </div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:13px 16px;border-bottom:1px solid #E3E0DA">
+                <div>
+                  <div style="font-size:13.5px;font-weight:700">Allocate from batch stock</div>
+                  <div style="font-size:12px;color:#8C877F;margin-top:2px">Valuation method: {{ cs.valuation }} · weighted average cost {{ cs.avgCostText }}</div>
+                </div>
+                <div style="display:flex;align-items:flex-end;gap:8px">
+                  <label style="display:block">
+                    <span style="display:block;font-size:11px;font-weight:600;color:#6E6A64;margin-bottom:4px">Quantity to sell (MT)</span>
+                    <input type="number" value="{{ cs.v.target }}" onChange="{{ onCS.target }}" style="width:118px;padding:8px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                  </label>
+                  <button onClick="{{ onCS.auto }}" style="padding:9px 13px;border:1px solid #8A2233;color:#8A2233;background:#FBEEF0;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#F6DEE2">Auto-allocate FIFO</button>
+                  <button onClick="{{ onCS.clear }}" style="padding:9px 13px;border:1px solid #E3E0DA;background:#fff;border-radius:7px;font-size:12.5px;font-weight:500;cursor:pointer" style-hover="background:#F6F4F0">Clear</button>
+                </div>
+              </div>
+              <div style="padding:6px 16px 16px">
+                <sc-for list="{{ cs.rows }}" as="b" hint-placeholder-count="2">
+                  <div style="display:flex;align-items:center;gap:16px;padding:13px 0;border-bottom:1px solid #F5F3EF">
+                    <div style="flex:1.6;min-width:0">
+                      <div style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ b.id }}</div>
+                      <div style="font-size:11.5px;color:#8C877F;margin-top:3px">{{ b.grade }} · {{ b.wh }}</div>
+                    </div>
+                    <div style="flex:1.2;min-width:0">
+                      <div style="font-size:11px;color:#8C877F">Purchased from</div>
+                      <div style="font-size:12.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ b.supName }}</div>
+                    </div>
+                    <div style="width:96px;text-align:right">
+                      <div style="font-size:11px;color:#8C877F">Remaining</div>
+                      <div style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;margin-top:2px">{{ b.remText }}</div>
+                    </div>
+                    <div style="width:110px;text-align:right">
+                      <div style="font-size:11px;color:#8C877F">Landed cost</div>
+                      <div style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;margin-top:2px">{{ b.costText }}</div>
+                    </div>
+                    <div style="width:74px;text-align:right">
+                      <div style="font-size:11px;color:#8C877F">Age</div>
+                      <div style="font-size:12.5px;margin-top:2px">{{ b.ageText }}</div>
+                    </div>
+                    <div style="width:128px">
+                      <input type="number" value="{{ b.qtyVal }}" onChange="{{ b.onQty }}" placeholder="0.00" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace;text-align:right" />
+                      <div style="font-size:10.5px;color:#8C877F;margin-top:4px;text-align:right">{{ b.leftText }}</div>
+                    </div>
+                  </div>
+                </sc-for>
+                <sc-if value="{{ cs.over }}">
+                  <div style="display:flex;gap:10px;margin-top:13px;padding:11px 13px;border-radius:8px;background:#FBEEF0;border:1px solid #EFC3CB">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#B3261E" stroke-width="1.4" style="flex:none;margin-top:1px"><circle cx="8" cy="8" r="6"></circle><path d="M8 5v3.5M8 10.6h.01"></path></svg>
+                    <div style="font-size:12.5px;color:#8A2233"><strong>Allocation exceeds available stock.</strong> Reduce the quantity on the highlighted batch — the system will not let you sell stock you do not hold.</div>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:16px">
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:13px">Selling expense</div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:13px">
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Transport to buyer</span>
+                  <input type="number" value="{{ cs.v.transport }}" onChange="{{ onCS.transport }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">Other selling cost</span>
+                  <input type="number" value="{{ cs.v.other }}" onChange="{{ onCS.other }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:'Roboto Mono',monospace" />
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:10px">Recent crop sales</div>
+              <dc-import name="DataTable" t="{{ cs.log }}" hint-size="100%,280px"></dc-import>
+            </div>
+          </div>
+
+          <div style="position:sticky;top:78px;display:flex;flex-direction:column;gap:12px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+              <div style="padding:12px 16px;border-bottom:1px solid #E3E0DA;background:#FAF9F7;font-size:13px;font-weight:700">Profit on this sale</div>
+              <div style="padding:6px 16px 14px">
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Allocated quantity</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cs.allocText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Sales value</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cs.salesText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                  <span style="font-size:12.5px;color:#6E6A64">Cost of goods sold</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cs.cogsText }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:2px solid #E3E0DA">
+                  <span style="font-size:12.5px;color:#6E6A64">Selling expense</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cs.expText }}</span>
+                </div>
+                <sc-if value="{{ cs.showProfit }}" hint-placeholder-val="{{ true }}">
+                  <div style="margin-top:14px;padding:14px;border-radius:9px;background:#EDF4EE;border:1px solid #CFE3D4">
+                    <div style="font-size:11.5px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#2F6B3C">Gross profit</div>
+                    <div style="margin-top:6px;font-family:'Roboto Mono',monospace;font-size:26px;font-weight:600;letter-spacing:-0.02em;color:{{ cs.profitColor }}">{{ cs.profitText }}</div>
+                    <div style="display:flex;gap:18px;margin-top:9px">
+                      <div>
+                        <div style="font-size:11px;color:#4A6B52">Per MT</div>
+                        <div style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;margin-top:2px">{{ cs.perText }}</div>
+                      </div>
+                      <div>
+                        <div style="font-size:11px;color:#4A6B52">Margin</div>
+                        <div style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;margin-top:2px">{{ cs.marginText }}</div>
+                      </div>
+                      <div>
+                        <div style="font-size:11px;color:#4A6B52">Sale rate</div>
+                        <div style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;margin-top:2px">{{ cs.rateText }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+            <button onClick="{{ onCS.post }}" style="padding:12px;border:0;background:#8A2233;color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#741C2B">Post sale and issue stock</button>
+            <div style="font-size:11.5px;color:#8C877F;line-height:1.5">Stock leaves the selected batches, the buyer receivable is raised and batch-wise profit is written for the profit reports.</div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.customers }}">
+        <div class="split split-aside-first" style="display:grid;grid-template-columns:308px minmax(0,1fr);gap:16px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ cust.list }}" as="c" hint-placeholder-count="5">
+              <button onClick="{{ c.onClick }}" style="display:block;width:100%;text-align:left;cursor:pointer;padding:12px 14px;border:1px solid {{ c.bd }};background:{{ c.bg }};border-radius:9px" style-hover="border-color:#8A2233">
+                <div style="display:flex;justify-content:space-between;gap:10px">
+                  <span style="font-size:13px;font-weight:600">{{ c.name }}</span>
+                  <span style="font-family:'Roboto Mono',monospace;font-size:12px;font-weight:600;flex:none">{{ c.out }}</span>
+                </div>
+                <div style="font-size:11.5px;color:#8C877F;margin-top:3px">{{ c.bn }}</div>
+                <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ c.code }} · {{ c.meta }}</div>
+              </button>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:18px">
+              <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px">
+                <div>
+                  <div style="font-size:19px;font-weight:700;letter-spacing:-0.01em">{{ cust.c.name }}</div>
+                  <div style="font-size:13px;color:#6E6A64;margin-top:3px">{{ cust.c.bn }}</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:0 20px;margin-top:12px">
+                    <div style="font-size:12.5px;color:#6E6A64">Code <strong style="color:#1A1817;font-family:'Roboto Mono',monospace">{{ cust.c.code }}</strong></div>
+                    <div style="font-size:12.5px;color:#6E6A64">Type <strong style="color:#1A1817">{{ cust.c.type }}</strong></div>
+                    <div style="font-size:12.5px;color:#6E6A64">Contact <strong style="color:#1A1817">{{ cust.c.person }}</strong></div>
+                    <div style="font-size:12.5px;color:#6E6A64">Mobile <strong style="color:#1A1817;font-family:'Roboto Mono',monospace">{{ cust.c.mobile }}</strong></div>
+                    <div style="font-size:12.5px;color:#6E6A64">Area <strong style="color:#1A1817">{{ cust.c.upazila }}, {{ cust.c.district }}</strong></div>
+                    <div style="font-size:12.5px;color:#6E6A64">Terms <strong style="color:#1A1817">{{ cust.daysText }}</strong></div>
+                  </div>
+                </div>
+                <div style="width:238px;flex:none">
+                  <div style="font-size:11px;color:#8C877F;margin-bottom:5px">Credit utilisation</div>
+                  <div style="height:8px;background:#F1EFEA;border-radius:4px;overflow:hidden"><div style="height:8px;background:#8A2233;width:{{ cust.availW }}"></div></div>
+                  <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11.5px;color:#6E6A64">
+                    <span>Used {{ cust.outText }}</span><span>Limit {{ cust.limitText }}</span>
+                  </div>
+                  <div style="margin-top:8px;font-size:12.5px;font-weight:700;color:{{ cust.availColor }}">Available {{ cust.availText }}</div>
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px;padding-top:15px;border-top:1px solid #F0EEE9">
+                <div>
+                  <div style="font-size:11px;color:#8C877F">Total sales</div>
+                  <div style="font-family:'Roboto Mono',monospace;font-size:17px;font-weight:600;margin-top:4px">{{ cust.salesText }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F">Total collection</div>
+                  <div style="font-family:'Roboto Mono',monospace;font-size:17px;font-weight:600;margin-top:4px;color:#2F6B3C">{{ cust.collText }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F">Outstanding</div>
+                  <div style="font-family:'Roboto Mono',monospace;font-size:17px;font-weight:600;margin-top:4px;color:#B3261E">{{ cust.outText }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F">Last transaction</div>
+                  <div style="font-size:14px;font-weight:600;margin-top:6px">{{ cust.c.last }}</div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px;align-self:flex-start">
+              <sc-for list="{{ cust.tabs }}" as="t" hint-placeholder-count="3">
+                <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
+              </sc-for>
+            </div>
+            <sc-if value="{{ cust.isPur }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ cust.purchases }}" hint-size="100%,280px"></dc-import></sc-if>
+            <sc-if value="{{ cust.isPay }}"><dc-import name="DataTable" t="{{ cust.payments }}" hint-size="100%,280px"></dc-import></sc-if>
+            <sc-if value="{{ cust.isLed }}"><dc-import name="DataTable" t="{{ cust.ledger }}" hint-size="100%,340px"></dc-import></sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.suppliers }}">
+        <div class="split split-aside-first" style="display:grid;grid-template-columns:308px minmax(0,1fr);gap:16px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ sup.list }}" as="c" hint-placeholder-count="5">
+              <button onClick="{{ c.onClick }}" style="display:block;width:100%;text-align:left;cursor:pointer;padding:12px 14px;border:1px solid {{ c.bd }};background:{{ c.bg }};border-radius:9px" style-hover="border-color:#8A2233">
+                <div style="display:flex;justify-content:space-between;gap:10px">
+                  <span style="font-size:13px;font-weight:600">{{ c.name }}</span>
+                  <span style="font-family:'Roboto Mono',monospace;font-size:12px;font-weight:600;flex:none">{{ c.out }}</span>
+                </div>
+                <div style="font-size:11.5px;color:#8C877F;margin-top:3px">{{ c.bn }}</div>
+                <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ c.code }} · {{ c.meta }}</div>
+              </button>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:18px">
+              <div style="font-size:19px;font-weight:700;letter-spacing:-0.01em">{{ sup.s.name }}</div>
+              <div style="font-size:13px;color:#6E6A64;margin-top:3px">{{ sup.s.bn }}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:0 20px;margin-top:12px">
+                <div style="font-size:12.5px;color:#6E6A64">Code <strong style="color:#1A1817;font-family:'Roboto Mono',monospace">{{ sup.s.code }}</strong></div>
+                <div style="font-size:12.5px;color:#6E6A64">Type <strong style="color:#1A1817">{{ sup.s.type }}</strong></div>
+                <div style="font-size:12.5px;color:#6E6A64">Mobile <strong style="color:#1A1817;font-family:'Roboto Mono',monospace">{{ sup.s.mobile }}</strong></div>
+                <div style="font-size:12.5px;color:#6E6A64">Area <strong style="color:#1A1817">{{ sup.s.upazila }}, {{ sup.s.district }}</strong></div>
+                <div style="font-size:12.5px;color:#6E6A64">Payment <strong style="color:#1A1817">{{ sup.s.bank }}</strong></div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px;padding-top:15px;border-top:1px solid #F0EEE9">
+                <div>
+                  <div style="font-size:11px;color:#8C877F">Total purchase</div>
+                  <div style="font-family:'Roboto Mono',monospace;font-size:17px;font-weight:600;margin-top:4px">{{ sup.purText }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F">Total paid</div>
+                  <div style="font-family:'Roboto Mono',monospace;font-size:17px;font-weight:600;margin-top:4px;color:#2F6B3C">{{ sup.paidText }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F">Outstanding payable</div>
+                  <div style="font-family:'Roboto Mono',monospace;font-size:17px;font-weight:600;margin-top:4px;color:#B3261E">{{ sup.outText }}</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#8C877F">Last transaction</div>
+                  <div style="font-size:14px;font-weight:600;margin-top:6px">{{ sup.s.last }}</div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px;align-self:flex-start">
+              <sc-for list="{{ sup.tabs }}" as="t" hint-placeholder-count="2">
+                <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
+              </sc-for>
+            </div>
+            <sc-if value="{{ sup.isPur }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ sup.purchases }}" hint-size="100%,260px"></dc-import></sc-if>
+            <sc-if value="{{ sup.isPay }}"><dc-import name="DataTable" t="{{ sup.payments }}" hint-size="100%,240px"></dc-import></sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.companies }}">
+        <dc-import name="DataTable" t="{{ companiesTable }}" hint-size="100%,420px"></dc-import>
+      </sc-if>
+
+      <sc-if value="{{ is.accounts }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
+            <sc-for list="{{ acct.kpis }}" as="k" hint-placeholder-count="4">
+              <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:14px 15px">
+                <div style="font-size:11.5px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;color:#8C877F">{{ k.k }}</div>
+                <div style="margin-top:9px;font-family:'Roboto Mono',monospace;font-size:19px;font-weight:600">{{ k.v }}</div>
+                <div style="margin-top:3px;font-size:11.5px;color:#A39D93">{{ k.s }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px;align-self:flex-start">
+            <sc-for list="{{ acct.tabs }}" as="t" hint-placeholder-count="5">
+              <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
+            </sc-for>
+          </div>
+          <sc-if value="{{ acct.isRec }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ acct.rec }}" hint-size="100%,380px"></dc-import></sc-if>
+          <sc-if value="{{ acct.isPay }}"><dc-import name="DataTable" t="{{ acct.pay }}" hint-size="100%,340px"></dc-import></sc-if>
+          <sc-if value="{{ acct.isCash }}"><dc-import name="DataTable" t="{{ acct.cash }}" hint-size="100%,260px"></dc-import></sc-if>
+          <sc-if value="{{ acct.isExp }}"><dc-import name="DataTable" t="{{ acct.exp }}" hint-size="100%,340px"></dc-import></sc-if>
+          <sc-if value="{{ acct.isPl }}">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden;max-width:660px">
+              <div style="padding:13px 18px;border-bottom:1px solid #E3E0DA;background:#FAF9F7">
+                <div style="font-size:13.5px;font-weight:700">Profit &amp; loss — August 2026</div>
+                <div style="font-size:11.5px;color:#8C877F;margin-top:2px">Both business models combined · shared expenses apportioned</div>
+              </div>
+              <sc-for list="{{ acct.pl }}" as="r" hint-placeholder-count="8">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;padding:11px 18px;border-bottom:1px solid #F5F3EF;background:{{ r.bg }}">
+                  <span style="font-size:{{ r.size }};font-weight:{{ r.bold }}">{{ r.k }}</span>
+                  <span style="font-family:'Roboto Mono',monospace;font-size:{{ r.size }};font-weight:{{ r.bold }};color:{{ r.color }}">{{ r.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.reports }}">
+        <div class="split split-aside-first" style="display:grid;grid-template-columns:262px minmax(0,1fr);gap:16px;align-items:start">
+          <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:10px 8px">
+            <sc-for list="{{ rep.groups }}" as="g" hint-placeholder-count="5">
+              <div style="margin-bottom:10px">
+                <div style="padding:5px 10px;font-size:10.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#A39D93">{{ g.g }}</div>
+                <sc-for list="{{ g.items }}" as="i" hint-placeholder-count="3">
+                  <button onClick="{{ i.onClick }}" style="display:block;width:100%;text-align:left;border:0;cursor:pointer;padding:7px 10px;border-radius:6px;font-size:12.5px;background:{{ i.bg }};color:{{ i.color }};font-weight:{{ i.weight }}" style-hover="background:#F6F4F0">{{ i.l }}</button>
+                </sc-for>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:14px 16px">
+              <div style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:12px">
+                <div>
+                  <div style="font-size:15px;font-weight:700">{{ rep.title }}</div>
+                  <div style="font-size:12px;color:#8C877F;margin-top:3px">{{ rep.note }}</div>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button onClick="{{ rep.onExport }}" style="padding:8px 13px;border:1px solid #E3E0DA;background:#fff;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#F6F4F0">Export Excel</button>
+                  <button onClick="{{ rep.onPdf }}" style="padding:8px 13px;border:1px solid #E3E0DA;background:#fff;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#F6F4F0">Export PDF</button>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:13px;border-top:1px solid #F0EEE9">
+                <sc-for list="{{ repFilters }}" as="f" hint-placeholder-count="6">
+                  <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid #E3E0DA;border-radius:20px;font-size:12px;background:#FBFAF8">
+                    <span style="color:#8C877F">{{ f.k }}</span><strong style="font-weight:600">{{ f.v }}</strong>
+                  </span>
+                </sc-for>
+              </div>
+            </div>
+            <sc-if value="{{ rep.loading }}">
+              <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:22px">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+                  <span style="width:15px;height:15px;border-radius:50%;border:2px solid #E3E0DA;border-top-color:#8A2233;display:inline-block;animation:spin 700ms linear infinite"></span>
+                  <span style="font-size:12.5px;color:#6E6A64">Running report over 2,418 transactions…</span>
+                </div>
+                <sc-for list="{{ skeleton }}" as="s" hint-placeholder-count="6">
+                  <div style="height:13px;border-radius:4px;background:#F1EFEA;margin-bottom:11px;width:{{ s.w }}"></div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ rep.has }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ rep.t }}" hint-size="100%,420px"></dc-import></sc-if>
+            <sc-if value="{{ rep.none }}">
+              <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:60px 24px;text-align:center">
+                <div style="width:46px;height:46px;margin:0 auto 14px;border-radius:11px;border:1px dashed #D6D1C8;display:flex;align-items:center;justify-content:center">
+                  <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="#B6B0A6" stroke-width="1.3"><path d="M2.5 13.5h11M4.5 11V7M8 11V4.5M11.5 11V8.5"></path></svg>
+                </div>
+                <div style="font-size:14.5px;font-weight:700">No rows for the selected filters</div>
+                <div style="font-size:12.5px;color:#8C877F;margin-top:5px;max-width:420px;margin-left:auto;margin-right:auto">{{ rep.note }}</div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.approvals }}">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 16px;background:#fff;border:1px solid #E3E0DA;border-radius:10px">
+            <div style="font-size:13px"><strong>{{ appr.count }} requests</strong> <span style="color:#8C877F">waiting on you</span></div>
+            <div style="font-size:12px;color:#8C877F">Current approval limit {{ appr.limitText }} · adjust it in Settings or Tweaks</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px">
+            <sc-for list="{{ appr.cards }}" as="a" hint-placeholder-count="4">
+              <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 15px;background:{{ a.toneBg }};border-bottom:1px solid #E3E0DA">
+                  <span style="font-size:12.5px;font-weight:700;color:{{ a.tone }}">{{ a.kind }}</span>
+                  <span style="font-family:'Roboto Mono',monospace;font-size:12px;color:#6E6A64">{{ a.id }}</span>
+                </div>
+                <div style="padding:14px 15px">
+                  <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+                    <div>
+                      <div style="font-size:14px;font-weight:600">{{ a.party }}</div>
+                      <div style="font-family:'Roboto Mono',monospace;font-size:11.5px;color:#8C877F;margin-top:3px">{{ a.ref }}</div>
+                    </div>
+                    <div style="font-family:'Roboto Mono',monospace;font-size:17px;font-weight:700">{{ a.amt }}</div>
+                  </div>
+                  <div style="margin-top:12px;padding:10px 12px;background:#FBFAF8;border:1px solid #F0EEE9;border-radius:7px;font-size:12.5px;color:#4A463F">{{ a.why }}</div>
+                  <div style="margin-top:10px;font-size:11.5px;color:#8C877F">Raised by {{ a.by }} · {{ a.when }}</div>
+                  <div style="display:flex;gap:8px;margin-top:13px">
+                    <button onClick="{{ a.onNo }}" style="flex:1;padding:9px;border:1px solid #E3E0DA;background:#fff;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="border-color:#B3261E;color:#B3261E">Reject</button>
+                    <button onClick="{{ a.onOk }}" style="flex:1.3;padding:9px;border:0;background:#1F4D2E;color:#fff;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#183D24">Approve</button>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          <sc-if value="{{ appr.empty }}">
+            <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:56px 24px;text-align:center">
+              <div style="width:46px;height:46px;margin:0 auto 14px;border-radius:11px;background:#EDF4EE;display:flex;align-items:center;justify-content:center">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#2F6B3C" stroke-width="1.5" stroke-linecap="round"><path d="M3 8.4l3 3 7-7.4"></path></svg>
+              </div>
+              <div style="font-size:14.5px;font-weight:700">Queue is clear</div>
+              <div style="font-size:12.5px;color:#8C877F;margin-top:5px">Nothing is waiting on approval. New requests appear here the moment a limit is crossed.</div>
+            </div>
+          </sc-if>
+          <div>
+            <div style="font-size:13.5px;font-weight:700;margin-bottom:10px">Decision history</div>
+            <dc-import name="DataTable" t="{{ appr.hist }}" hint-size="100%,240px"></dc-import>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.settings }}">
+        <div class="split split-aside-first" style="display:grid;grid-template-columns:238px minmax(0,1fr);gap:16px;align-items:start">
+          <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:8px">
+            <sc-for list="{{ setSecs }}" as="s" hint-placeholder-count="9">
+              <button onClick="{{ s.onClick }}" style="display:block;width:100%;text-align:left;border:0;cursor:pointer;padding:9px 11px;border-radius:7px;font-size:12.5px;background:{{ s.bg }};color:{{ s.color }};font-weight:{{ s.weight }}" style-hover="background:#F6F4F0">{{ s.l }}</button>
+            </sc-for>
+          </div>
+          <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:18px">
+            <sc-if value="{{ setIs.company }}" hint-placeholder-val="{{ true }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Company profile</div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;max-width:760px">
+                <sc-for list="{{ setCompany }}" as="f" hint-placeholder-count="6">
+                  <label style="display:block">
+                    <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">{{ f.k }}</span>
+                    <input value="{{ f.v }}" readOnly="{{ true }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#FBFAF8" />
+                  </label>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.fy }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">Financial year</div>
+              <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px">Bangladesh financial year runs July to June. Closing a year locks its transactions.</div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-width:520px">
+                <sc-for list="{{ setFy }}" as="f" hint-placeholder-count="3">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1px solid #E3E0DA;border-radius:8px;background:{{ f.bg }}">
+                    <div>
+                      <div style="font-size:13px;font-weight:600">{{ f.k }}</div>
+                      <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ f.d }}</div>
+                    </div>
+                    <span style="padding:4px 10px;border-radius:5px;font-size:11.5px;font-weight:600;background:{{ f.tagBg }};color:{{ f.tagFg }}">{{ f.tag }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.numbering }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Document numbering</div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;max-width:760px">
+                <sc-for list="{{ setNum }}" as="f" hint-placeholder-count="6">
+                  <label style="display:block">
+                    <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">{{ f.k }}</span>
+                    <input value="{{ f.v }}" readOnly="{{ true }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#FBFAF8;font-family:'Roboto Mono',monospace" />
+                  </label>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.units }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Units and conversion</div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-width:560px">
+                <sc-for list="{{ setUnits }}" as="u" hint-placeholder-count="5">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                    <span style="font-size:13px;font-weight:600">{{ u.k }}</span>
+                    <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;color:#6E6A64">{{ u.v }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.pay }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Payment methods</div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-width:560px">
+                <sc-for list="{{ setPay }}" as="p" hint-placeholder-count="6">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                    <div>
+                      <div style="font-size:13px;font-weight:600">{{ p.k }}</div>
+                      <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ p.d }}</div>
+                    </div>
+                    <span style="width:38px;height:21px;border-radius:11px;background:{{ p.tone }};position:relative;flex:none">
+                      <span style="position:absolute;top:2px;left:{{ p.knob }};width:17px;height:17px;border-radius:50%;background:#fff"></span>
+                    </span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.limits }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">Approval limits</div>
+              <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px">Crossing a limit routes the transaction to the approval queue instead of posting it.</div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-width:560px">
+                <sc-for list="{{ setLimits }}" as="l" hint-placeholder-count="4">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                    <span style="font-size:13px">{{ l.k }}</span>
+                    <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:700">{{ l.v }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.valuation }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">Inventory valuation</div>
+              <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px">Applies to crop batches and dealer stock. Changing it re-values cost of goods on new transactions only.</div>
+              <div style="display:flex;gap:10px">
+                <sc-for list="{{ valTabs }}" as="v" hint-placeholder-count="2">
+                  <button onClick="{{ v.onClick }}" style="padding:14px 18px;border:1px solid {{ v.bd }};background:{{ v.bg }};color:{{ v.color }};border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;text-align:left;min-width:190px">{{ v.l }}</button>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.roles }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">Roles and permissions</div>
+              <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px">Switch the role in Tweaks to see the sidebar and profit figures change for that user.</div>
+              <div style="overflow:auto;border:1px solid #E3E0DA;border-radius:9px">
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                  <thead>
+                    <tr>
+                      <sc-for list="{{ matrix.cols }}" as="c" hint-placeholder-count="7">
+                        <th style="background:#FAF9F7;border-bottom:1px solid #E3E0DA;padding:10px 13px;text-align:left;font-size:10.5px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#6E6A64;white-space:nowrap">{{ c }}</th>
+                      </sc-for>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ matrix.rows }}" as="r" hint-placeholder-count="8">
+                      <tr style="border-bottom:1px solid #F5F3EF">
+                        <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="7">
+                          <td style="padding:9px 13px;white-space:nowrap;text-align:{{ c.align }};font-weight:{{ c.w }};color:{{ c.color }}">{{ c.t }}</td>
+                        </sc-for>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.notif }}">
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Notification rules</div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-width:600px">
+                <sc-for list="{{ setNotif }}" as="n" hint-placeholder-count="6">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                    <div>
+                      <div style="font-size:13px;font-weight:600">{{ n.k }}</div>
+                      <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ n.d }}</div>
+                    </div>
+                    <span style="padding:4px 10px;border-radius:5px;font-size:11.5px;font-weight:600;background:#EDF4EE;color:#2F6B3C;flex:none">On</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ is.employees }}">
+        <dc-import name="DataTable" t="{{ emp }}" hint-size="100%,470px"></dc-import>
+      </sc-if>
+
+      <sc-if value="{{ is.audit }}">
+        <dc-import name="DataTable" t="{{ audit }}" hint-size="100%,470px"></dc-import>
+      </sc-if>
+
+      <sc-if value="{{ is.mobile }}">
+        <div style="display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start">
+          <sc-for list="{{ phones }}" as="p" hint-placeholder-count="3">
+            <div>
+              <div style="width:322px;border:9px solid #1A1817;border-radius:36px;overflow:hidden;background:#F5F4F1;box-shadow:0 18px 44px rgba(26,24,23,.16)">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px 6px;background:#fff;font-size:11px;font-family:'Roboto Mono',monospace;color:#4A463F">
+                  <span>9:41</span><span>{{ p.net }}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:9px;padding:11px 15px;background:#8A2233;color:#fff">
+                  <span style="font-size:15px;font-weight:700">{{ p.title }}</span>
+                  <span style="margin-left:auto;font-size:11.5px;opacity:.85">{{ p.tag }}</span>
+                </div>
+                <div style="padding:13px 14px 18px;min-height:436px">
+                  <sc-for list="{{ p.blocks }}" as="b" hint-placeholder-count="4">
+                    <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:12px 13px;margin-bottom:10px">
+                      <div style="font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#8C877F">{{ b.k }}</div>
+                      <div style="margin-top:6px;font-size:{{ b.size }};font-weight:600;font-family:{{ b.font }};color:{{ b.color }}">{{ b.v }}</div>
+                      <sc-if value="{{ b.d }}">
+                        <div style="margin-top:5px;font-size:11.5px;color:#8C877F">{{ b.d }}</div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                  <button style="width:100%;padding:14px;border:0;border-radius:10px;background:#8A2233;color:#fff;font-size:14px;font-weight:600;cursor:pointer">{{ p.cta }}</button>
+                </div>
+              </div>
+              <div style="width:322px;margin-top:12px;font-size:12.5px;color:#6E6A64;line-height:1.5">{{ p.note }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </main>
+  </div>
+</div>
+<sc-if value="{{ toast }}">
+  <div onClick="{{ onCloseToast }}" style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:80;display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:9px;background:{{ toastBg }};color:#fff;box-shadow:0 12px 34px rgba(26,24,23,.28);cursor:pointer;max-width:min(680px,92vw)">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" style="flex:none"><path d="M3 8.4l3 3 7-7.4"></path></svg>
+    <span style="font-size:13px;font-weight:500">{{ toast.msg }}</span>
+  </div>
+</sc-if>
