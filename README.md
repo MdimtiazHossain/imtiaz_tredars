@@ -11,6 +11,26 @@ distinct business models side by side:
 
 Implemented from the imported Claude Design project (`design/`).
 
+## Two ways to run
+
+The frontend talks to a **repository**, never to a database. Which
+implementation it gets is decided by one environment variable:
+
+| `VITE_API_URL` | Repository | Data |
+| --- | --- | --- |
+| unset | `InMemoryRepository` | bundled seed data, no backend needed |
+| set | `ApiRepository` | live PostgreSQL through the REST API in `server/` |
+
+No screen knows the difference. See [server/README.md](server/README.md) for the
+backend, its schema and its operational runbook.
+
+To run against the real backend, set up the server first, then create a `.env`
+at this level:
+
+```
+VITE_API_URL=http://localhost:5310/api
+```
+
 ## Running it
 
 ```bash
@@ -53,10 +73,13 @@ src/
     template.js         template engine for the design's .dc.html dialect
     component.js        base component: state, setState, batched render
   data/
+    repository.js       the contract + implementation choice
+    inMemoryRepository.js  seed-backed implementation
+    apiRepository.js    REST implementation
+    apiClient.js        HTTP, tokens, error envelope
     seed.js             master and transaction records (generated)
     analytics.js        dashboard, P&L and report figures (generated)
     reference.js        employees, permissions, settings, phone specs (generated)
-    repository.js       async data-access layer -- the API seam
   domain/
     format.js           BDT money and lakh/crore number formatting
     calculations.js     landed cost, FIFO allocation, invoice totals
@@ -108,20 +131,23 @@ Two things are worth knowing if you edit `template.js`:
 
 ### Data flow
 
-Screens never import `seed.js`. They receive a working set loaded through
-`repository.js` and send writes back through it:
+Screens never import `seed.js`, and never know where data comes from. They
+receive a working set from whichever repository is configured, and send writes
+back through the same object:
 
 ```
-seed / analytics / reference  ->  Repository  ->  BusinessApp.data
-                                      ^
-                          createCustomer, postCropPurchase,
-                          postCropSale, decideApproval, ...
+                    +-- InMemoryRepository --> seed / analytics / reference
+BusinessApp.data <--+
+                    +-- ApiRepository ------> REST API --> PostgreSQL
 ```
 
-Swapping in a real backend means rewriting the method bodies in
-`repository.js` and nothing else. The repository has a small artificial latency
-so loading states are exercised during development; pass `{ latency: 0 }` in
-tests.
+Both implement the same contract, documented in `data/repository.js`. Writes
+take an *intent* — what the user did — rather than a finished row, so the server
+can own document numbering, costing and the ledger while the in-memory version
+computes the same thing locally.
+
+`InMemoryRepository` has a small artificial latency so loading states are
+exercised in development; pass `{ latency: 0 }` in tests.
 
 ### The DataTable
 
@@ -152,7 +178,8 @@ against the current tree will not reproduce it.
 
 ## Testing
 
-92 tests across four suites:
+92 frontend tests across four suites (`npm test`), plus the server's own suite
+(`cd server && npm test`):
 
 - `calculations.test.js` — the business arithmetic, including the worked
   example the crop purchase screen opens on.

@@ -78,12 +78,34 @@ export class BusinessApp extends Component {
   /**
    * Send a write through the repository. Falls back to resolving the payload
    * unchanged when no repository is wired, so the logic stays testable.
+   *
+   * A write already in flight blocks another of the same kind: double-clicking
+   * Post must never create two transactions. The guard is here rather than on
+   * the button so it holds however the action is triggered.
    */
   persist(method, ...args) {
-    if (this.repository && typeof this.repository[method] === 'function') {
-      return this.repository[method](...args);
+    if (!this._inFlight) this._inFlight = new Set();
+
+    if (this._inFlight.has(method)) {
+      return Promise.reject(new Error('This is already being saved. Please wait.'));
     }
-    return Promise.resolve(args[0]);
+    this._inFlight.add(method);
+    this.setState({ busy: method });
+
+    const done = () => {
+      this._inFlight.delete(method);
+      this.setState({ busy: null });
+    };
+
+    const call =
+      this.repository && typeof this.repository[method] === 'function'
+        ? this.repository[method](...args)
+        : Promise.resolve(args[0]);
+
+    return call.then(
+      (value) => { done(); return value; },
+      (err) => { done(); throw err; }
+    );
   }
 
   saveCustomer() {
@@ -130,7 +152,11 @@ export class BusinessApp extends Component {
     const no = 'PC-2608-0' + (14 + this.state.cropLog.length - 5);
     const batch = {id:c.batchId, crop:f.crop, grade:f.grade, wh:f.wh, qty:c.net, rem:c.net, cost:c.cpuNum, date:'28 Aug 2026', age:0, sup:c.sup.name};
     const logRow = {no:no, date:'28 Aug 2026', sup:c.sup.name, crop:f.crop, qty:c.net, unit:f.unit, rate:+f.rate || 0, cpu:c.cpuNum, total:c.total, status:c.needAppr ? 'Pending approval' : 'Posted'};
-    this.persist('postCropPurchase', {logRow:logRow, batch:batch}).then(saved => {
+    const intent = {date:'2026-08-28', supplierCode:f.sup, crop:f.crop, grade:f.grade, warehouse:f.wh,
+      quantity:+f.qty || 0, unit:f.unit, moisture:+f.moist || 0, rate:+f.rate || 0,
+      transport:+f.transport || 0, loading:+f.loading || 0, unloading:+f.unloading || 0,
+      other:+f.other || 0, advance:+f.advance || 0, note:f.note};
+    this.persist('postCropPurchase', {logRow:logRow, batch:batch, intent:intent}).then(saved => {
       this.setState(s => ({
         batches:[saved.batch].concat(s.batches),
         cropLog:[saved.logRow].concat(s.cropLog)
@@ -173,7 +199,10 @@ export class BusinessApp extends Component {
     if (!c.allocQty) { this.fire('Allocate quantity from at least one batch.', 'danger'); return; }
     const logRow = {no:c.salesNo, date:'28 Aug 2026', buyer:f.buyer, crop:f.crop, batch:c.rows.filter(r => (+f.alloc[r.id] || 0) > 0).map(r => r.id).join(', '),
       qty:c.allocQty, rate:+f.rate || 0, amt:c.allocQty * (+f.rate || 0), profit:0, status:'Posted'};
-    this.persist('postCropSale', {logRow:logRow, allocations:Object.assign({}, f.alloc)}).then(saved => {
+    const intent = {date:'2026-08-28', buyerName:f.buyer, crop:f.crop, quantity:c.allocQty,
+      rate:+f.rate || 0, transport:+f.transport || 0, other:+f.other || 0,
+      valuation:this.state.valuation};
+    this.persist('postCropSale', {logRow:logRow, allocations:Object.assign({}, f.alloc), intent:intent}).then(saved => {
       this.setState(s => ({
         batches:s.batches.map(b => { const a = +saved.allocations[b.id] || 0; return a ? Object.assign({}, b, {rem:b.rem - a}) : b; }),
         saleLog:[saved.logRow].concat(s.saleLog),

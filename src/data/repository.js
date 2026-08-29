@@ -1,108 +1,62 @@
-import * as seed from './seed.js';
+import { InMemoryRepository } from './inMemoryRepository.js';
+import { ApiRepository } from './apiRepository.js';
 
 /**
- * Data-access layer.
+ * The repository contract.
  *
- * Everything the UI reads or writes goes through here. Today it resolves
- * against the in-memory seed dataset; swapping in a real backend means
- * replacing the bodies of these methods with HTTP calls and nothing else --
- * no screen or component touches `seed.js` directly.
+ * Screens depend on this module, never on a concrete implementation, so the
+ * same UI runs against the bundled seed data or a live PostgreSQL-backed API
+ * without a single screen change.
+ *
+ * ## Contract
+ *
+ * | Method                     | Purpose                                       |
+ * | -------------------------- | --------------------------------------------- |
+ * | `load()`                   | the whole working set the app boots from      |
+ * | `createCustomer(record)`   | add a customer, returns the stored record     |
+ * | `postCropPurchase(args)`   | post a bulk crop purchase                     |
+ * | `postCropSale(args)`       | post a bulk crop sale (FIFO allocation)       |
+ * | `postDealerPurchase(args)` | post a dealer purchase                        |
+ * | `postDealerSale(args)`     | post a dealer sales invoice                   |
+ * | `decideApproval(...)`      | approve or reject a pending request           |
+ *
+ * Both implementations resolve to the same shapes. The write methods accept an
+ * `intent` — what the user did — rather than a finished row, so the server can
+ * own document numbering, costing and the ledger while the in-memory version
+ * simply computes the same thing locally.
  */
 
-const clone = (v) => (typeof structuredClone === 'function' ? structuredClone(v) : JSON.parse(JSON.stringify(v)));
+export { InMemoryRepository } from './inMemoryRepository.js';
+export { ApiRepository } from './apiRepository.js';
+export { ApiClient, ApiError } from './apiClient.js';
 
-/** Simulated latency so loading states are exercised in development. */
-const LATENCY_MS = 180;
+/**
+ * Kept as the historical name so existing callers and tests that do
+ * `new Repository({ latency: 0 })` continue to work unchanged.
+ */
+export { InMemoryRepository as Repository } from './inMemoryRepository.js';
 
-function settle(value, latency) {
-  if (!latency) return Promise.resolve(value);
-  return new Promise((res) => setTimeout(() => res(value), latency));
+/**
+ * Choose an implementation.
+ *
+ * An API base URL — from `VITE_API_URL` at build time, or passed explicitly —
+ * selects the live backend. With none configured the app runs on seed data,
+ * which is what the test suite and a no-backend demo use.
+ *
+ * @param {object} [options]
+ * @param {string} [options.apiUrl] overrides the build-time value
+ * @param {number} [options.latency] in-memory only; 0 in tests
+ */
+export function createRepository(options = {}) {
+  const apiUrl =
+    options.apiUrl ?? (typeof import.meta !== 'undefined' ? import.meta.env?.VITE_API_URL : null);
+
+  if (apiUrl) return new ApiRepository({ baseUrl: apiUrl });
+  return new InMemoryRepository({ latency: options.latency });
 }
 
-export class Repository {
-  /**
-   * @param {object} [options]
-   * @param {number} [options.latency] artificial delay in ms, 0 in tests
-   */
-  constructor(options = {}) {
-    this.latency = options.latency === undefined ? LATENCY_MS : options.latency;
-    this._store = null;
-  }
+/** The app-wide instance. */
+export const repository = createRepository();
 
-  /** Load the full working set the app boots from. */
-  async load() {
-    this._store = {
-      company: clone(seed.COMPANY),
-      nav: clone(seed.NAV),
-      titles: clone(seed.TITLES),
-      customers: clone(seed.CUSTOMERS),
-      suppliers: clone(seed.SUPPLIERS),
-      companies: clone(seed.COMPANIES),
-      products: clone(seed.PRODUCTS),
-      crops: clone(seed.CROPS),
-      warehouses: clone(seed.WAREHOUSES),
-      units: clone(seed.UNITS),
-      grades: clone(seed.GRADES),
-      buyers: clone(seed.BUYERS),
-      lastRate: clone(seed.LAST_RATE),
-      batches: clone(seed.BATCHES),
-      approvals: clone(seed.APPROVALS),
-      cropLog: clone(seed.CROP_LOG),
-      saleLog: clone(seed.SALE_LOG),
-      notifications: clone(seed.NOTIFICATIONS),
-    };
-    return settle(clone(this._store), this.latency);
-  }
-
-  /**
-   * Persist a new customer.
-   * @returns {Promise<object>} the stored record
-   */
-  async createCustomer(record) {
-    if (this._store) this._store.customers.push(clone(record));
-    return settle(clone(record), this.latency);
-  }
-
-  /**
-   * Persist a bulk crop purchase together with the batch it creates.
-   * @returns {Promise<{logRow: object, batch: object}>}
-   */
-  async postCropPurchase({ logRow, batch }) {
-    if (this._store) {
-      this._store.cropLog.unshift(clone(logRow));
-      this._store.batches.unshift(clone(batch));
-    }
-    return settle({ logRow: clone(logRow), batch: clone(batch) }, this.latency);
-  }
-
-  /**
-   * Persist a bulk crop sale and the stock it consumes.
-   * @returns {Promise<{logRow: object, allocations: Record<string, number>}>}
-   */
-  async postCropSale({ logRow, allocations }) {
-    if (this._store) this._store.saleLog.unshift(clone(logRow));
-    return settle({ logRow: clone(logRow), allocations: clone(allocations) }, this.latency);
-  }
-
-  /** Persist a dealer sales invoice. */
-  async postDealerSale(invoice) {
-    return settle(clone(invoice), this.latency);
-  }
-
-  /** Persist a dealer purchase bill. */
-  async postDealerPurchase(bill) {
-    return settle(clone(bill), this.latency);
-  }
-
-  /** Record an approve/reject decision against a pending request. */
-  async decideApproval(id, approved, history) {
-    if (this._store) {
-      this._store.approvals = this._store.approvals.map((a) =>
-        a.id === id ? { ...a, status: approved ? 'approved' : 'rejected', hist: history } : a
-      );
-    }
-    return settle({ id, approved, history }, this.latency);
-  }
-}
-
-export const repository = new Repository();
+/** True when the app is talking to a real backend, so the UI can ask for a sign-in. */
+export const requiresAuthentication = repository instanceof ApiRepository;

@@ -14,5 +14,6 @@
     "isolatedModules": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "tests", "tools", "vite.config.js"]
+  "include": ["src", "tests", "tools", "vite.config.js"],
+  "exclude": ["server", "node_modules", "dist"]
 }

@@ -2,7 +2,8 @@ import js from '@eslint/js';
 import globals from 'globals';
 
 export default [
-  { ignores: ['dist/**', 'node_modules/**', 'design/**'] },
+  // The server is a separate package with its own lint configuration.
+  { ignores: ['dist/**', 'node_modules/**', 'design/**', 'server/**'] },
   js.configs.recommended,
   {
     files: ['src/**/*.js'],

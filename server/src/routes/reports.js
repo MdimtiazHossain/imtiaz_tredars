@@ -1,0 +1,499 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { query, num } from '../lib/db.js';
+import { handler, ok, parseQuery, listQuerySchema, paginate, pageMeta } from '../lib/http.js';
+import { requirePermission, canSeeProfit } from '../middleware/auth.js';
+import { forbidden, notFound } from '../lib/errors.js';
+
+/**
+ * Reporting.
+ *
+ * Every report is aggregated in PostgreSQL and filtered server-side. The
+ * browser receives a page of rows and a totals block, never a raw table, so
+ * report size is independent of how many transactions exist.
+ *
+ * Profit columns are stripped for roles without `report.profit`, so hiding
+ * them is enforced here rather than only in the UI.
+ */
+const router = Router();
+
+/** Shared filter shape across every report. */
+const reportQuery = listQuerySchema.extend({
+  warehouseId: z.coerce.number().int().positive().optional(),
+  customerId: z.coerce.number().int().positive().optional(),
+  supplierId: z.coerce.number().int().positive().optional(),
+  companyId: z.coerce.number().int().positive().optional(),
+  productId: z.coerce.number().int().positive().optional(),
+  cropId: z.coerce.number().int().positive().optional(),
+  employeeId: z.coerce.number().int().positive().optional(),
+});
+
+/** Build the shared WHERE fragment; `alias` is the document table's alias. */
+function dateAndBusiness(q, params, alias, businessColumn = 'business_type') {
+  let where = '';
+  if (q.from) {
+    params.push(q.from);
+    where += ` AND ${alias}.txn_date >= $${params.length}`;
+  }
+  if (q.to) {
+    params.push(q.to);
+    where += ` AND ${alias}.txn_date <= $${params.length}`;
+  }
+  if (q.businessType !== 'ALL') {
+    params.push(q.businessType);
+    where += ` AND ${alias}.${businessColumn} = $${params.length}`;
+  }
+  return where;
+}
+
+/* ---------------------------------------------------------------- dashboard */
+
+/**
+ * Dashboard aggregates.
+ *
+ * The business-type filter is applied in SQL, so "All" is exactly the sum of
+ * "Dealer" and "Bulk Crop" — the reconciliation the brief calls for.
+ */
+router.get(
+  '/dashboard',
+  requirePermission('dashboard.view'),
+  handler(async (req, res) => {
+    const q = parseQuery(reportQuery, req);
+    const showProfit = canSeeProfit(req.user);
+    const bt = q.businessType === 'ALL' ? null : q.businessType;
+
+    const [sales, purchases, receivable, payable, stock, cash, aging, monthly] =
+      await Promise.all([
+        query(
+          `SELECT COALESCE(SUM(sales_amount), 0) AS amount,
+                  COALESCE(SUM(cost_amount), 0)  AS cost,
+                  COALESCE(SUM(profit_amount), 0) AS profit,
+                  COALESCE(SUM(document_count), 0) AS documents
+             FROM v_sales_by_business
+            WHERE org_id = $1
+              AND ($2::business_type IS NULL OR business_type = $2)
+              AND ($3::date IS NULL OR txn_date >= $3)
+              AND ($4::date IS NULL OR txn_date <= $4)`,
+          [req.orgId, bt, q.from ?? null, q.to ?? null]
+        ),
+        query(
+          `SELECT COALESCE(SUM(purchase_amount), 0) AS amount,
+                  COALESCE(SUM(document_count), 0) AS documents
+             FROM v_purchases_by_business
+            WHERE org_id = $1
+              AND ($2::business_type IS NULL OR business_type = $2)
+              AND ($3::date IS NULL OR txn_date >= $3)
+              AND ($4::date IS NULL OR txn_date <= $4)`,
+          [req.orgId, bt, q.from ?? null, q.to ?? null]
+        ),
+        query(
+          `SELECT COALESCE(SUM(balance), 0) AS amount, COUNT(*)::int AS documents
+             FROM receivables
+            WHERE org_id = $1 AND NOT is_settled
+              AND ($2::business_type IS NULL OR business_type = $2)`,
+          [req.orgId, bt]
+        ),
+        query(
+          `SELECT COALESCE(SUM(balance), 0) AS amount, COUNT(*)::int AS documents
+             FROM payables
+            WHERE org_id = $1 AND NOT is_settled
+              AND ($2::business_type IS NULL OR business_type = $2)`,
+          [req.orgId, bt]
+        ),
+        query(
+          `SELECT
+             COALESCE(SUM(CASE WHEN s.item_type = 'CROP_BATCH'
+                               THEN s.quantity * b.cost_per_unit END), 0) AS crop_value,
+             COALESCE(SUM(CASE WHEN s.item_type = 'PRODUCT'
+                               THEN s.quantity * s.avg_cost END), 0)      AS product_value,
+             COUNT(*) FILTER (WHERE s.item_type = 'CROP_BATCH')::int      AS batches
+             FROM stock s
+             LEFT JOIN crop_batches b ON b.id = s.batch_id
+            WHERE s.org_id = $1 AND s.quantity > 0`,
+          [req.orgId]
+        ),
+        query(
+          `SELECT COALESCE(SUM(a.opening_balance), 0)
+                  + COALESCE((SELECT SUM(l.debit - l.credit) FROM ledger_entries l
+                               WHERE l.account_id IS NOT NULL), 0) AS balance,
+                  COUNT(*)::int AS accounts
+             FROM accounts a WHERE a.org_id = $1 AND a.is_active`,
+          [req.orgId]
+        ),
+        query(
+          `SELECT aging_bucket, COALESCE(SUM(balance), 0) AS amount
+             FROM v_receivable_aging
+            WHERE org_id = $1 AND ($2::business_type IS NULL OR business_type = $2)
+            GROUP BY aging_bucket`,
+          [req.orgId, bt]
+        ),
+        query(
+          `SELECT to_char(txn_date, 'YYYY-MM') AS month,
+                  COALESCE(SUM(sales_amount), 0) AS sales,
+                  COALESCE(SUM(profit_amount), 0) AS profit
+             FROM v_sales_by_business
+            WHERE org_id = $1 AND ($2::business_type IS NULL OR business_type = $2)
+              AND txn_date >= (CURRENT_DATE - interval '6 months')
+            GROUP BY 1 ORDER BY 1`,
+          [req.orgId, bt]
+        ),
+      ]);
+
+    const purchaseMonthly = await query(
+      `SELECT to_char(txn_date, 'YYYY-MM') AS month,
+              COALESCE(SUM(purchase_amount), 0) AS purchase
+         FROM v_purchases_by_business
+        WHERE org_id = $1 AND ($2::business_type IS NULL OR business_type = $2)
+          AND txn_date >= (CURRENT_DATE - interval '6 months')
+        GROUP BY 1 ORDER BY 1`,
+      [req.orgId, bt]
+    );
+
+    const purchaseByMonth = new Map(
+      purchaseMonthly.rows.map((r) => [r.month, num(r.purchase)])
+    );
+
+    const agingBuckets = {};
+    for (const r of aging.rows) agingBuckets[r.aging_bucket] = num(r.amount);
+
+    const payload = {
+      businessType: q.businessType,
+      sales: {
+        amount: num(sales.rows[0].amount),
+        documents: Number(sales.rows[0].documents),
+      },
+      purchases: {
+        amount: num(purchases.rows[0].amount),
+        documents: Number(purchases.rows[0].documents),
+      },
+      receivable: {
+        amount: num(receivable.rows[0].amount),
+        documents: receivable.rows[0].documents,
+      },
+      payable: { amount: num(payable.rows[0].amount), documents: payable.rows[0].documents },
+      stock: {
+        cropValue: num(stock.rows[0].crop_value),
+        productValue: num(stock.rows[0].product_value),
+        totalValue: num(stock.rows[0].crop_value) + num(stock.rows[0].product_value),
+        batches: stock.rows[0].batches,
+      },
+      cash: { balance: num(cash.rows[0].balance), accounts: cash.rows[0].accounts },
+      aging: agingBuckets,
+      trend: monthly.rows.map((r) => ({
+        month: r.month,
+        sales: num(r.sales),
+        purchase: purchaseByMonth.get(r.month) || 0,
+        profit: showProfit ? num(r.profit) : null,
+      })),
+    };
+
+    if (showProfit) {
+      payload.grossProfit = {
+        amount: num(sales.rows[0].profit),
+        cost: num(sales.rows[0].cost),
+        marginPct: num(sales.rows[0].amount)
+          ? (num(sales.rows[0].profit) / num(sales.rows[0].amount)) * 100
+          : 0,
+      };
+    }
+
+    ok(res, payload);
+  })
+);
+
+/* ------------------------------------------------------------------ reports */
+
+/** Catalogue the Reports Centre lists in its sidebar. */
+const CATALOGUE = [
+  { group: 'Sales', items: [['sales-daily', 'Daily sales'], ['sales-monthly', 'Monthly sales'], ['sales-customer', 'Customer-wise sales'], ['sales-product', 'Product-wise sales']] },
+  { group: 'Purchase', items: [['pur-supplier', 'Supplier-wise purchase'], ['pur-company', 'Company-wise purchase']] },
+  { group: 'Inventory', items: [['inv-current', 'Current stock'], ['inv-dead', 'Dead stock']] },
+  { group: 'Profit', items: [['crop-batch-profit', 'Batch-wise crop profit'], ['profit-product', 'Product-wise profit'], ['profit-monthly', 'Monthly profit']] },
+  { group: 'Finance', items: [['fin-aging', 'Customer outstanding & aging'], ['fin-cashbook', 'Cash book'], ['fin-expense', 'Expense register']] },
+];
+
+router.get(
+  '/catalogue',
+  requirePermission('report.view'),
+  handler(async (_req, res) => {
+    ok(res, CATALOGUE.map((g) => ({ group: g.group, items: g.items.map(([id, label]) => ({ id, label })) })));
+  })
+);
+
+/** Report definitions: each returns { columns, rows, totals }. */
+const REPORTS = {
+  'sales-customer': {
+    permission: 'report.view',
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = dateAndBusiness(q, params, 's');
+      const { rows } = await query(
+        `SELECT c.name AS customer, c.district, COUNT(*)::int AS invoices,
+                COALESCE(SUM(s.net_amount), 0) AS sales,
+                COALESCE(SUM(s.profit_amount), 0) AS profit
+           FROM dealer_sales s JOIN customers c ON c.id = s.customer_id
+          WHERE s.org_id = $1 AND s.status = 'POSTED' ${where}
+          GROUP BY c.id, c.name, c.district
+          ORDER BY sales DESC`,
+        params
+      );
+      return {
+        columns: ['Customer', 'District', 'Invoices', 'Sales', 'Profit'],
+        rows: rows.map((r) => ({
+          customer: r.customer,
+          district: r.district,
+          invoices: r.invoices,
+          sales: num(r.sales),
+          profit: num(r.profit),
+        })),
+        totals: { sales: rows.reduce((t, r) => t + num(r.sales), 0) },
+      };
+    },
+  },
+
+  'sales-product': {
+    permission: 'report.view',
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = dateAndBusiness(q, params, 's');
+      const { rows } = await query(
+        `SELECT p.name AS product, pc.name AS category,
+                COALESCE(SUM(i.quantity), 0) AS qty,
+                COALESCE(SUM(i.line_net), 0) AS sales,
+                COALESCE(SUM(i.line_cost), 0) AS cost
+           FROM dealer_sale_items i
+           JOIN dealer_sales s ON s.id = i.sale_id
+           JOIN products p ON p.id = i.product_id
+           LEFT JOIN product_categories pc ON pc.id = p.category_id
+          WHERE s.org_id = $1 AND s.status = 'POSTED' ${where}
+          GROUP BY p.id, p.name, pc.name
+          ORDER BY sales DESC`,
+        params
+      );
+      return {
+        columns: ['Product', 'Category', 'Qty sold', 'Sales', 'Cost', 'Profit', 'Margin'],
+        rows: rows.map((r) => {
+          const sales = num(r.sales);
+          const cost = num(r.cost);
+          return {
+            product: r.product,
+            category: r.category,
+            qty: num(r.qty),
+            sales,
+            cost,
+            profit: sales - cost,
+            marginPct: sales ? ((sales - cost) / sales) * 100 : 0,
+          };
+        }),
+        totals: { sales: rows.reduce((t, r) => t + num(r.sales), 0) },
+      };
+    },
+  },
+
+  'pur-supplier': {
+    permission: 'report.view',
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = dateAndBusiness(q, params, 'p');
+      const { rows } = await query(
+        `SELECT s.name AS supplier, s.supplier_type, s.district,
+                COALESCE(SUM(p.net_amount), 0) AS purchase,
+                COALESCE(MAX(o.paid_amount), 0) AS paid,
+                COALESCE(MAX(o.outstanding), 0) AS outstanding
+           FROM crop_purchases p
+           JOIN suppliers s ON s.id = p.supplier_id
+           LEFT JOIN v_supplier_outstanding o ON o.supplier_id = s.id
+          WHERE p.org_id = $1 AND p.status = 'POSTED' ${where}
+          GROUP BY s.id, s.name, s.supplier_type, s.district
+          ORDER BY purchase DESC`,
+        params
+      );
+      return {
+        columns: ['Supplier', 'Type', 'District', 'Purchase value', 'Paid', 'Outstanding'],
+        rows: rows.map((r) => ({
+          supplier: r.supplier,
+          type: r.supplier_type,
+          district: r.district,
+          purchase: num(r.purchase),
+          paid: num(r.paid),
+          outstanding: num(r.outstanding),
+        })),
+        totals: { purchase: rows.reduce((t, r) => t + num(r.purchase), 0) },
+      };
+    },
+  },
+
+  'crop-batch-profit': {
+    permission: 'report.profit',
+    async run(req) {
+      const { rows } = await query(
+        `SELECT b.batch_no, c.name AS crop, s.name AS supplier,
+                b.quantity_received, b.cost_per_unit,
+                COALESCE(SUM(a.quantity), 0) AS sold_qty,
+                COALESCE(SUM(a.cost_value), 0) AS cogs,
+                COALESCE(SUM(a.quantity * i.rate), 0) AS revenue
+           FROM crop_batches b
+           JOIN crops c ON c.id = b.crop_id
+           LEFT JOIN suppliers s ON s.id = b.supplier_id
+           LEFT JOIN crop_batch_allocations a ON a.batch_id = b.id
+           LEFT JOIN crop_sale_items i ON i.id = a.sale_item_id
+          WHERE b.org_id = $1
+          GROUP BY b.id, b.batch_no, c.name, s.name, b.quantity_received, b.cost_per_unit
+          ORDER BY b.received_on DESC`,
+        [req.orgId]
+      );
+      return {
+        columns: ['Batch', 'Crop', 'Supplier', 'Purchased', 'Sold', 'Landed cost', 'Revenue', 'Profit'],
+        rows: rows.map((r) => {
+          const revenue = num(r.revenue);
+          const cogs = num(r.cogs);
+          return {
+            batch: r.batch_no,
+            crop: r.crop,
+            supplier: r.supplier,
+            purchased: num(r.quantity_received),
+            sold: num(r.sold_qty),
+            landedCost: num(r.cost_per_unit),
+            revenue,
+            profit: revenue - cogs,
+            profitPerUnit: num(r.sold_qty) ? (revenue - cogs) / num(r.sold_qty) : 0,
+          };
+        }),
+        totals: {
+          profit: rows.reduce((t, r) => t + (num(r.revenue) - num(r.cogs)), 0),
+        },
+      };
+    },
+  },
+
+  'fin-aging': {
+    permission: 'report.view',
+    async run(req, q) {
+      const bt = q.businessType === 'ALL' ? null : q.businessType;
+      const { rows } = await query(
+        `SELECT COALESCE(c.name, co.name) AS party,
+                COALESCE(c.customer_type, 'Company') AS type,
+                COALESCE(MAX(c.credit_limit), 0) AS credit_limit,
+                COALESCE(SUM(a.balance) FILTER (WHERE a.aging_bucket = '0-30'), 0)   AS b0,
+                COALESCE(SUM(a.balance) FILTER (WHERE a.aging_bucket = '31-60'), 0)  AS b31,
+                COALESCE(SUM(a.balance) FILTER (WHERE a.aging_bucket = '61-90'), 0)  AS b61,
+                COALESCE(SUM(a.balance) FILTER (WHERE a.aging_bucket = '91-120'), 0) AS b91,
+                COALESCE(SUM(a.balance) FILTER (WHERE a.aging_bucket = '120+'), 0)   AS b120,
+                COALESCE(SUM(a.balance), 0) AS total
+           FROM v_receivable_aging a
+           LEFT JOIN customers c ON a.party_type = 'CUSTOMER' AND c.id = a.party_id
+           LEFT JOIN companies co ON a.party_type = 'COMPANY' AND co.id = a.party_id
+          WHERE a.org_id = $1 AND ($2::business_type IS NULL OR a.business_type = $2)
+          GROUP BY COALESCE(c.name, co.name), COALESCE(c.customer_type, 'Company')
+          ORDER BY total DESC`,
+        [req.orgId, bt]
+      );
+      return {
+        columns: ['Party', 'Type', 'Credit limit', '0–30', '31–60', '61–90', '91–120', '120+', 'Total due'],
+        rows: rows.map((r) => ({
+          party: r.party,
+          type: r.type,
+          creditLimit: num(r.credit_limit),
+          b0: num(r.b0),
+          b31: num(r.b31),
+          b61: num(r.b61),
+          b91: num(r.b91),
+          b120: num(r.b120),
+          total: num(r.total),
+        })),
+        totals: { receivable: rows.reduce((t, r) => t + num(r.total), 0) },
+      };
+    },
+  },
+
+  'inv-dead': {
+    permission: 'report.view',
+    async run(req) {
+      const { rows } = await query(
+        `SELECT b.batch_no, c.name AS crop, w.name AS warehouse, b.quantity_remaining,
+                b.cost_per_unit, (CURRENT_DATE - b.received_on)::int AS age_days
+           FROM crop_batches b
+           JOIN crops c ON c.id = b.crop_id
+           JOIN warehouses w ON w.id = b.warehouse_id
+          WHERE b.org_id = $1 AND b.is_active AND b.quantity_remaining > 0
+            AND b.received_on < CURRENT_DATE - 60
+          ORDER BY b.received_on ASC`,
+        [req.orgId]
+      );
+      return {
+        columns: ['Batch', 'Crop', 'Warehouse', 'Remaining', 'Cost/unit', 'Age (days)', 'Value'],
+        rows: rows.map((r) => ({
+          batch: r.batch_no,
+          crop: r.crop,
+          warehouse: r.warehouse,
+          remaining: num(r.quantity_remaining),
+          costPerUnit: num(r.cost_per_unit),
+          ageDays: Number(r.age_days),
+          value: num(r.quantity_remaining) * num(r.cost_per_unit),
+        })),
+        totals: {
+          value: rows.reduce(
+            (t, r) => t + num(r.quantity_remaining) * num(r.cost_per_unit),
+            0
+          ),
+        },
+      };
+    },
+  },
+
+  'fin-expense': {
+    permission: 'expense.view',
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = dateAndBusiness(q, params, 'e');
+      const { rows } = await query(
+        `SELECT ec.name AS category, e.business_type, COUNT(*)::int AS vouchers,
+                COALESCE(SUM(e.amount), 0) AS amount
+           FROM expenses e JOIN expense_categories ec ON ec.id = e.category_id
+          WHERE e.org_id = $1 AND e.status = 'POSTED' ${where}
+          GROUP BY ec.name, e.business_type
+          ORDER BY amount DESC`,
+        params
+      );
+      return {
+        columns: ['Category', 'Business', 'Vouchers', 'Amount'],
+        rows: rows.map((r) => ({
+          category: r.category,
+          businessType: r.business_type || 'Shared',
+          vouchers: r.vouchers,
+          amount: num(r.amount),
+        })),
+        totals: { amount: rows.reduce((t, r) => t + num(r.amount), 0) },
+      };
+    },
+  },
+};
+
+router.get(
+  '/:reportId',
+  requirePermission('report.view'),
+  handler(async (req, res) => {
+    const definition = REPORTS[req.params.reportId];
+    if (!definition) {
+      throw notFound(`Report "${req.params.reportId}"`);
+    }
+    if (definition.permission && !req.user.permissions.includes(definition.permission)) {
+      throw forbidden('Your role does not allow you to view this report.');
+    }
+
+    const q = parseQuery(reportQuery, req);
+    const result = await definition.run(req, q);
+
+    // Page in memory: these aggregates are already grouped and small.
+    const { limit, offset } = paginate(q.page, q.pageSize);
+    const page = result.rows.slice(offset, offset + limit);
+
+    ok(
+      res,
+      { columns: result.columns, rows: page, totals: result.totals },
+      pageMeta(q.page, q.pageSize, result.rows.length)
+    );
+  })
+);
+
+export default router;
