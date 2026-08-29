@@ -37,7 +37,7 @@ prints the usernames it created; every account starts with the same password
 (`ChangeMe!2026` unless `SEED_PASSWORD` says otherwise) and is flagged
 `must_change_pw`.
 
-**4. Run it:**
+**3. Run it:**
 
 ```bash
 cd server && npm run dev
@@ -53,6 +53,9 @@ in a `.env` at the repository root, then `npm run dev` there. With no
 | --- | --- |
 | `npm run dev` | API with file watching |
 | `npm start` | API, production mode |
+| `npm run db:bootstrap` | create/reset the role, databases and `.env` |
+| `npm run db:configure` | write an existing password into `.env`, verified |
+| `npm run check:sql` | cross-check application SQL against the schema |
 | `npm run db:migrate` | apply pending migrations |
 | `npm run db:reset` | drop the schema and re-apply everything **(destroys data)** |
 | `npm run db:seed` | load demo data |

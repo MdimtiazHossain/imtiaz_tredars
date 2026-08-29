@@ -8,6 +8,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "db:bootstrap": "node db/bootstrap.mjs",
+    "db:configure": "node db/configure.mjs",
+    "check:sql": "node tools/check-sql.mjs",
     "db:migrate": "node db/migrate.mjs up",
     "db:reset": "node db/migrate.mjs reset",
     "db:seed": "node db/seed/seed.mjs",
