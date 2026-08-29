@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { query, closePool } from '../src/lib/db.js';
+import { HAS_DB } from './helpers/database.js';
 
 /**
  * Security tests.
@@ -10,7 +11,8 @@ import { query, closePool } from '../src/lib/db.js';
  * Sales user must be refused by the API itself, whatever the client sends.
  */
 
-const HAS_DB = Boolean(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
+// Probes the connection once rather than trusting the environment variable, so
+// an unreachable database skips cleanly instead of failing every assertion.
 const suite = HAS_DB ? describe : describe.skip;
 
 const PASSWORD = process.env.SEED_PASSWORD || 'ChangeMe!2026';

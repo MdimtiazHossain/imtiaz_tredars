@@ -5,6 +5,7 @@ import { createCropSale } from '../src/services/cropSaleService.js';
 import { createDealerPurchase, createDealerSale } from '../src/services/dealerService.js';
 import { allocatePayment } from '../src/services/financeService.js';
 import { nextDocumentNo } from '../src/lib/numbering.js';
+import { HAS_DB } from './helpers/database.js';
 
 /**
  * Integration tests against a real PostgreSQL database.
@@ -14,7 +15,8 @@ import { nextDocumentNo } from '../src/lib/numbering.js';
  * `npm run db:reset && npm run db:seed` against the test database first.
  */
 
-const HAS_DB = Boolean(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
+// Probes the connection once rather than trusting the environment variable, so
+// an unreachable database skips cleanly instead of failing every assertion.
 const suite = HAS_DB ? describe : describe.skip;
 
 let ctx;
