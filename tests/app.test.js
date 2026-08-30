@@ -396,3 +396,73 @@ describe('duplicate submission', () => {
     expect(app.state.toast.msg).toContain('created and selected');
   });
 });
+
+describe('trend chart', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+  });
+
+  const trend = [
+    { month: '2026-07', sales: 500000, purchase: 200000, profit: 100000 },
+    { month: '2026-08', sales: 900000, purchase: 2000000, profit: 300000 },
+  ];
+
+  it('labels each bar with its month name', async () => {
+    const { app } = await mountApp();
+    const bars = app.serverChart(trend);
+    expect(bars.map((b) => b.l)).toEqual(['Jul', 'Aug']);
+  });
+
+  it('converts taka to lakh for the caption', async () => {
+    const { app } = await mountApp();
+    const bars = app.serverChart(trend);
+    expect(bars[0].sText).toBe('৳5.0 L');
+    expect(bars[1].sText).toBe('৳9.0 L');
+  });
+
+  it('keeps a purchase bar larger than sales inside the track', async () => {
+    const { app } = await mountApp();
+    const bars = app.serverChart(trend);
+    // August purchases (৳20 L) exceed its sales (৳9 L); scaling by sales alone
+    // would push the bar past the 150px track.
+    const purchaseHeight = parseFloat(bars[1].pH);
+    expect(purchaseHeight).toBeLessThanOrEqual(150);
+    expect(purchaseHeight).toBeGreaterThan(parseFloat(bars[1].sH));
+  });
+
+  it('scales both series against the same peak', async () => {
+    const { app } = await mountApp();
+    const bars = app.serverChart(trend);
+    // 5 L against a 20 L peak is a quarter of the tallest bar.
+    const ratio = parseFloat(bars[0].sH) / parseFloat(bars[1].pH);
+    expect(ratio).toBeCloseTo(0.25, 2);
+  });
+
+  it('names sales, purchase and profit in the tooltip', async () => {
+    const { app } = await mountApp();
+    const bars = app.serverChart(trend);
+    expect(bars[1].tip).toContain('sales ৳9.0 L');
+    expect(bars[1].tip).toContain('purchase ৳20.0 L');
+    expect(bars[1].tip).toContain('profit ৳3.0 L');
+  });
+
+  it('omits profit from the tooltip when the role may not see it', async () => {
+    const { app } = await mountApp();
+    const bars = app.serverChart([{ month: '2026-08', sales: 100000, purchase: 50000, profit: null }]);
+    expect(bars[0].tip).toContain('sales');
+    expect(bars[0].tip).not.toContain('profit');
+  });
+
+  it('does not divide by zero on a month with no activity', async () => {
+    const { app } = await mountApp();
+    const bars = app.serverChart([{ month: '2026-08', sales: 0, purchase: 0, profit: 0 }]);
+    expect(bars[0].sH).toBe('0.0px');
+    expect(Number.isNaN(parseFloat(bars[0].pH))).toBe(false);
+  });
+
+  it('returns nothing for an empty series', async () => {
+    const { app } = await mountApp();
+    expect(app.serverChart([])).toEqual([]);
+    expect(app.serverChart(null)).toEqual([]);
+  });
+});

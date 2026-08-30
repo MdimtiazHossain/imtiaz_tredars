@@ -536,3 +536,27 @@ suite('profit and loss', () => {
     expect(plNetProfit).toBeCloseTo(expected, 2);
   });
 });
+
+suite('dashboard trend', () => {
+  it('includes a month that had purchases but no sales', async () => {
+    // A month of pure procurement must still appear, or its purchases vanish
+    // from the chart and the totals stop agreeing with the headline figures.
+    const purchases = await query(
+      `SELECT to_char(txn_date, 'YYYY-MM') AS month FROM v_purchases_by_business
+        WHERE org_id = 1 GROUP BY 1`
+    );
+    const sales = await query(
+      `SELECT to_char(txn_date, 'YYYY-MM') AS month FROM v_sales_by_business
+        WHERE org_id = 1 GROUP BY 1`
+    );
+
+    const saleMonths = new Set(sales.rows.map((r) => r.month));
+    const purchaseOnly = purchases.rows.map((r) => r.month).filter((m) => !saleMonths.has(m));
+
+    // The seed deliberately buys in one month and sells in the next.
+    expect(purchaseOnly.length).toBeGreaterThan(0);
+
+    const union = new Set([...saleMonths, ...purchases.rows.map((r) => r.month)]);
+    expect(union.size).toBeGreaterThan(saleMonths.size);
+  });
+});

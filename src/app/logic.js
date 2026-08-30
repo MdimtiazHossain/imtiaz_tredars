@@ -413,6 +413,49 @@ export class BusinessApp extends Component {
     return out;
   }
 
+  /**
+   * Bars for the sales-and-purchase trend, from the server's monthly series.
+   *
+   * The design scaled the bars by sales alone, because in its sample data
+   * sales always exceeded purchases. Against real trading that does not hold —
+   * a month of heavy procurement outspends its sales — and a sales-only scale
+   * pushes the purchase bar out of its 150px track. Both series therefore set
+   * the scale.
+   */
+  serverChart(trend) {
+    if (!trend || !trend.length) return [];
+
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const lakh = n => (Number(n) || 0) / 100000;
+    const label = month => {
+      const [, m] = String(month).split('-');
+      return MONTHS[Number(m) - 1] || month;
+    };
+
+    const points = trend.map(t => ({
+      l: label(t.month),
+      s: lakh(t.sales),
+      p: lakh(t.purchase),
+      // Null when the signed-in role may not see profit figures.
+      pr: t.profit === null || t.profit === undefined ? null : lakh(t.profit),
+    }));
+
+    // Guard the empty case: every value zero would divide by zero.
+    const peak = Math.max(...points.map(x => Math.max(x.s, x.p)));
+    const max = peak > 0 ? peak * 1.12 : 1;
+    const height = v => ((v / max) * 150).toFixed(1) + 'px';
+
+    return points.map(x => ({
+      l: x.l,
+      sH: height(x.s),
+      pH: height(x.p),
+      sText: '৳' + x.s.toFixed(1) + ' L',
+      tip:
+        x.l + ' — sales ৳' + x.s.toFixed(1) + ' L · purchase ৳' + x.p.toFixed(1) + ' L' +
+        (x.pr === null ? '' : ' · profit ৳' + x.pr.toFixed(1) + ' L'),
+    }));
+  }
+
   /** Rows for one business-line panel, from that line's server aggregate. */
   businessPanelRows(d) {
     if (!d) return [];
@@ -444,8 +487,10 @@ export class BusinessApp extends Component {
     const b = this.state.biz;
     const series = months.map(x => { const s = b === 'dealer' ? x.ds : b === 'crop' ? x.cs : x.ds + x.cs; const p = b === 'dealer' ? x.dp : b === 'crop' ? x.cp : x.dp + x.cp; return {l:x.l, s:s, p:p, pr:s - p}; });
     const max = Math.max.apply(null, series.map(x => x.s)) * 1.12;
-    const chart = series.map(x => ({l:x.l, sH:(x.s / max * 150).toFixed(1) + 'px', pH:(x.p / max * 150).toFixed(1) + 'px',
-      sText:'৳' + x.s.toFixed(1) + ' L', tip:x.l + ' — sales ৳' + x.s.toFixed(1) + ' L · purchase ৳' + x.p.toFixed(1) + ' L · profit ৳' + x.pr.toFixed(1) + ' L'}));
+    const chart = sd && sd.trend
+      ? this.serverChart(sd.trend)
+      : series.map(x => ({l:x.l, sH:(x.s / max * 150).toFixed(1) + 'px', pH:(x.p / max * 150).toFixed(1) + 'px',
+          sText:'৳' + x.s.toFixed(1) + ' L', tip:x.l + ' — sales ৳' + x.s.toFixed(1) + ' L · purchase ৳' + x.p.toFixed(1) + ' L · profit ৳' + x.pr.toFixed(1) + ' L'}));
     const byBiz = sd && sd.byBusiness;
     const panels = byBiz ? [
       {name:'Dealer Business', color:C.deal, bg:C.dealBg, tag:'Company → Dealer → Customer', screen:'dealer-sales',

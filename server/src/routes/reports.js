@@ -138,6 +138,14 @@ router.get(
     const purchaseByMonth = new Map(
       purchaseMonthly.rows.map((r) => [r.month, num(r.purchase)])
     );
+    const salesByMonth = new Map(
+      monthly.rows.map((r) => [r.month, { sales: num(r.sales), profit: num(r.profit) }])
+    );
+
+    // Take every month that saw either sales or purchases. Driving this from
+    // the sales months alone would drop a month of pure procurement -- and the
+    // chart's purchase total would then disagree with the headline figure.
+    const trendMonths = [...new Set([...salesByMonth.keys(), ...purchaseByMonth.keys()])].sort();
 
     const agingBuckets = {};
     for (const r of aging.rows) agingBuckets[r.aging_bucket] = num(r.amount);
@@ -173,12 +181,15 @@ router.get(
       },
       cash: { balance: num(cash.rows[0].balance), accounts: cash.rows[0].accounts },
       aging: agingBuckets,
-      trend: monthly.rows.map((r) => ({
-        month: r.month,
-        sales: num(r.sales),
-        purchase: purchaseByMonth.get(r.month) || 0,
-        profit: showProfit ? num(r.profit) : null,
-      })),
+      trend: trendMonths.map((month) => {
+        const sale = salesByMonth.get(month);
+        return {
+          month,
+          sales: sale ? sale.sales : 0,
+          purchase: purchaseByMonth.get(month) || 0,
+          profit: showProfit ? (sale ? sale.profit : 0) : null,
+        };
+      }),
     };
 
     if (showProfit) {
