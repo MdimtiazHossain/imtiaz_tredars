@@ -149,9 +149,16 @@ text, so a recipient can total a column without cleaning it first.
 
 PDFKit's built-in fonts encode Latin-1 only, so a Bengali party name would
 otherwise throw. Set `PDF_FONT_PATH` to a `.ttf` covering the scripts you use
-(Noto Sans Bengali, for example) and it is embedded; without one, characters
-outside Latin-1 are replaced rather than allowed to fail the request. Excel has
-no such limit — `.xlsx` is UTF-8 throughout.
+and it is embedded; without one, characters outside Latin-1 are replaced rather
+than allowed to fail the request, and the taka sign falls back to `Tk`. Excel
+has no such limit — `.xlsx` is UTF-8 throughout.
+
+On Windows, Kalpurush ships with the Bangla language support most machines here
+already have (`C:/Windows/Fonts/kalpurush.ttf`); on Linux, Noto Sans Bengali is
+the usual choice. Whichever you pick needs the substitution tables, not just a
+glyph per code point — Bengali conjuncts are formed by the font, so one without
+them renders যুক্তাক্ষর as separate letters with a visible hasanta.
+`tests/export.test.js` checks the configured font for exactly that.
 
 ### Roles
 

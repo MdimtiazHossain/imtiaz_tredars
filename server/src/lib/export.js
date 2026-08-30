@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
+import { config } from './config.js';
 
 /**
  * Report export.
@@ -30,7 +31,7 @@ const isNumeric = (type) => type === 'money' || type === 'number' || type === 'p
  *
  * Excel has no such limit: .xlsx is UTF-8 throughout.
  */
-const PDF_FONT_PATH = process.env.PDF_FONT_PATH || null;
+const PDF_FONT_PATH = config.pdfFontPath;
 const hasEmbeddedFont = Boolean(PDF_FONT_PATH && fs.existsSync(PDF_FONT_PATH));
 
 if (PDF_FONT_PATH && !hasEmbeddedFont) {
@@ -284,7 +285,10 @@ export function buildPdf(report) {
 /** Taka with lakh/crore grouping, matching the on-screen format. */
 function formatMoney(value) {
   const n = Math.round(Number(value) || 0);
-  return `${n < 0 ? '-' : ''}Tk ${Math.abs(n).toLocaleString('en-IN')}`;
+  // The taka sign sits outside Latin-1, so it renders only with an embedded
+  // font. Without one it would export as "?", and "Tk" reads better than that.
+  const symbol = hasEmbeddedFont ? '৳' : 'Tk';
+  return `${n < 0 ? '-' : ''}${symbol} ${Math.abs(n).toLocaleString('en-IN')}`;
 }
 
 function formatNumber(value) {

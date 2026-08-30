@@ -54,4 +54,8 @@ export const config = {
 
   // Default organisation for a single-tenant deployment.
   orgId: Number(process.env.ORG_ID || 1),
+
+  // A .ttf covering the scripts the reports contain. PDFKit's built-in fonts
+  // are Latin-1 only, so without this every Bengali name exports as "?".
+  pdfFontPath: process.env.PDF_FONT_PATH || null,
 };
