@@ -509,3 +509,30 @@ suite('dashboard aggregates', () => {
     expect(cropValue + productValue).toBeGreaterThan(0);
   });
 });
+
+suite('profit and loss', () => {
+  it('reconciles net profit with the profit the sales themselves recorded', async () => {
+    // Every sale's own profit_amount already nets off the transport and other
+    // cost booked on it. The P&L must book those as a selling expense, or its
+    // net profit and the dashboard's gross profit disagree.
+    const { rows } = await query(
+      `SELECT
+         COALESCE((SELECT SUM(net_amount - cogs_amount) FROM crop_sales
+                    WHERE status = 'POSTED'), 0)
+       + COALESCE((SELECT SUM(net_amount - cost_amount) FROM dealer_sales
+                    WHERE status = 'POSTED'), 0) AS revenue_less_cogs,
+         COALESCE((SELECT SUM(transport_cost + other_cost) FROM crop_sales
+                    WHERE status = 'POSTED'), 0) AS selling,
+         COALESCE((SELECT SUM(profit_amount) FROM crop_sales WHERE status = 'POSTED'), 0)
+       + COALESCE((SELECT SUM(profit_amount) FROM dealer_sales WHERE status = 'POSTED'), 0)
+                                                 AS recorded_profit,
+         COALESCE((SELECT SUM(amount) FROM expenses WHERE status = 'POSTED'), 0) AS expenses`
+    );
+
+    const r = rows[0];
+    const plNetProfit = num(r.revenue_less_cogs) - num(r.selling) - num(r.expenses);
+    const expected = num(r.recorded_profit) - num(r.expenses);
+
+    expect(plNetProfit).toBeCloseTo(expected, 2);
+  });
+});

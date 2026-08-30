@@ -609,7 +609,14 @@ export class BusinessApp extends Component {
   loadReportCatalogue() {
     if (!this.repository || typeof this.repository.reportCatalogue !== 'function') return;
     this.repository.reportCatalogue().then(
-      groups => this.setState({ reportCatalogue: groups }),
+      groups => {
+        this.setState({ reportCatalogue: groups });
+        // Load whatever is selected by default; otherwise the screen would
+        // open showing the bundled figures until the user clicked something.
+        const listed = groups.flatMap(g => g.items.map(i => i.id));
+        const selected = listed.includes(this.state.repSel) ? this.state.repSel : listed[0];
+        if (selected) this.selectReport(selected);
+      },
       () => {}
     );
   }
@@ -746,9 +753,15 @@ export class BusinessApp extends Component {
           {footNote:'5 suppliers', footTotal:'Purchase ' + money(33510000)})}
     };
     const server = S.serverReport && S.serverReport.id === S.repSel ? S.serverReport : null;
+    // When the repository can serve reports, the bundled definitions are not a
+    // fallback -- showing last year's seeded numbers beside live ones would be
+    // worse than showing nothing while the real answer loads.
+    const serverBacked = !!(this.repository && typeof this.repository.report === 'function');
     const cur = server
       ? {title:null, note:null, t:this.serverReportTable(server)}
-      : defs[S.repSel];
+      : serverBacked
+        ? null
+        : defs[S.repSel];
     const flat = []; groups.forEach(g => g.items.forEach(i => flat.push({id:i[0], l:i[1]})));
     const curLabel = (flat.filter(f => f.id === S.repSel)[0] || {l:''}).l;
     return {groups:groups.map(g => ({g:g.g, items:g.items.map(i => ({l:i[1], on:i[0] === S.repSel, bg:i[0] === S.repSel ? C.accBg : 'transparent',

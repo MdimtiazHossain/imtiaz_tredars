@@ -4,6 +4,8 @@ import { query, num } from '../lib/db.js';
 import { handler, ok, parseQuery, listQuerySchema, paginate, pageMeta } from '../lib/http.js';
 import { requirePermission, canSeeProfit } from '../middleware/auth.js';
 import { forbidden, notFound } from '../lib/errors.js';
+import { col, dateAndBusiness } from './reportHelpers.js';
+import { MORE_REPORTS } from './reportDefinitions.js';
 
 /**
  * Reporting.
@@ -17,19 +19,6 @@ import { forbidden, notFound } from '../lib/errors.js';
  */
 const router = Router();
 
-/**
- * Column descriptor.
- *
- * A report says what each column *is* — money, a count, a percentage — and the
- * client renders accordingly. Without this the browser would have to guess
- * from the value, which gets a quantity of 30500 wrong as often as it gets it
- * right.
- *
- * @param {string} key    property on each row
- * @param {string} label  header text
- * @param {'text'|'code'|'money'|'number'|'percent'} [type='text']
- */
-const col = (key, label, type = 'text') => ({ key, label, type });
 
 /** Shared filter shape across every report. */
 const reportQuery = listQuerySchema.extend({
@@ -42,23 +31,6 @@ const reportQuery = listQuerySchema.extend({
   employeeId: z.coerce.number().int().positive().optional(),
 });
 
-/** Build the shared WHERE fragment; `alias` is the document table's alias. */
-function dateAndBusiness(q, params, alias, businessColumn = 'business_type') {
-  let where = '';
-  if (q.from) {
-    params.push(q.from);
-    where += ` AND ${alias}.txn_date >= $${params.length}`;
-  }
-  if (q.to) {
-    params.push(q.to);
-    where += ` AND ${alias}.txn_date <= $${params.length}`;
-  }
-  if (q.businessType !== 'ALL') {
-    params.push(q.businessType);
-    where += ` AND ${alias}.${businessColumn} = $${params.length}`;
-  }
-  return where;
-}
 
 /* ---------------------------------------------------------------- dashboard */
 
@@ -228,6 +200,7 @@ router.get(
 /** Report definitions: each returns { columns, rows, totals }. */
 const REPORTS = {
   'sales-customer': {
+    order: 3,
     group: 'Sales',
     label: 'Customer-wise sales',
     permission: 'report.view',
@@ -265,6 +238,7 @@ const REPORTS = {
   },
 
   'sales-product': {
+    order: 4,
     group: 'Sales',
     label: 'Product-wise sales',
     permission: 'report.view',
@@ -314,6 +288,7 @@ const REPORTS = {
   },
 
   'pur-supplier': {
+    order: 6,
     group: 'Purchase',
     label: 'Supplier-wise purchase',
     permission: 'report.view',
@@ -356,6 +331,7 @@ const REPORTS = {
   },
 
   'crop-batch-profit': {
+    order: 12,
     group: 'Profit',
     label: 'Batch-wise crop profit',
     permission: 'report.profit',
@@ -410,6 +386,7 @@ const REPORTS = {
   },
 
   'fin-aging': {
+    order: 16,
     group: 'Finance',
     label: 'Customer outstanding & aging',
     permission: 'report.view',
@@ -462,6 +439,7 @@ const REPORTS = {
   },
 
   'inv-dead': {
+    order: 11,
     group: 'Inventory',
     label: 'Dead stock',
     permission: 'report.view',
@@ -507,6 +485,7 @@ const REPORTS = {
   },
 
   'fin-expense': {
+    order: 19,
     group: 'Finance',
     label: 'Expense register',
     permission: 'expense.view',
@@ -546,17 +525,29 @@ const REPORTS = {
  * alongside them: a hand-written list drifts, and advertising a report the
  * server cannot produce is worse than not listing it.
  */
+/** The full registry: the definitions above plus the rest of the catalogue. */
+const ALL_REPORTS = { ...REPORTS, ...MORE_REPORTS };
+
+const GROUP_ORDER = ['Sales', 'Purchase', 'Inventory', 'Profit', 'Finance'];
+
 function buildCatalogue(user) {
   const groups = new Map();
 
-  for (const [id, def] of Object.entries(REPORTS)) {
+  for (const [id, def] of Object.entries(ALL_REPORTS)) {
     // Do not offer a report this user would be refused.
     if (def.permission && !user.permissions.includes(def.permission)) continue;
     if (!groups.has(def.group)) groups.set(def.group, []);
-    groups.get(def.group).push({ id, label: def.label });
+    groups.get(def.group).push({ id, label: def.label, order: def.order ?? 999 });
   }
 
-  return [...groups.entries()].map(([group, items]) => ({ group, items }));
+  // Present them in the order the design lays out rather than insertion order.
+  return GROUP_ORDER.filter((g) => groups.has(g)).map((group) => ({
+    group,
+    items: groups
+      .get(group)
+      .sort((a, b) => a.order - b.order)
+      .map(({ id, label }) => ({ id, label })),
+  }));
 }
 
 router.get(
@@ -571,7 +562,7 @@ router.get(
   '/:reportId',
   requirePermission('report.view'),
   handler(async (req, res) => {
-    const definition = REPORTS[req.params.reportId];
+    const definition = ALL_REPORTS[req.params.reportId];
     if (!definition) {
       throw notFound(`Report "${req.params.reportId}"`);
     }
