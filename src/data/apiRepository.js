@@ -23,6 +23,8 @@ const MASTER_PATHS = {
   product: '/products',
   warehouse: '/warehouses',
   employee: '/employees',
+  account: '/accounts',
+  category: '/expense-categories',
   customer: '/customers',
   supplier: '/suppliers',
   company: '/companies',

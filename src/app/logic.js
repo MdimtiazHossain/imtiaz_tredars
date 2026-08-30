@@ -85,6 +85,7 @@ export class BusinessApp extends Component {
       if (id === 'products') this.loadMasterList('product');
       if (id === 'warehouses') this.loadMasterList('warehouse');
       if (id === 'employees') this.loadMasterList('employee');
+      if (id === 'accounts') { this.loadMasterList('account'); this.loadMasterList('category'); }
     };
   }
   h(g, k, num) { return e => { const v = num ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value; this.setState(s => { const o = Object.assign({}, s[g]); o[k] = v; return {[g]:o}; }); }; }
@@ -401,7 +402,10 @@ export class BusinessApp extends Component {
    */
   mayMaster(kind, action) {
     const held = this.props.permissions;
-    return !held ? true : held.indexOf(`${kind}.${action}`) > -1;
+    // Expense categories sit under the expense module rather than owning a
+    // top-level code of their own.
+    const prefix = kind === 'category' ? 'expense.category' : kind;
+    return !held ? true : held.indexOf(`${prefix}.${action}`) > -1;
   }
 
   /** The add / edit / retire controls for one master screen. */
@@ -1258,12 +1262,33 @@ export class BusinessApp extends Component {
           cell('Invoice ' + c.code, {color:C.mut}), cell('05 Sep 2026', {color:C.mut}), cell(money(c.bal), {align:'right', mono:true, weight:'700'}),
           cell('Pay', {align:'center', badge:true, badgeBg:C.accBg, badgeFg:C.acc})]}))),
       {footNote:'Payables across farmers and companies', footTotal:'Payable ' + money(payableTotal)});
-    const cashTotal = CASH_ACCOUNTS.reduce((t, r) => t + r.balance, 0);
-    const cash = table([column('Account'), column('Type'), column('Last movement'), column('Balance', 'right')],
-      CASH_ACCOUNTS.map(r => ({cells:[
-        cell(r.name, {weight:'600'}), cell(r.type, {badge:true, badgeBg:'#F0EEE9', badgeFg:'#3D3A36'}), cell(r.last, {color:C.mut}),
-        cell(money(r.balance), {align:'right', mono:true, weight:'700'})]})),
-      {footNote:CASH_ACCOUNTS.length + ' accounts', footTotal:'Total ' + money(cashTotal)});
+    // The real accounts once they have been fetched; the bundled list is the
+    // fallback for running with no backend.
+    const accounts = (S.masterRows.account || CASH_ACCOUNTS).filter(a => a.status !== 'Closed');
+    const cashTotal = accounts.reduce((t, r) => t + (r.balance ?? r.opening ?? 0), 0);
+    const cash = table([column('Account'), column('Code'), column('Type'), column('Last movement'), column('Balance', 'right'), column('', 'right')],
+      accounts.map(r => ({cells:[
+        cell(r.name, {weight:'600'}),
+        cell(r.code || '—', {mono:true, color:C.mut}),
+        cell(r.type, {badge:true, badgeBg:'#F0EEE9', badgeFg:'#3D3A36'}),
+        cell(r.lastMovement ? String(r.lastMovement).slice(0, 10) : r.last || '—', {color:C.mut}),
+        cell(money(r.balance ?? r.opening ?? 0), {align:'right', mono:true, weight:'700'}),
+        cell('', {align:'right', actions:this.masterRowActions('account', r)})]})),
+      {footNote:accounts.length + ' accounts', footTotal:'Total ' + money(cashTotal)});
+
+    const categories = (S.masterRows.category || this.data.expenseCategories || [])
+      .filter(c => c.status !== 'Retired');
+    const cats = table([column('Code'), column('Category'), column('Vouchers', 'right'), column('Spent', 'right'), column('', 'right')],
+      categories.map(c => ({cells:[
+        cell(c.code || '—', {mono:true, color:C.mut}),
+        cell(c.name, {weight:'600'}),
+        cell(c.vouchers ? String(c.vouchers) : '—', {align:'right', mono:true, color:C.mut}),
+        cell(c.spent ? money(c.spent) : '—', {align:'right', mono:true, weight:'600'}),
+        cell('', {align:'right', actions:this.masterRowActions('category', c)})]})),
+      {emptyTitle:'No expense categories yet',
+       emptyNote:'Add one and expenses can be booked against it.',
+       footNote:categories.length + (categories.length === 1 ? ' category' : ' categories'),
+       footTotal:'Spent ' + money(categories.reduce((t, c) => t + (c.spent || 0), 0))});
     const exp = table([column('Voucher'), column('Date'), column('Category'), column('Note'), column('Business'), column('Amount', 'right')],
       [['EXP-2608-118', '27 Aug', 'Transport', 'Dinajpur → Bogura, 3 trucks', 'crop', 96000], ['EXP-2608-112', '26 Aug', 'Loading / Unloading', 'Naogaon godown labour', 'crop', 34000],
        ['EXP-2608-108', '25 Aug', 'Salary', 'August advance — 4 staff', 'both', 128000], ['EXP-2608-101', '23 Aug', 'Warehouse', 'Rangpur store rent', 'both', 45000],
@@ -1271,14 +1296,17 @@ export class BusinessApp extends Component {
         cell(r[0], {mono:true, weight:'600'}), cell(r[1], {color:C.mut}), cell(r[2]), cell(r[3], {color:C.mut}),
         cell(r[4] === 'crop' ? 'Bulk Crop' : r[4] === 'dealer' ? 'Dealer' : 'Shared', {badge:true, badgeBg:r[4] === 'crop' ? C.cropBg : r[4] === 'dealer' ? C.dealBg : '#F0EEE9', badgeFg:r[4] === 'crop' ? C.crop : r[4] === 'dealer' ? C.deal : '#3D3A36'}),
         cell(money(r[5]), {align:'right', mono:true, weight:'600'})]})), {footNote:'August 2026 expenses', footTotal:'Total ' + money(384100)});
-    return {tabs:this.tabify([{k:'receivable', l:'Receivable'}, {k:'payable', l:'Payable'}, {k:'cash', l:'Cash & Bank'}, {k:'expense', l:'Expense'}, {k:'pl', l:'Profit & Loss'}], t, 'acctTab'),
+    return {tabs:this.tabify([{k:'receivable', l:'Receivable'}, {k:'payable', l:'Payable'}, {k:'cash', l:'Cash & Bank'}, {k:'expense', l:'Expense'}, {k:'category', l:'Categories'}, {k:'pl', l:'Profit & Loss'}], t, 'acctTab'),
       actions:[
         {l:'Receive payment', onClick:() => this.openForm('payment', {direction:'RECEIPT', partyType:'CUSTOMER'})},
         {l:'Pay supplier', onClick:() => this.openForm('payment', {direction:'PAYMENT', partyType:'SUPPLIER'})},
         {l:'Add expense', onClick:() => this.openForm('expense')}
       ],
-      isRec:t === 'receivable', isPay:t === 'payable', isCash:t === 'cash', isExp:t === 'expense', isPl:t === 'pl',
-      rec:rec, pay:pay, cash:cash, exp:exp,
+      isRec:t === 'receivable', isPay:t === 'payable', isCash:t === 'cash', isExp:t === 'expense',
+      isCat:t === 'category', isPl:t === 'pl',
+      rec:rec, pay:pay, cash:cash, exp:exp, cats:cats,
+      addAccount:{canAdd:this.mayMaster('account', 'create'), label:'Add account', onAdd:() => this.openMaster('account')},
+      addCategory:{canAdd:this.mayMaster('category', 'create'), label:'Add category', onAdd:() => this.openMaster('category')},
       // Read from the same rows the tables below are built from, so a KPI can
       // never disagree with the table it sits above.
       kpis:[{k:'Total receivable', v:money(receivableTotal), s:money(overdue) + ' overdue'},

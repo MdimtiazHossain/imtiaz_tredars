@@ -18,6 +18,7 @@ import { writeAudit } from '../lib/audit.js';
 import { allocatePayment, writeLedger } from '../services/financeService.js';
 import { evaluateRules, requestApproval } from '../services/approvalService.js';
 import { badRequest } from '../lib/errors.js';
+import { registerMasterCrud } from './masterCrud.js';
 
 /** Payments, expenses, cash/bank accounts, receivables and payables. */
 const router = Router();
@@ -59,6 +60,40 @@ router.get(
         type: r.account_type,
         balance: num(r.balance),
         lastMovement: r.last_movement,
+      }))
+    );
+  })
+);
+
+router.get(
+  '/expense-categories',
+  requirePermission('expense.view'),
+  handler(async (req, res) => {
+    const { rows } = await query(
+      `SELECT c.id, c.code, c.name, c.is_active,
+              COALESCE(e.vouchers, 0) AS vouchers,
+              COALESCE(e.spent, 0)    AS spent
+         FROM expense_categories c
+         LEFT JOIN (
+           SELECT category_id, COUNT(*) AS vouchers, SUM(amount) AS spent
+             FROM expenses
+            WHERE org_id = $1 AND status = 'POSTED'
+            GROUP BY category_id
+         ) e ON e.category_id = c.id
+        WHERE c.is_active
+        ORDER BY c.id`,
+      [req.orgId]
+    );
+
+    ok(
+      res,
+      rows.map((r) => ({
+        id: Number(r.id),
+        code: r.code,
+        name: r.name,
+        vouchers: Number(r.vouchers),
+        spent: num(r.spent),
+        status: r.is_active ? 'Active' : 'Retired',
       }))
     );
   })
@@ -567,5 +602,99 @@ router.get(
     );
   })
 );
+
+/* ------------------------------------------- accounts and expense categories */
+
+/**
+ * Both carry a code that means something -- BANK-IBBL reconciles against a
+ * bank statement, TRANSPORT reads in a report -- so the operator may choose
+ * one, and gets a clear message rather than a constraint violation when it is
+ * taken.
+ */
+
+const accountSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Z0-9-]+$/, 'Use capitals, digits and dashes, like BANK-IBBL')
+    .max(24)
+    .optional(),
+  name: z.string().trim().min(1, 'Account name is required').max(160),
+  type: z.enum(['CASH', 'BANK', 'MFS']).default('CASH'),
+  opening: z.coerce.number().default(0),
+});
+
+const expenseCategorySchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Z0-9_]+$/, 'Use capitals, digits and underscores, like OFFICE_UTILITY')
+    .max(32)
+    .optional(),
+  name: z.string().trim().min(1, 'Category name is required').max(120),
+});
+
+registerMasterCrud(router, {
+  path: 'accounts',
+  table: 'accounts',
+  label: 'Account',
+  permissions: { create: 'account.create', edit: 'account.edit', remove: 'account.delete' },
+  code: { prefix: 'ACC', width: 2, fromBody: true },
+  schema: accountSchema,
+  columns: (b) => ({
+    name: b.name,
+    account_type: b.type,
+    opening_balance: b.opening,
+  }),
+  blockers: [
+    {
+      // Money still sitting in an account is the hazard: closing it would hide
+      // a balance that is genuinely there. A used-but-empty account closes
+      // fine, and its history keeps naming it.
+      sql: `SELECT ABS(a.opening_balance
+                       + COALESCE((SELECT SUM(l.debit - l.credit) FROM ledger_entries l
+                                    WHERE l.account_id = a.id), 0)) AS value
+              FROM accounts a WHERE a.id = $1 AND a.org_id = $2`,
+      code: 'HAS_BALANCE',
+      message: (n) =>
+        `This account still holds Tk ${Math.round(n).toLocaleString('en-IN')}. ` +
+        'Move the balance out before closing it.',
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    type: r.account_type,
+    opening: num(r.opening_balance),
+    status: r.is_active ? 'Active' : 'Closed',
+  }),
+});
+
+registerMasterCrud(router, {
+  path: 'expense-categories',
+  table: 'expense_categories',
+  label: 'Expense category',
+  permissions: {
+    create: 'expense.category.create',
+    edit: 'expense.category.edit',
+    remove: 'expense.category.delete',
+  },
+  code: { prefix: 'EXP', width: 2, fromBody: true },
+  schema: expenseCategorySchema,
+  // Shared across organisations, and four columns wide: no org_id, no
+  // timestamps.
+  orgScoped: false,
+  timestamped: false,
+  columns: (b) => ({ name: b.name }),
+  // Nothing blocks retiring one. Past expenses keep pointing at the category
+  // they were booked to, and it simply stops being offered on new ones.
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    status: r.is_active ? 'Active' : 'Retired',
+  }),
+});
 
 export default router;

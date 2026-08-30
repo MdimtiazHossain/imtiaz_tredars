@@ -1140,6 +1140,73 @@ describe('master data', () => {
     expect(app.state.toast.msg).toContain('WH-05');
   });
 
+  it('lists cash and bank accounts with edit and retire', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('account');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const acct = app.renderVals().acct;
+    expect(acct.addAccount.canAdd).toBe(true);
+    expect(acct.cash.rows[0].cells.slice(-1)[0].actions.map((a) => a.label)).toEqual([
+      'Edit',
+      'Retire',
+    ]);
+    expect(acct.cash.footNote).toBe(acct.cash.rows.length + ' accounts');
+  });
+
+  it('gives expense categories their own tab', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('category');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const acct = app.renderVals().acct;
+    expect(acct.tabs.map((t) => t.l)).toContain('Categories');
+    expect(acct.cats.rows.length).toBeGreaterThan(0);
+    expect(acct.cats.rows[0].cells.slice(-1)[0].actions).toHaveLength(2);
+  });
+
+  it('checks a chosen code before sending it', async () => {
+    const { app } = await mountApp();
+    let sent = false;
+    app.repository.createMaster = async () => { sent = true; return {}; };
+
+    app.openMaster('account');
+    app.onMasterField('name')({ target: { value: 'City Bank' } });
+    app.onMasterField('code')({ target: { value: 'bank city' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(sent).toBe(false);
+    expect(app.state.master.error).toMatch(/capitals, digits and dashes/i);
+  });
+
+  it('omits an empty code so the server allocates one', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.createMaster = async (kind, body) => {
+      sent.push([kind, body]);
+      // The server allocates the code, so it comes back on the response.
+      return { ...body, id: 8, code: 'EXP-01' };
+    };
+
+    app.openMaster('category');
+    app.onMasterField('name')({ target: { value: 'Fuel' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent[0][0]).toBe('category');
+    expect(sent[0][1].code).toBeUndefined();
+    expect(app.state.toast.msg).toContain('EXP-01');
+  });
+
+  it('reads the category permission from the expense module', async () => {
+    // The code is expense.category.create, not category.create.
+    const { app } = await mountApp({ permissions: ['expense.category.create'] });
+    expect(app.mayMaster('category', 'create')).toBe(true);
+    expect(app.mayMaster('category', 'delete')).toBe(false);
+    expect(app.mayMaster('account', 'create')).toBe(false);
+  });
+
   it('offers districts the data already uses rather than a fixed list', async () => {
     const { app } = await mountApp();
     app.openMaster('customer');

@@ -45,6 +45,7 @@ const COMPANY_ROLES = [
 
 export const MASTER_KINDS = [
   'crop', 'product', 'customer', 'supplier', 'company', 'warehouse', 'employee',
+  'account', 'category',
 ];
 
 const TITLES = {
@@ -55,6 +56,8 @@ const TITLES = {
   company: ['company', 'Principals, supplier companies and buyer companies'],
   warehouse: ['warehouse', 'Godowns and depots that hold stock'],
   employee: ['employee', 'The team, and the department each one belongs to'],
+  account: ['account', 'Cash, bank and mobile money the business holds'],
+  category: ['expense category', 'What spending is booked against'],
 };
 
 /** The empty form for a new record, or the values of the one being edited. */
@@ -78,6 +81,19 @@ export function defaultsFor(kind, data, row) {
       name: row ? row.name : '',
       district: row ? row.district : firstDistrict,
     };
+  }
+
+  if (kind === 'account') {
+    return {
+      code: row ? row.code : '',
+      name: row ? row.name : '',
+      type: row ? row.type : 'CASH',
+      opening: row ? row.opening : '',
+    };
+  }
+
+  if (kind === 'category') {
+    return { code: row ? row.code : '', name: row ? row.name : '' };
   }
 
   if (kind === 'employee') {
@@ -169,6 +185,64 @@ export function fieldsFor(kind, form, data, on, row) {
         onChange: on('rate'),
         placeholder: '0',
         hint: 'Used as the opening suggestion on a purchase',
+      }),
+    ];
+  }
+
+  if (kind === 'account') {
+    return [
+      field('name', 'Account name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'Islami Bank — 20501...4417',
+        wide: true,
+      }),
+      field('type', 'Kind', {
+        options: [
+          { value: 'CASH', label: 'Cash' },
+          { value: 'BANK', label: 'Bank' },
+          { value: 'MFS', label: 'Mobile money' },
+        ],
+        value: form.type,
+        onChange: on('type'),
+      }),
+      // The code goes on statements and reports, so it is worth choosing.
+      field('code', 'Code', {
+        value: form.code,
+        onChange: on('code'),
+        mono: true,
+        placeholder: 'BANK-IBBL',
+        hint: row ? 'Changing this changes how the account is referenced' : 'Optional — one is allocated if left blank',
+      }),
+      // An opening balance is what was in the account on the day it was added,
+      // so it only makes sense while creating one.
+      ...(row
+        ? []
+        : [
+            field('opening', 'Opening balance', {
+              type: 'number',
+              value: form.opening,
+              onChange: on('opening'),
+              placeholder: '0',
+            }),
+          ]),
+    ];
+  }
+
+  if (kind === 'category') {
+    return [
+      field('name', 'Category name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'Office & utility',
+        wide: true,
+      }),
+      field('code', 'Code', {
+        value: form.code,
+        onChange: on('code'),
+        mono: true,
+        placeholder: 'OFFICE_UTILITY',
+        hint: 'Optional — one is allocated if left blank',
       }),
     ];
   }
@@ -404,6 +478,18 @@ export function validate(kind, form) {
 
   if (kind === 'warehouse') return null;
 
+  if (kind === 'account' || kind === 'category') {
+    // The server holds the same rule; saying it here means the operator finds
+    // out while typing rather than after saving.
+    const allowed = kind === 'account' ? /^[A-Z0-9-]*$/ : /^[A-Z0-9_]*$/;
+    if (form.code && !allowed.test(form.code)) {
+      return kind === 'account'
+        ? 'A code uses capitals, digits and dashes, like BANK-IBBL.'
+        : 'A code uses capitals, digits and underscores, like OFFICE_UTILITY.';
+    }
+    return null;
+  }
+
   if (kind === 'employee') {
     // A joining date in the future is a data-entry slip, not a plan.
     if (form.joined && form.joined > new Date().toISOString().slice(0, 10)) {
@@ -432,6 +518,20 @@ export function payloadFor(kind, form) {
 
   if (kind === 'warehouse') {
     return { name: text(form.name), district: text(form.district) };
+  }
+
+  if (kind === 'account') {
+    return {
+      // Omitted rather than empty, so the server allocates one.
+      code: text(form.code) || undefined,
+      name: text(form.name),
+      type: form.type,
+      opening: number(form.opening),
+    };
+  }
+
+  if (kind === 'category') {
+    return { code: text(form.code) || undefined, name: text(form.name) };
   }
 
   if (kind === 'employee') {

@@ -40,7 +40,7 @@ async function signIn(roleCode) {
 suite('authentication', () => {
   beforeAll(async () => {
     app = createApp();
-    for (const role of ['Admin', 'Sales', 'Warehouse', 'Accounts']) {
+    for (const role of ['Admin', 'Sales', 'Warehouse', 'Accounts', 'Purchase']) {
       tokens[role] = await signIn(role);
     }
   });
@@ -375,9 +375,10 @@ suite('master data', () => {
 
   beforeAll(async () => {
     app2 = createApp();
-    for (const role of ['Admin', 'Sales', 'Warehouse', 'Purchase']) {
-      t[role] = await signIn(role);
-    }
+    // Reuse the tokens the first suite obtained. Signing in again per suite
+    // trips the auth rate limiter, and a 429 shows up as an unexplained 401
+    // on whatever the next assertion happens to be.
+    Object.assign(t, tokens);
   });
 
   const asAdmin = (method, path) =>
@@ -473,6 +474,9 @@ suite('master data', () => {
       ['Sales', 'delete', '/api/products/1', null],
       ['Warehouse', 'post', '/api/warehouses', { name: 'X' }],
       ['Sales', 'post', '/api/employees', { name: 'X' }],
+      ['Sales', 'post', '/api/accounts', { name: 'X', type: 'CASH' }],
+      ['Warehouse', 'post', '/api/expense-categories', { name: 'X' }],
+      ['Accounts', 'delete', '/api/accounts/1', null],
     ];
 
     for (const [role, method, path, body] of cases) {
@@ -607,6 +611,70 @@ suite('master data', () => {
     const res = await asAdmin('delete', `/api/employees/${rows[0].employee_id}`);
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('HAS_ACTIVE_LOGIN');
+  });
+
+  it('opens an account with a code the operator chose', async () => {
+    const created = await asAdmin('post', '/api/accounts').send({
+      code: 'BANK-CITY',
+      name: 'City Bank — 3301...9922',
+      type: 'BANK',
+      opening: 0,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data.code).toBe('BANK-CITY');
+
+    // An empty account closes fine; its history keeps naming it.
+    const closed = await asAdmin('delete', `/api/accounts/${created.body.data.id}`);
+    expect(closed.status).toBe(200);
+    expect(closed.body.data.status).toBe('Closed');
+
+    await query('DELETE FROM accounts WHERE id = $1', [created.body.data.id]);
+  });
+
+  it('names the record already using a code rather than failing on a constraint', async () => {
+    const res = await asAdmin('post', '/api/accounts').send({
+      code: 'BANK-IBBL',
+      name: 'Duplicate',
+      type: 'BANK',
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('CODE_IN_USE');
+    expect(res.body.error.message).toMatch(/Islami Bank/);
+  });
+
+  it('refuses to close an account that still holds money', async () => {
+    const { rows } = await query(
+      `SELECT a.id FROM accounts a
+        WHERE a.org_id = $1
+          AND a.opening_balance
+              + COALESCE((SELECT SUM(l.debit - l.credit) FROM ledger_entries l
+                           WHERE l.account_id = a.id), 0) <> 0
+        LIMIT 1`,
+      [1]
+    );
+    const res = await asAdmin('delete', `/api/accounts/${rows[0].id}`);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('HAS_BALANCE');
+  });
+
+  it('maintains expense categories, which are shared and have no org column', async () => {
+    const created = await asAdmin('post', '/api/expense-categories').send({ name: 'Fuel' });
+    expect(created.status).toBe(201);
+    const id = created.body.data.id;
+
+    // The table has no updated_at, so a PATCH must not try to set one.
+    const edited = await asAdmin('patch', `/api/expense-categories/${id}`).send({
+      name: 'Fuel & lubricants',
+    });
+    expect(edited.status).toBe(200);
+    expect(edited.body.data.name).toBe('Fuel & lubricants');
+
+    // Nothing blocks retiring one: past expenses keep pointing at it.
+    const retired = await asAdmin('delete', `/api/expense-categories/${id}`);
+    expect(retired.status).toBe(200);
+    expect(retired.body.data.status).toBe('Retired');
+
+    await query('DELETE FROM expense_categories WHERE id = $1', [id]);
   });
 
   it('lists crops with what each one is holding', async () => {

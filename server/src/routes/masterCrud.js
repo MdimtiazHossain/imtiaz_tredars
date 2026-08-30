@@ -9,7 +9,7 @@ import {
 } from '../lib/http.js';
 import { requirePermission } from '../middleware/auth.js';
 import { writeAudit, changedFields } from '../lib/audit.js';
-import { notFound, unprocessable } from '../lib/errors.js';
+import { notFound, unprocessable, conflict } from '../lib/errors.js';
 
 /**
  * Create, edit and deactivate for master data.
@@ -34,13 +34,32 @@ import { notFound, unprocessable } from '../lib/errors.js';
  * is extracted rather than assumed, so `SUP-007` and a hand-entered `SUP-7`
  * still order correctly.
  */
-async function nextCode(client, { table, orgId, prefix, width }) {
+async function nextCode(client, { table, orgId, prefix, width, orgScoped }) {
   const { rows } = await client.query(
     `SELECT COALESCE(MAX(NULLIF(regexp_replace(code, '\\D', '', 'g'), '')::int), 0) + 1 AS next
-       FROM ${table} WHERE org_id = $1`,
-    [orgId]
+       FROM ${table}${orgScoped ? ' WHERE org_id = $1' : ''}`,
+    orgScoped ? [orgId] : []
   );
   return `${prefix}-${String(rows[0].next).padStart(width, '0')}`;
+}
+
+/**
+ * Check that an operator-supplied code is free.
+ *
+ * Some masters carry a code that means something -- BANK-IBBL reconciles
+ * against a bank statement, TRANSPORT reads in a report -- so those let the
+ * operator choose one. Checking here turns a unique-constraint violation into
+ * a message naming the record already using it.
+ */
+async function codeIsFree(client, { table, orgId, orgScoped }, code) {
+  const params = [code];
+  let where = 'code = $1';
+  if (orgScoped) {
+    params.push(orgId);
+    where += ` AND org_id = $${params.length}`;
+  }
+  const { rows } = await client.query(`SELECT name FROM ${table} WHERE ${where}`, params);
+  return rows.length ? rows[0].name : null;
 }
 
 /** Columns whose value was actually supplied, so a PATCH leaves the rest alone. */
@@ -64,9 +83,13 @@ async function checkBlockers(client, entity, id, orgId) {
 
 /** Read one row for the org, locked, or fail with a message naming the entity. */
 async function loadRow(client, entity, id, orgId) {
+  // Not every master belongs to an organisation: expense categories and
+  // product brands are shared, and have no org_id to filter on.
+  const scoped = entity.orgScoped !== false;
   const { rows } = await client.query(
-    `SELECT * FROM ${entity.table} WHERE id = $1 AND org_id = $2 FOR UPDATE`,
-    [id, orgId]
+    `SELECT * FROM ${entity.table}
+      WHERE id = $1${scoped ? ' AND org_id = $2' : ''} FOR UPDATE`,
+    scoped ? [id, orgId] : [id]
   );
   if (!rows.length) throw notFound(entity.label);
   return rows[0];
@@ -86,6 +109,9 @@ async function loadRow(client, entity, id, orgId) {
  * @param {(body:object) => object} entity.columns  column name -> value
  * @param {(row:object) => object} entity.present   the API shape
  * @param {boolean} [entity.tracksUser]  table has created_by / updated_by
+ * @param {boolean} [entity.orgScoped=true]  table has an org_id column
+ * @param {boolean} [entity.timestamped=true]  table has an updated_at column
+ * @param {boolean} [entity.code.fromBody]  the operator may supply the code
  * @param {Array}  [entity.blockers]     reasons a deactivation is refused
  * @param {(client:object, body:object, orgId:number) => Promise<object>} [entity.resolve]
  *   extra columns needing a lookup, so a screen can send a unit code or a
@@ -100,18 +126,29 @@ export function registerMasterCrud(router, entity) {
     handler(async (req, res) => {
       const body = parseBody(entity.schema, req);
 
+      const scoped = entity.orgScoped !== false;
+
       const record = await withTransaction(async (client) => {
-        const code = await nextCode(client, {
-          table,
-          orgId: req.orgId,
-          prefix: entity.code.prefix,
-          width: entity.code.width,
-        });
+        const shape = { table, orgId: req.orgId, orgScoped: scoped };
+
+        // A code the operator chose, where the entity allows one, or the next
+        // in sequence.
+        let code = entity.code.fromBody ? body.code : '';
+        if (code) {
+          const taken = await codeIsFree(client, shape, code);
+          if (taken) throw conflict('CODE_IN_USE', `${code} is already used by ${taken}.`);
+        } else {
+          code = await nextCode(client, {
+            ...shape,
+            prefix: entity.code.prefix,
+            width: entity.code.width,
+          });
+        }
 
         const resolved = entity.resolve ? await entity.resolve(client, body, req.orgId) : {};
         const columns = { code, ...entity.columns(body), ...resolved };
         if (entity.tracksUser) columns.created_by = req.user.id;
-        columns.org_id = req.orgId;
+        if (scoped) columns.org_id = req.orgId;
 
         const names = Object.keys(columns);
         const { rows } = await client.query(
@@ -154,9 +191,12 @@ export function registerMasterCrud(router, entity) {
         if (entity.tracksUser) changes.push(['updated_by', req.user.id]);
 
         const assignments = changes.map(([name], i) => `${name} = $${i + 1}`);
+        // Expense categories are four columns and a flag -- no timestamps to
+        // touch -- so the clause is only added where the column exists.
+        if (entity.timestamped !== false) assignments.push('updated_at = now()');
         const values = changes.map(([, value]) => value);
         const { rows } = await client.query(
-          `UPDATE ${table} SET ${assignments.join(', ')}, updated_at = now()
+          `UPDATE ${table} SET ${assignments.join(', ')}
             WHERE id = $${values.length + 1} RETURNING *`,
           [...values, id]
         );
@@ -196,10 +236,11 @@ export function registerMasterCrud(router, entity) {
         // Never a DELETE: the row is referenced by posted documents, and a
         // report covering last season has to keep naming the party it was
         // actually traded with.
-        const userColumn = entity.tracksUser ? ', updated_by = $2' : '';
+        const sets = ['is_active = false'];
+        if (entity.timestamped !== false) sets.push('updated_at = now()');
+        if (entity.tracksUser) sets.push('updated_by = $2');
         const { rows } = await client.query(
-          `UPDATE ${table} SET is_active = false, updated_at = now()${userColumn}
-            WHERE id = $1 RETURNING *`,
+          `UPDATE ${table} SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
           entity.tracksUser ? [id, req.user.id] : [id]
         );
 

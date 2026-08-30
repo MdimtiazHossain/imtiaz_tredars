@@ -87,6 +87,7 @@ export class InMemoryRepository {
     const named = {
       product: 'products', customer: 'customers', supplier: 'suppliers',
       company: 'companies', employee: 'employees',
+      account: 'accounts', category: 'expenseCategories',
     };
     const key = named[kind];
     if (!key) throw new Error(`Unknown master kind: ${kind}`);
@@ -156,8 +157,17 @@ export class InMemoryRepository {
     }
 
     const rows = this._collection(kind);
-    const prefix = { product: 'P', customer: 'CUS', supplier: 'SUP', company: 'CMP', employee: 'EMP' }[kind];
-    const width = kind === 'product' ? 4 : kind === 'company' || kind === 'employee' ? 2 : 3;
+    const prefix = {
+      product: 'P', customer: 'CUS', supplier: 'SUP', company: 'CMP',
+      employee: 'EMP', account: 'ACC', category: 'EXP',
+    }[kind];
+    const width = kind === 'product' ? 4 : kind === 'customer' || kind === 'supplier' ? 3 : 2;
+    // Where the operator chose a code, keep it.
+    if (body.code) {
+      const record = { ...clone(body), id: rows.length + 1, status: 'Active' };
+      rows.push(record);
+      return settle(clone(record), this.latency);
+    }
     const code = `${prefix}-${String(rows.length + 1).padStart(width, '0')}`;
     const record = { ...clone(body), id: rows.length + 1, code, status: 'Active' };
     rows.push(record);

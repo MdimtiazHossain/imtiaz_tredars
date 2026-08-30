@@ -1168,7 +1168,26 @@
           </div>
           <sc-if value="{{ acct.isRec }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ acct.rec }}" hint-size="100%,380px"></dc-import></sc-if>
           <sc-if value="{{ acct.isPay }}"><dc-import name="DataTable" t="{{ acct.pay }}" hint-size="100%,340px"></dc-import></sc-if>
-          <sc-if value="{{ acct.isCash }}"><dc-import name="DataTable" t="{{ acct.cash }}" hint-size="100%,260px"></dc-import></sc-if>
+          <sc-if value="{{ acct.isCash }}">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <sc-if value="{{ acct.addAccount.canAdd }}">
+                <div style="display:flex;justify-content:flex-end">
+                  <button onClick="{{ acct.addAccount.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ acct.addAccount.label }}</button>
+                </div>
+              </sc-if>
+              <dc-import name="DataTable" t="{{ acct.cash }}" hint-size="100%,260px"></dc-import>
+            </div>
+          </sc-if>
+          <sc-if value="{{ acct.isCat }}">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <sc-if value="{{ acct.addCategory.canAdd }}">
+                <div style="display:flex;justify-content:flex-end">
+                  <button onClick="{{ acct.addCategory.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ acct.addCategory.label }}</button>
+                </div>
+              </sc-if>
+              <dc-import name="DataTable" t="{{ acct.cats }}" hint-size="100%,300px"></dc-import>
+            </div>
+          </sc-if>
           <sc-if value="{{ acct.isExp }}"><dc-import name="DataTable" t="{{ acct.exp }}" hint-size="100%,340px"></dc-import></sc-if>
           <sc-if value="{{ acct.isPl }}">
             <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden;max-width:660px">
