@@ -17,7 +17,7 @@ import { nextDocumentNo } from '../lib/numbering.js';
 import { writeAudit } from '../lib/audit.js';
 import { allocatePayment, writeLedger } from '../services/financeService.js';
 import { evaluateRules, requestApproval } from '../services/approvalService.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, notFound } from '../lib/errors.js';
 import { registerMasterCrud } from './masterCrud.js';
 
 /** Payments, expenses, cash/bank accounts, receivables and payables. */
@@ -104,8 +104,11 @@ router.get(
   requirePermission('payment.view'),
   handler(async (req, res) => {
     const { rows } = await query(
-      `SELECT id, code, name, account_id, is_active FROM payment_methods
-        WHERE org_id = $1 ORDER BY id`,
+      `SELECT m.id, m.code, m.name, m.account_id, m.is_active,
+              a.name AS account, a.code AS account_code
+         FROM payment_methods m
+         LEFT JOIN accounts a ON a.id = m.account_id
+        WHERE m.org_id = $1 ORDER BY m.id`,
       [req.orgId]
     );
     ok(
@@ -115,7 +118,12 @@ router.get(
         code: r.code,
         name: r.name,
         accountId: r.account_id ? Number(r.account_id) : null,
+        // The account this method pays into, named rather than only numbered,
+        // so a screen can say where the money lands.
+        account: r.account || '',
+        accountCode: r.account_code || '',
         active: r.is_active,
+        status: r.is_active ? 'Active' : 'Retired',
       }))
     );
   })
@@ -693,6 +701,57 @@ registerMasterCrud(router, {
     id: Number(r.id),
     code: r.code,
     name: r.name,
+    status: r.is_active ? 'Active' : 'Retired',
+  }),
+});
+
+const paymentMethodSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Z0-9_]+$/, 'Use capitals, digits and underscores, like BANK_TRANSFER')
+    .max(32)
+    .optional(),
+  name: z.string().trim().min(1, 'Method name is required').max(80),
+  // The account is optional because the column is: a method can be set up
+  // before the account it will pay into exists.
+  account: z.string().trim().max(160).optional(),
+});
+
+registerMasterCrud(router, {
+  path: 'payment-methods',
+  table: 'payment_methods',
+  label: 'Payment method',
+  permissions: {
+    create: 'payment.method.create',
+    edit: 'payment.method.edit',
+    remove: 'payment.method.delete',
+  },
+  code: { prefix: 'PM', width: 2, fromBody: true },
+  schema: paymentMethodSchema,
+  // Six columns and a flag: org-scoped, but with no timestamps to touch.
+  timestamped: false,
+  columns: (b) => ({ name: b.name }),
+  // The screen names the account; the id behind it is not its business.
+  resolve: async (client, body, orgId) => {
+    if (body.account === undefined) return {};
+    if (!body.account) return { account_id: null };
+    const { rows } = await client.query(
+      `SELECT id FROM accounts
+        WHERE org_id = $1 AND is_active AND (code = $2 OR lower(name) = lower($2))`,
+      [orgId, body.account]
+    );
+    if (!rows.length) throw notFound(`Account ${body.account}`);
+    return { account_id: Number(rows[0].id) };
+  },
+  // Nothing blocks retiring one. Past payments keep naming the method they
+  // were taken by, and it stops being offered on new ones.
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    accountId: r.account_id ? Number(r.account_id) : null,
+    active: r.is_active,
     status: r.is_active ? 'Active' : 'Retired',
   }),
 });

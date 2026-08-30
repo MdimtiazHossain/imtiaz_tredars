@@ -12,7 +12,7 @@ import { writeAudit, changedFields } from '../lib/audit.js';
 import { notFound, unprocessable, conflict } from '../lib/errors.js';
 
 /**
- * Create, edit and deactivate for master data.
+ * Create, edit, deactivate and restore for master data.
  *
  * Customers, suppliers, companies, crops and products differ in their columns
  * and in nothing else: each allocates a code, inserts a row, patches the
@@ -104,6 +104,8 @@ async function loadRow(client, entity, id, orgId) {
  * @param {string} entity.table
  * @param {string} entity.label      how the entity is named in a message
  * @param {object} entity.permissions  {create, edit, remove}
+ *   Restoring a retired record is treated as an edit rather than needing a
+ *   permission of its own: it puts something back rather than removing it.
  * @param {object} entity.code       {prefix, width}
  * @param {import('zod').ZodTypeAny} entity.schema
  * @param {(body:object) => object} entity.columns  column name -> value
@@ -212,6 +214,51 @@ export function registerMasterCrud(router, entity) {
             summary: `${label} ${before.code} updated`,
           });
         }
+        return rows[0];
+      });
+
+      ok(res, entity.present(record));
+    })
+  );
+
+  /**
+   * Put a retired record back.
+   *
+   * Without this a record retired by mistake could only be recovered with
+   * SQL, which is not something an operator can be asked to do. It is the
+   * counterpart of the deactivate above and carries the same audit trail, so
+   * the round trip is visible rather than silent.
+   */
+  router.post(
+    `/${path}/:id/restore`,
+    requirePermission(permissions.edit),
+    handler(async (req, res) => {
+      const { id } = parseParams(idParamSchema, req);
+
+      const record = await withTransaction(async (client) => {
+        const before = await loadRow(client, entity, id, req.orgId);
+        if (before.is_active) {
+          throw unprocessable('ALREADY_ACTIVE', `${label} ${before.code} is already active.`);
+        }
+
+        const sets = ['is_active = true'];
+        if (entity.timestamped !== false) sets.push('updated_at = now()');
+        if (entity.tracksUser) sets.push('updated_by = $2');
+        const { rows } = await client.query(
+          `UPDATE ${table} SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
+          entity.tracksUser ? [id, req.user.id] : [id]
+        );
+
+        await writeAudit(client, {
+          actor: req.actor,
+          entityType: table,
+          entityId: id,
+          action: 'RESTORE',
+          oldValue: { isActive: false },
+          newValue: { isActive: true },
+          summary: `${label} ${before.code} — ${before.name} restored`,
+        });
+
         return rows[0];
       });
 

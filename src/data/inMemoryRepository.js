@@ -87,7 +87,7 @@ export class InMemoryRepository {
     const named = {
       product: 'products', customer: 'customers', supplier: 'suppliers',
       company: 'companies', employee: 'employees',
-      account: 'accounts', category: 'expenseCategories',
+      account: 'accounts', category: 'expenseCategories', method: 'paymentMethods',
     };
     const key = named[kind];
     if (!key) throw new Error(`Unknown master kind: ${kind}`);
@@ -185,6 +185,14 @@ export class InMemoryRepository {
     const found = this._collection(kind).filter((r) => r.id === id || r.code === id)[0];
     if (!found) throw new Error('Record not found');
     Object.assign(found, clone(body));
+    return settle(clone(found), this.latency);
+  }
+
+  async restoreMaster(kind, id) {
+    const found = this._rowsFor(kind).filter((r) => r.id === id || r.code === id)[0];
+    if (!found) throw new Error('Record not found');
+    found.status = 'Active';
+    found.active = true;
     return settle(clone(found), this.latency);
   }
 

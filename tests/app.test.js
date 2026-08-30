@@ -1207,6 +1207,64 @@ describe('master data', () => {
     expect(app.mayMaster('account', 'create')).toBe(false);
   });
 
+  it('renders payment methods from data, with a switch that does something', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('method');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const vals = app.renderVals();
+    expect(vals.addMethod.canAdd).toBe(true);
+    expect(vals.setPay.length).toBeGreaterThan(0);
+    // The switch used to be a picture; every row now carries a handler.
+    vals.setPay.forEach((p) => expect(typeof p.onToggle).toBe('function'));
+  });
+
+  it('retires an active method through the confirmation, and restores a retired one directly', async () => {
+    const { app } = await mountApp();
+    const calls = [];
+    app.repository.retireMaster = async (kind, id) => { calls.push(['retire', kind, id]); return {}; };
+    app.repository.restoreMaster = async (kind, id) => { calls.push(['restore', kind, id]); return {}; };
+
+    app.loadMasterList('method');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const rows = app.state.masterRows.method;
+    const active = rows.findIndex((m) => m.active !== false);
+    const retired = rows.findIndex((m) => m.active === false);
+    expect(active).toBeGreaterThan(-1);
+    expect(retired).toBeGreaterThan(-1);
+
+    // Retiring asks first...
+    app.renderVals().setPay[active].onToggle();
+    expect(calls).toHaveLength(0);
+    expect(app.state.master.confirm).toBe(true);
+    app.closeMaster();
+
+    // ...restoring does not, since it puts something back.
+    app.renderVals().setPay[retired].onToggle();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(calls.map((c) => c[0])).toEqual(['restore']);
+  });
+
+  it('lets a payment method be created without an account', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.createMaster = async (kind, body) => {
+      sent.push([kind, body]);
+      return { ...body, id: 7, code: 'PM-01' };
+    };
+
+    app.openMaster('method');
+    app.onMasterField('name')({ target: { value: 'Upay' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent[0][0]).toBe('method');
+    // The column is nullable, so an unsettled account is not a blocker.
+    expect(sent[0][1]).toMatchObject({ name: 'Upay', account: '' });
+    expect(app.state.toast.msg).toContain('PM-01');
+  });
+
   it('offers districts the data already uses rather than a fixed list', async () => {
     const { app } = await mountApp();
     app.openMaster('customer');

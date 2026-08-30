@@ -86,6 +86,7 @@ export class BusinessApp extends Component {
       if (id === 'warehouses') this.loadMasterList('warehouse');
       if (id === 'employees') this.loadMasterList('employee');
       if (id === 'accounts') { this.loadMasterList('account'); this.loadMasterList('category'); }
+      if (id === 'settings') this.loadMasterList('method');
     };
   }
   h(g, k, num) { return e => { const v = num ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value; this.setState(s => { const o = Object.assign({}, s[g]); o[k] = v; return {[g]:o}; }); }; }
@@ -344,6 +345,22 @@ export class BusinessApp extends Component {
         this.afterMasterChange(state.kind);
       },
       err => this.reportMasterError(err)
+    );
+  }
+
+  /**
+   * Put a retired record back.
+   *
+   * No confirmation: it restores something rather than removing it, and is
+   * undone by the retire it reverses.
+   */
+  restoreMaster(kind, row) {
+    this.persist('restoreMaster', kind, row.id ?? row.code).then(
+      () => {
+        this.fire(row.code + ' — ' + row.name + ' restored', 'ok');
+        this.afterMasterChange(kind);
+      },
+      err => { if (!err.silent) this.fire(err.message, 'danger'); }
     );
   }
 
@@ -1635,8 +1652,27 @@ export class BusinessApp extends Component {
       setFy: FINANCIAL_YEARS,
       setNum: NUMBERING,
       setUnits: UNIT_CONVERSIONS,
-      setPay: PAYMENT_METHODS
-        .map(p => ({k:p.k, d:p.d, tone:p.on ? C.crop : '#D9D5CD', knob:p.on ? '19px' : '2px'})),
+      // Real methods once fetched; the bundled list is the no-backend
+      // fallback. The switch used to be a picture -- it now retires or
+      // restores the method it sits beside.
+      setPay: (S.masterRows.method || this.data.paymentMethods || PAYMENT_METHODS)
+        .map(p => {
+          const on = p.active !== undefined ? p.active : p.on !== undefined ? p.on : true;
+          const row = { ...p, name: p.name || p.k, code: p.code || p.k };
+          return {
+            k: row.name,
+            d: p.account || p.d || (on ? 'in use' : 'not in use'),
+            tone: on ? C.crop : '#D9D5CD',
+            knob: on ? '19px' : '2px',
+            canEdit: this.mayMaster('method', 'edit'),
+            canToggle: on ? this.mayMaster('method', 'delete') : this.mayMaster('method', 'edit'),
+            toggleLabel: on ? 'Retire' : 'Restore',
+            onEdit: () => this.openMaster('method', row),
+            onToggle: () => (on ? this.confirmRetire('method', row) : this.restoreMaster('method', row)),
+          };
+        }),
+      addMethod:{canAdd:this.mayMaster('method', 'create'), label:'Add method',
+        onAdd:() => this.openMaster('method')},
       setLimits:[{k:'Purchase requiring approval above', v:money(this.limit())}, {k:'Sales discount ceiling', v:'5.00%'},
         {k:'Expense requiring approval above', v:money(50000)}, {k:'Stock adjustment', v:'always requires approval'},
         {k:'Credit sale above customer limit', v:'always requires approval'}],

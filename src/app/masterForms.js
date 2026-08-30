@@ -45,7 +45,7 @@ const COMPANY_ROLES = [
 
 export const MASTER_KINDS = [
   'crop', 'product', 'customer', 'supplier', 'company', 'warehouse', 'employee',
-  'account', 'category',
+  'account', 'category', 'method',
 ];
 
 const TITLES = {
@@ -58,6 +58,7 @@ const TITLES = {
   employee: ['employee', 'The team, and the department each one belongs to'],
   account: ['account', 'Cash, bank and mobile money the business holds'],
   category: ['expense category', 'What spending is booked against'],
+  method: ['payment method', 'How money is taken in and paid out'],
 };
 
 /** The empty form for a new record, or the values of the one being edited. */
@@ -94,6 +95,14 @@ export function defaultsFor(kind, data, row) {
 
   if (kind === 'category') {
     return { code: row ? row.code : '', name: row ? row.name : '' };
+  }
+
+  if (kind === 'method') {
+    return {
+      code: row ? row.code : '',
+      name: row ? row.name : '',
+      account: row ? row.account : '',
+    };
   }
 
   if (kind === 'employee') {
@@ -226,6 +235,32 @@ export function fieldsFor(kind, form, data, on, row) {
               placeholder: '0',
             }),
           ]),
+    ];
+  }
+
+  if (kind === 'method') {
+    return [
+      field('name', 'Method name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'bKash',
+        wide: true,
+      }),
+      // Where the money lands. Optional, because a method can be set up before
+      // the account it pays into exists.
+      field('account', 'Pays into', {
+        options: [''].concat((data.accounts || []).map((a) => a.name)),
+        value: form.account,
+        onChange: on('account'),
+        hint: 'Leave blank if it is not settled yet',
+      }),
+      field('code', 'Code', {
+        value: form.code,
+        onChange: on('code'),
+        mono: true,
+        placeholder: 'BKASH',
+        hint: 'Optional — one is allocated if left blank',
+      }),
     ];
   }
 
@@ -478,7 +513,7 @@ export function validate(kind, form) {
 
   if (kind === 'warehouse') return null;
 
-  if (kind === 'account' || kind === 'category') {
+  if (kind === 'account' || kind === 'category' || kind === 'method') {
     // The server holds the same rule; saying it here means the operator finds
     // out while typing rather than after saving.
     const allowed = kind === 'account' ? /^[A-Z0-9-]*$/ : /^[A-Z0-9_]*$/;
@@ -532,6 +567,14 @@ export function payloadFor(kind, form) {
 
   if (kind === 'category') {
     return { code: text(form.code) || undefined, name: text(form.name) };
+  }
+
+  if (kind === 'method') {
+    return {
+      code: text(form.code) || undefined,
+      name: text(form.name),
+      account: text(form.account),
+    };
   }
 
   if (kind === 'employee') {

@@ -26,6 +26,15 @@ const qty = (value) => {
   return String(Number(n.toFixed(3)));
 };
 
+/**
+ * Payment methods still in use.
+ *
+ * A retired method stays on the settings screen so it can be brought back, but
+ * offering it on a new payment would let money be booked through something the
+ * business has stopped using.
+ */
+const activeMethods = (data) => (data.paymentMethods || []).filter((m) => m.active !== false);
+
 const asOptions = (rows, valueKey, labelKey) =>
   rows.map((r) => ({ value: String(r[valueKey]), label: r[labelKey] }));
 
@@ -51,7 +60,7 @@ export function defaultsFor(kind, data, seed = {}) {
       party: seed.party || (first && first.code) || '',
       date: today,
       accountId: String(data.accounts?.[0]?.id ?? ''),
-      methodId: String(data.paymentMethods?.[0]?.id ?? ''),
+      methodId: String(activeMethods(data)[0]?.id ?? ''),
       amount: '',
       reference: '',
       note: '',
@@ -158,7 +167,7 @@ export function fieldsFor(kind, form, data, onChange) {
         onChange: on('accountId'),
       }),
       field('methodId', 'Method', {
-        options: asOptions(data.paymentMethods || [], 'id', 'name'),
+        options: asOptions(activeMethods(data), 'id', 'name'),
         value: form.methodId,
         onChange: on('methodId'),
       }),

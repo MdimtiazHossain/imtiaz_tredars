@@ -25,6 +25,7 @@ const MASTER_PATHS = {
   employee: '/employees',
   account: '/accounts',
   category: '/expense-categories',
+  method: '/payment-methods',
   customer: '/customers',
   supplier: '/suppliers',
   company: '/companies',
@@ -253,6 +254,11 @@ export class ApiRepository {
 
   async retireMaster(kind, id) {
     return (await this.client.delete(`${MASTER_PATHS[kind]}/${id}`)).data;
+  }
+
+  /** Put a retired record back. */
+  async restoreMaster(kind, id) {
+    return (await this.client.post(`${MASTER_PATHS[kind]}/${id}/restore`)).data;
   }
 
   /** Record a receipt or a payment, with its invoice allocations. */

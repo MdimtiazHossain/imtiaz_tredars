@@ -477,6 +477,8 @@ suite('master data', () => {
       ['Sales', 'post', '/api/accounts', { name: 'X', type: 'CASH' }],
       ['Warehouse', 'post', '/api/expense-categories', { name: 'X' }],
       ['Accounts', 'delete', '/api/accounts/1', null],
+      ['Sales', 'post', '/api/payment-methods', { name: 'X' }],
+      ['Accounts', 'delete', '/api/payment-methods/1', null],
     ];
 
     for (const [role, method, path, body] of cases) {
@@ -675,6 +677,63 @@ suite('master data', () => {
     expect(retired.body.data.status).toBe('Retired');
 
     await query('DELETE FROM expense_categories WHERE id = $1', [id]);
+  });
+
+  it('creates a payment method against an account named rather than numbered', async () => {
+    const created = await asAdmin('post', '/api/payment-methods').send({
+      code: 'UPAY',
+      name: 'Upay',
+      account: 'bKash Merchant — 01755...',
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data.accountId).toBeTruthy();
+
+    await query('DELETE FROM payment_methods WHERE id = $1', [created.body.data.id]);
+  });
+
+  it('refuses a payment method pointing at an account that does not exist', async () => {
+    const res = await asAdmin('post', '/api/payment-methods').send({
+      name: 'Test',
+      account: 'Standard Chartered',
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('retires a payment method and puts it back', async () => {
+    const created = await asAdmin('post', '/api/payment-methods').send({ name: 'Upay' });
+    const id = created.body.data.id;
+
+    const retired = await asAdmin('delete', `/api/payment-methods/${id}`);
+    expect(retired.body.data.status).toBe('Retired');
+
+    // Without this a record retired by mistake could only be recovered with
+    // SQL, which is not something an operator can be asked to do.
+    const restored = await asAdmin('post', `/api/payment-methods/${id}/restore`);
+    expect(restored.status).toBe(200);
+    expect(restored.body.data.status).toBe('Active');
+
+    const again = await asAdmin('post', `/api/payment-methods/${id}/restore`);
+    expect(again.status).toBe(422);
+    expect(again.body.error.code).toBe('ALREADY_ACTIVE');
+
+    await query('DELETE FROM payment_methods WHERE id = $1', [id]);
+  });
+
+  it('records a restore in the audit trail, so the round trip is visible', async () => {
+    const created = await asAdmin('post', '/api/payment-methods').send({ name: 'Upay' });
+    const id = created.body.data.id;
+    await asAdmin('delete', `/api/payment-methods/${id}`);
+    await asAdmin('post', `/api/payment-methods/${id}/restore`);
+
+    const { rows } = await query(
+      `SELECT action FROM audit_logs
+        WHERE entity_type = 'payment_methods' AND entity_id = $1
+        ORDER BY id`,
+      [id]
+    );
+    expect(rows.map((r) => r.action)).toEqual(['CREATE', 'DEACTIVATE', 'RESTORE']);
+
+    await query('DELETE FROM payment_methods WHERE id = $1', [id]);
   });
 
   it('lists crops with what each one is holding', async () => {

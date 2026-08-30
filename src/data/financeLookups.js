@@ -17,11 +17,14 @@ export const ACCOUNTS = [
 
 /** Rocket is configured but not in use, as the Settings screen shows. */
 export const PAYMENT_METHOD_OPTIONS = [
-  { id: 1, code: 'CASH', name: 'Cash', accountId: 1 },
-  { id: 2, code: 'BANK', name: 'Bank transfer', accountId: 2 },
-  { id: 3, code: 'CHEQUE', name: 'Cheque', accountId: 3 },
-  { id: 4, code: 'BKASH', name: 'bKash', accountId: 4 },
-  { id: 5, code: 'NAGAD', name: 'Nagad', accountId: 4 },
+  { id: 1, code: 'CASH', name: 'Cash', accountId: 1, active: true },
+  { id: 2, code: 'BANK', name: 'Bank transfer', accountId: 2, active: true },
+  { id: 3, code: 'CHEQUE', name: 'Cheque', accountId: 3, active: true },
+  { id: 4, code: 'BKASH', name: 'bKash', accountId: 4, active: true },
+  { id: 5, code: 'NAGAD', name: 'Nagad', accountId: 4, active: true },
+  // Retired, as it is in the seeded database. It stays listed on the settings
+  // screen so it can be brought back, and is not offered on a new payment.
+  { id: 6, code: 'ROCKET', name: 'Rocket', accountId: null, active: false },
 ];
 
 export const EXPENSE_CATEGORIES = [
