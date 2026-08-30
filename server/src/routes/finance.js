@@ -12,6 +12,7 @@ import {
   pageMeta,
 } from '../lib/http.js';
 import { requirePermission } from '../middleware/auth.js';
+
 import { nextDocumentNo } from '../lib/numbering.js';
 import { writeAudit } from '../lib/audit.js';
 import { allocatePayment, writeLedger } from '../services/financeService.js';
@@ -20,6 +21,15 @@ import { badRequest } from '../lib/errors.js';
 
 /** Payments, expenses, cash/bank accounts, receivables and payables. */
 const router = Router();
+
+/**
+ * Narrowing a listing to one party is what the payment form allocates against.
+ * Shared so the receivable and payable listings filter identically.
+ */
+const partyFilter = {
+  partyType: z.enum(['CUSTOMER', 'SUPPLIER', 'COMPANY']).optional(),
+  partyId: z.coerce.number().int().positive().optional(),
+};
 
 /* ------------------------------------------------------------------ accounts */
 
@@ -82,7 +92,7 @@ router.get(
   '/receivables',
   requirePermission('payment.view'),
   handler(async (req, res) => {
-    const q = parseQuery(listQuerySchema, req);
+    const q = parseQuery(listQuerySchema.extend(partyFilter), req);
     const { limit, offset } = paginate(q.page, q.pageSize);
 
     const params = [req.orgId];
@@ -90,6 +100,15 @@ router.get(
     if (q.businessType !== 'ALL') {
       params.push(q.businessType);
       where += ` AND r.business_type = $${params.length}`;
+    }
+    // Narrowing to one party is what the payment form allocates against.
+    if (q.partyType) {
+      params.push(q.partyType);
+      where += ` AND r.party_type = $${params.length}`;
+    }
+    if (q.partyId) {
+      params.push(q.partyId);
+      where += ` AND r.party_id = $${params.length}`;
     }
 
     const { rows: countRows } = await query(
@@ -141,13 +160,28 @@ router.get(
   '/payables',
   requirePermission('payment.view'),
   handler(async (req, res) => {
-    const q = parseQuery(listQuerySchema, req);
+    const q = parseQuery(listQuerySchema.extend(partyFilter), req);
     const { limit, offset } = paginate(q.page, q.pageSize);
 
+    const params = [req.orgId];
+    let where = 'p.org_id = $1 AND NOT p.is_settled';
+    if (q.businessType !== 'ALL') {
+      params.push(q.businessType);
+      where += ` AND p.business_type = $${params.length}`;
+    }
+    if (q.partyType) {
+      params.push(q.partyType);
+      where += ` AND p.party_type = $${params.length}`;
+    }
+    if (q.partyId) {
+      params.push(q.partyId);
+      where += ` AND p.party_id = $${params.length}`;
+    }
+
     const { rows: countRows } = await query(
-      `SELECT COUNT(*)::int AS total, COALESCE(SUM(balance), 0) AS outstanding
-         FROM payables WHERE org_id = $1 AND NOT is_settled`,
-      [req.orgId]
+      `SELECT COUNT(*)::int AS total, COALESCE(SUM(p.balance), 0) AS outstanding
+         FROM payables p WHERE ${where}`,
+      params
     );
 
     const { rows } = await query(
@@ -159,10 +193,10 @@ router.get(
          LEFT JOIN companies co ON p.party_type = 'COMPANY' AND co.id = p.party_id
          LEFT JOIN v_payable_aging a
                 ON a.invoice_type = p.invoice_type AND a.invoice_id = p.invoice_id
-        WHERE p.org_id = $1 AND NOT p.is_settled
+        WHERE ${where}
         ORDER BY p.due_date ASC
         LIMIT ${limit} OFFSET ${offset}`,
-      [req.orgId]
+      params
     );
 
     ok(

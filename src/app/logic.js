@@ -16,6 +16,7 @@ import {
   defaultsFor,
   validate as validateForm,
   payloadFor,
+  autoAllocate,
 } from './transactionForms.js';
 import {
   DASHBOARD_KPIS,
@@ -95,8 +96,68 @@ export class BusinessApp extends Component {
    * @param {object} [seed] pre-selected values, e.g. paying a specific supplier
    */
   openForm(kind, seed) {
-    this.setState({
-      modal: { kind, form: defaultsFor(kind, this.data, seed), error: '', busy: false },
+    const form = defaultsFor(kind, this.data, seed);
+    this.setState({ modal: { kind, form, error: '', busy: false, invoices: null } });
+    if (kind === 'payment') this.loadOpenInvoices(form);
+  }
+
+  /**
+   * Fetch the invoices a payment can settle.
+   *
+   * Only the selected party's, and only from a repository that can answer:
+   * the in-memory one has no invoice ledger, so the table shows its empty
+   * state and the payment simply sits on account.
+   */
+  loadOpenInvoices(form) {
+    if (!this.repository || typeof this.repository.openInvoices !== 'function') {
+      this.setState(s => (s.modal ? { modal: { ...s.modal, invoices: [] } } : null));
+      return;
+    }
+
+    const party = this.partyFor(form);
+    if (!party) return;
+
+    this.repository.openInvoices(form.direction, form.partyType, party.id).then(
+      invoices => {
+        // Ignore a response for a party the user has since changed away from.
+        this.setState(s =>
+          s.modal && s.modal.form.party === form.party && s.modal.form.direction === form.direction
+            ? { modal: { ...s.modal, invoices } }
+            : null
+        );
+      },
+      () => this.setState(s => (s.modal ? { modal: { ...s.modal, invoices: [] } } : null))
+    );
+  }
+
+  /** The master record behind the form's selected party. */
+  partyFor(form) {
+    const list =
+      form.partyType === 'SUPPLIER'
+        ? this.data.suppliers
+        : form.partyType === 'COMPANY'
+          ? this.data.companies
+          : this.data.customers;
+    return list.find(p => p.code === form.party) || null;
+  }
+
+  /** Set one invoice's allocated amount. */
+  onAllocationChange(key, value) {
+    this.setState(s => {
+      if (!s.modal) return null;
+      const allocated = { ...s.modal.form.allocated };
+      if (value === '' || Number(value) === 0) delete allocated[key];
+      else allocated[key] = value;
+      return { modal: { ...s.modal, form: { ...s.modal.form, allocated }, error: '' } };
+    });
+  }
+
+  /** Spread the payment across open invoices, oldest first. */
+  autoAllocate() {
+    this.setState(s => {
+      if (!s.modal) return null;
+      const allocated = autoAllocate(s.modal.invoices, s.modal.form.amount);
+      return { modal: { ...s.modal, form: { ...s.modal.form, allocated }, error: '' } };
     });
   }
 
@@ -116,6 +177,13 @@ export class BusinessApp extends Component {
         // beneath it, so reset to the first item of the new list.
         if (key === 'partyType') {
           form.party = defaultsFor('payment', this.data, { partyType: value }).party;
+        }
+
+        // Any of these changes which invoices are on offer, so the entered
+        // allocation no longer applies.
+        if (key === 'partyType' || key === 'party' || key === 'direction') {
+          form.allocated = {};
+          queueMicrotask(() => this.loadOpenInvoices(form));
         }
         if (key === 'itemType') {
           form.item = value === 'CROP_BATCH'

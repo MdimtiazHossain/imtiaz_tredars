@@ -146,6 +146,17 @@ export class InMemoryRepository {
     );
   }
 
+  /**
+   * Open invoices a payment could settle.
+   *
+   * The seed dataset has no invoice ledger, so there is nothing to allocate
+   * against and a payment recorded here simply sits on account. Answering with
+   * an empty list is honest; omitting the method would leave the form waiting.
+   */
+  async openInvoices() {
+    return settle([], this.latency);
+  }
+
   /** Monotonic per-kind counter, so numbers do not repeat within a session. */
   _counter(kind) {
     if (!this._counters) this._counters = {};

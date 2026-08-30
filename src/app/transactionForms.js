@@ -1,4 +1,4 @@
-import { field, formModal } from '../components/formModal.js';
+import { field, formModal, allocation } from '../components/formModal.js';
 import { money } from '../domain/format.js';
 
 /**
@@ -45,6 +45,8 @@ export function defaultsFor(kind, data, seed = {}) {
       amount: '',
       reference: '',
       note: '',
+      // Invoice key -> amount, filled in by the allocation table.
+      allocated: {},
     };
   }
 
@@ -236,6 +238,14 @@ export function validate(kind, form) {
     if (!form.party) return 'Choose the party this payment is for.';
     if (!form.accountId) return 'Choose the account the money moves through.';
     if (!(amount > 0)) return 'Enter an amount greater than zero.';
+
+    const allocated = Object.values(form.allocated || {}).reduce(
+      (t, v) => t + (Number(v) || 0),
+      0
+    );
+    if (allocated > amount) {
+      return 'Allocated more than the payment itself. Reduce a line, or raise the amount.';
+    }
     return null;
   }
 
@@ -308,7 +318,13 @@ export function payloadFor(kind, form, data) {
       amount: Number(form.amount),
       referenceNo: form.reference || undefined,
       note: form.note || undefined,
-      allocations: [],
+      // Only lines the user actually filled in; the rest stays on account.
+      allocations: Object.entries(form.allocated || {})
+        .map(([key, value]) => {
+          const [invoiceType, invoiceId] = key.split(':');
+          return { invoiceType, invoiceId: Number(invoiceId), amount: Number(value) || 0 };
+        })
+        .filter((a) => a.amount > 0),
     };
   }
 
@@ -374,6 +390,22 @@ export function buildModal(app) {
     title,
     subtitle,
     fields: fieldsFor(state.kind, state.form, app.data, (key) => app.onFormField(key)),
+    // Only a payment settles invoices, and only once some have been loaded.
+    allocation:
+      state.kind === 'payment' && state.invoices
+        ? allocation({
+            title:
+              state.form.direction === 'RECEIPT'
+                ? 'Apply to open invoices'
+                : 'Apply to open bills',
+            invoices: state.invoices,
+            allocated: state.form.allocated,
+            amount: state.form.amount,
+            formatMoney: money,
+            onChange: (key, value) => app.onAllocationChange(key, value),
+            onAuto: () => app.autoAllocate(),
+          })
+        : null,
     summary: summaryFor(state.kind, state.form, app.data),
     error: state.error,
     busy: state.busy,
@@ -382,4 +414,30 @@ export function buildModal(app) {
     onSubmit: () => app.submitForm(),
     onCancel: () => app.closeForm(),
   });
+}
+
+/**
+ * Spread a payment across open invoices, oldest first.
+ *
+ * The same rule the stock side uses: settle what has been waiting longest.
+ * Returns the allocation map rather than mutating, so the caller decides when
+ * it takes effect.
+ */
+export function autoAllocate(invoices, amount) {
+  let left = Number(amount) || 0;
+  const allocated = {};
+
+  const oldestFirst = [...(invoices || [])].sort((a, b) =>
+    String(a.dueDate || '').localeCompare(String(b.dueDate || ''))
+  );
+
+  for (const invoice of oldestFirst) {
+    if (left <= 0) break;
+    const take = Math.min(left, Number(invoice.balance) || 0);
+    if (take <= 0) continue;
+    allocated[`${invoice.invoiceType}:${invoice.invoiceId}`] = take;
+    left -= take;
+  }
+
+  return allocated;
 }

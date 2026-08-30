@@ -60,6 +60,7 @@ export function field(key, label, o = {}) {
  * @param {string}  [o.subtitle]
  * @param {Array}   o.fields        from `field()`
  * @param {Array}   [o.summary]     `{k, v, good}` rows shown above the footer
+ * @param {object}  [o.allocation]  invoice allocation block, see `allocation()`
  * @param {string}  [o.error]       validation message, shown in a banner
  * @param {boolean} [o.busy]        disables submit while saving
  * @param {string}  [o.submitLabel]
@@ -80,6 +81,7 @@ export function formModal(o) {
       v: s.v,
       color: s.good === false ? C.dngr : s.good === true ? C.crop : C.ink,
     })),
+    allocation: o.allocation || null,
     error: o.error || '',
     busy,
     submitLabel: busy ? 'Saving…' : o.submitLabel || 'Save',
@@ -89,5 +91,56 @@ export function formModal(o) {
     width: o.width || '620px',
     onSubmit: busy ? null : o.onSubmit,
     onCancel: o.onCancel,
+  };
+}
+
+/**
+ * Build the invoice-allocation block shown inside a payment form.
+ *
+ * One payment can settle several invoices, so each open invoice gets its own
+ * input and the footer states what is allocated against what was received.
+ * Over-allocating a line is marked on the input rather than only rejected on
+ * submit, so the mistake is visible where it was made.
+ *
+ * @param {object} o
+ * @param {string} o.title
+ * @param {Array}  o.invoices   `{invoiceNo, balance, dueDate, ...}`
+ * @param {object} o.allocated  invoice key -> amount entered
+ * @param {number} o.amount     the payment being allocated
+ * @param {Function} o.onChange called with (key, value)
+ * @param {Function} o.onAuto
+ * @param {Function} o.formatMoney
+ */
+export function allocation(o) {
+  const money = o.formatMoney;
+  const rows = (o.invoices || []).map((inv) => {
+    const key = `${inv.invoiceType}:${inv.invoiceId}`;
+    const entered = Number(o.allocated?.[key]) || 0;
+    return {
+      key,
+      invoiceNo: inv.invoiceNo,
+      detail: `${inv.dueDate ? `due ${String(inv.dueDate).slice(0, 10)}` : ''}${
+        inv.bucket ? ` · ${inv.bucket} days` : ''
+      }`,
+      balanceText: money(inv.balance),
+      value: o.allocated?.[key] ?? '',
+      // A line asking for more than the invoice still owes is flagged here.
+      border: entered > inv.balance ? C.dngr : '#E3E0DA',
+      onChange: (e) => o.onChange(key, e.target.value),
+    };
+  });
+
+  const total = rows.reduce((t, r) => t + (Number(r.value) || 0), 0);
+  const remaining = (Number(o.amount) || 0) - total;
+
+  return {
+    title: o.title,
+    rows,
+    onAuto: o.onAuto || null,
+    isEmpty: rows.length === 0,
+    emptyNote: 'No open invoices for this party — the payment will sit on account.',
+    footNote: total ? `${money(total)} allocated` : 'Nothing allocated yet',
+    footTotal: remaining >= 0 ? `${money(remaining)} unallocated` : `${money(-remaining)} over`,
+    footColor: remaining < 0 ? C.dngr : remaining === 0 ? C.crop : C.mut,
   };
 }

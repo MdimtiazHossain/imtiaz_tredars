@@ -645,3 +645,122 @@ describe('transaction forms', () => {
     expect(inventoryButtons).toContain('Adjust stock');
   });
 });
+
+describe('payment allocation', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+  });
+
+  const invoices = [
+    { invoiceType: 'dealer_sales', invoiceId: 7, invoiceNo: 'DS-1', balance: 100000, dueDate: '2026-08-01' },
+    { invoiceType: 'dealer_sales', invoiceId: 9, invoiceNo: 'DS-2', balance: 50000, dueDate: '2026-08-20' },
+  ];
+
+  /** Open the payment form with a known set of invoices already loaded. */
+  async function withInvoices() {
+    const { app } = await mountApp();
+    app.repository.openInvoices = async () => invoices;
+    app.openForm('payment');
+    await new Promise((r) => setTimeout(r, 30));
+    return app;
+  }
+
+  it('lists the party open invoices', async () => {
+    const app = await withInvoices();
+    const rows = app.renderVals().modal.allocation.rows;
+    expect(rows.map((r) => r.invoiceNo)).toEqual(['DS-1', 'DS-2']);
+  });
+
+  it('shows the whole payment as unallocated until something is applied', async () => {
+    const app = await withInvoices();
+    app.onFormField('amount')({ target: { value: '80000' } });
+    expect(app.renderVals().modal.allocation.footTotal).toContain('80,000 unallocated');
+  });
+
+  it('settles the oldest invoice first', async () => {
+    const app = await withInvoices();
+    app.onFormField('amount')({ target: { value: '120000' } });
+    app.autoAllocate();
+
+    // 100,000 clears the older invoice, the remaining 20,000 goes to the next.
+    expect(app.state.modal.form.allocated).toEqual({
+      'dealer_sales:7': 100000,
+      'dealer_sales:9': 20000,
+    });
+  });
+
+  it('never allocates more than an invoice still owes', async () => {
+    const app = await withInvoices();
+    app.onFormField('amount')({ target: { value: '999999' } });
+    app.autoAllocate();
+    const allocated = app.state.modal.form.allocated;
+    expect(allocated['dealer_sales:7']).toBe(100000);
+    expect(allocated['dealer_sales:9']).toBe(50000);
+  });
+
+  it('leaves the surplus unallocated rather than forcing it onto an invoice', async () => {
+    const app = await withInvoices();
+    app.onFormField('amount')({ target: { value: '200000' } });
+    app.autoAllocate();
+    expect(app.renderVals().modal.allocation.footTotal).toContain('50,000 unallocated');
+  });
+
+  it('flags a line asking for more than the invoice owes', async () => {
+    const app = await withInvoices();
+    app.onFormField('amount')({ target: { value: '500000' } });
+    app.onAllocationChange('dealer_sales:7', '400000');
+    const row = app.renderVals().modal.allocation.rows[0];
+    expect(row.border).not.toBe('#E3E0DA');
+  });
+
+  it('refuses to submit when more is allocated than received', async () => {
+    const app = await withInvoices();
+    let posted = false;
+    app.repository.createPayment = async () => { posted = true; return {}; };
+
+    app.onFormField('amount')({ target: { value: '50000' } });
+    app.onAllocationChange('dealer_sales:7', '90000');
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(posted).toBe(false);
+    expect(app.state.modal.error).toMatch(/more than the payment/i);
+  });
+
+  it('sends only the lines that were filled in', async () => {
+    const app = await withInvoices();
+    const sent = [];
+    app.repository.createPayment = async (p) => { sent.push(p); return { txnNo: 'RC-1' }; };
+
+    app.onFormField('amount')({ target: { value: '100000' } });
+    app.onAllocationChange('dealer_sales:7', '60000');
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent[0].allocations).toEqual([
+      { invoiceType: 'dealer_sales', invoiceId: 7, amount: 60000 },
+    ]);
+  });
+
+  it('clears the allocation when the party changes', async () => {
+    const app = await withInvoices();
+    app.onFormField('amount')({ target: { value: '100000' } });
+    app.autoAllocate();
+    expect(Object.keys(app.state.modal.form.allocated)).not.toHaveLength(0);
+
+    app.onFormField('party')({ target: { value: 'CUS-002' } });
+    // The invoices on offer have changed, so what was entered no longer applies.
+    expect(app.state.modal.form.allocated).toEqual({});
+  });
+
+  it('offers the empty state when the party owes nothing', async () => {
+    const { app } = await mountApp();
+    app.repository.openInvoices = async () => [];
+    app.openForm('payment');
+    await new Promise((r) => setTimeout(r, 30));
+
+    const alloc = app.renderVals().modal.allocation;
+    expect(alloc.isEmpty).toBe(true);
+    expect(alloc.emptyNote).toMatch(/sit on account/i);
+  });
+});

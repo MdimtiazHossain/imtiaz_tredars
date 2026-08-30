@@ -216,13 +216,20 @@ export class ApiRepository {
     return (await this.client.post('/inventory/adjustments', adjustment)).data;
   }
 
-  /** Open invoices for a party, so a payment can be allocated against them. */
+  /**
+   * Open invoices for one party, so a payment can be allocated against them.
+   *
+   * Filtered server-side: fetching every open invoice and narrowing in the
+   * browser would grow with the business rather than with the party.
+   */
   async openInvoices(direction, partyType, partyId) {
     const path = direction === 'RECEIPT' ? '/receivables' : '/payables';
-    const payload = await this.client.get(path, { pageSize: 100 });
-    return payload.data.filter(
-      (r) => r.partyType === partyType || partyId === undefined
-    );
+    const payload = await this.client.get(path, {
+      partyType,
+      partyId,
+      pageSize: 100,
+    });
+    return payload.data;
   }
 
   /** Cash, bank and MFS accounts a payment can move through. */
