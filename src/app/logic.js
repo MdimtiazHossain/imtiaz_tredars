@@ -666,6 +666,33 @@ export class BusinessApp extends Component {
     );
   }
 
+  /**
+   * Download the selected report.
+   *
+   * The server builds the file from the same definition the table came from,
+   * so the download always matches what is on screen. Without a backend there
+   * is nothing to produce, and the user is told so rather than shown a
+   * success message for a file that was never written.
+   */
+  exportReport(format, label) {
+    if (!this.repository || typeof this.repository.exportReport !== 'function') {
+      this.fire('Export needs the server connection.', 'warn');
+      return;
+    }
+
+    const biz = this.state.biz;
+    this.fire('Preparing ' + (format === 'pdf' ? 'PDF' : 'Excel') + ' file…', 'ok');
+
+    this.repository
+      .exportReport(this.state.repSel, format, {
+        businessType: biz === 'dealer' ? 'DEALER' : biz === 'crop' ? 'BULK_CROP' : 'ALL',
+      })
+      .then(
+        filename => this.fire(label + ' downloaded as ' + filename, 'ok'),
+        err => this.fire('Could not export — ' + err.message, 'danger')
+      );
+  }
+
   /** Report page size; the server pages, this is only what we ask for. */
   static REPORT_PAGE_SIZE = 25;
 
@@ -818,7 +845,7 @@ export class BusinessApp extends Component {
         ? cur.note || (server ? 'Aggregated by the server for the selected period and business type.' : '')
         : 'This report is wired to the same filter engine but has no seeded rows in the prototype.',
       t:cur ? cur.t : table([], []), curLabel:curLabel,
-      onExport:() => this.fire(curLabel + ' exported to Excel (.xlsx)', 'ok'), onPdf:() => this.fire(curLabel + ' exported to PDF', 'ok')};
+      onExport:() => this.exportReport('xlsx', curLabel), onPdf:() => this.exportReport('pdf', curLabel)};
   }
 
   appr() {

@@ -5,6 +5,7 @@ import { handler, ok, parseQuery, listQuerySchema, paginate, pageMeta } from '..
 import { requirePermission, canSeeProfit } from '../middleware/auth.js';
 import { forbidden, notFound } from '../lib/errors.js';
 import { col, dateAndBusiness } from './reportHelpers.js';
+import { buildWorkbook, buildPdf, exportFilename, describeFilters } from '../lib/export.js';
 import { MORE_REPORTS } from './reportDefinitions.js';
 
 /**
@@ -566,6 +567,54 @@ router.get(
   requirePermission('report.view'),
   handler(async (req, res) => {
     ok(res, buildCatalogue(req.user));
+  })
+);
+
+/**
+ * Export a report as .xlsx or .pdf.
+ *
+ * Deliberately unpaged: a page is a screen concern, a file is the whole
+ * answer. It runs the same definition the screen does, so an export cannot
+ * show different numbers from the table it came from, and it enforces the same
+ * permission — a role that cannot view a report cannot download it either.
+ */
+router.get(
+  '/:reportId/export',
+  requirePermission('report.view'),
+  handler(async (req, res) => {
+    const definition = ALL_REPORTS[req.params.reportId];
+    if (!definition) throw notFound(`Report "${req.params.reportId}"`);
+    if (definition.permission && !req.user.permissions.includes(definition.permission)) {
+      throw forbidden('Your role does not allow you to export this report.');
+    }
+
+    const q = parseQuery(
+      reportQuery.extend({ format: z.enum(['xlsx', 'pdf']).default('xlsx') }),
+      req
+    );
+
+    const result = await definition.run(req, q);
+    const report = {
+      title: definition.label,
+      subtitle: describeFilters(q),
+      columns: result.columns,
+      rows: result.rows,
+      totals: result.totals,
+    };
+
+    const pdf = q.format === 'pdf';
+    const filename = exportFilename(definition.label, pdf ? 'pdf' : 'xlsx');
+    const body = pdf ? await buildPdf(report) : await buildWorkbook(report);
+
+    res.setHeader(
+      'content-type',
+      pdf
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('content-length', Buffer.byteLength(body));
+    res.send(Buffer.from(body));
   })
 );
 

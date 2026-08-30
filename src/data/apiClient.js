@@ -182,6 +182,70 @@ export class ApiClient {
     return this._refreshing;
   }
 
+  /**
+   * Download a file from the API.
+   *
+   * A plain link cannot carry the access token, so the file is fetched, turned
+   * into a blob and handed to a temporary anchor. The object URL is revoked
+   * afterwards; leaving them around holds the whole file in memory for the
+   * life of the page.
+   *
+   * @returns {Promise<string>} the filename the browser saved
+   */
+  async download(path, query) {
+    const url = new URL(`${this.baseUrl}${path}`, window.location.origin);
+    for (const [key, value] of Object.entries(query || {})) {
+      if (value !== undefined && value !== null && value !== '') {
+        url.searchParams.set(key, String(value));
+      }
+    }
+
+    let response;
+    try {
+      response = await fetch(url, {
+        headers: this.accessToken ? { authorization: `Bearer ${this.accessToken}` } : {},
+      });
+    } catch {
+      throw new ApiError(0, 'NETWORK_ERROR', 'Could not reach the server to build the file.');
+    }
+
+    if (response.status === 401 && this.refreshToken) {
+      const refreshed = await this._refreshOnce();
+      if (refreshed) return this.download(path, query);
+    }
+
+    if (!response.ok) {
+      // A failed export still answers with the standard error envelope.
+      let message = 'The file could not be produced.';
+      let code = 'EXPORT_FAILED';
+      try {
+        const payload = await response.json();
+        message = payload?.error?.message || message;
+        code = payload?.error?.code || code;
+      } catch {
+        /* Not JSON; keep the generic message. */
+      }
+      throw new ApiError(response.status, code, message);
+    }
+
+    // Prefer the filename the server chose.
+    const disposition = response.headers.get('content-disposition') || '';
+    const match = /filename="?([^"]+)"?/.exec(disposition);
+    const filename = match ? match[1] : 'report';
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+
+    return filename;
+  }
+
   /* ------------------------------------------------------------------ auth */
 
   async login(username, password) {

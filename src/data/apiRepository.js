@@ -244,6 +244,15 @@ export class ApiRepository {
     return payload.data;
   }
 
+  /**
+   * Download a report as a file.
+   * @param {'xlsx'|'pdf'} format
+   * @returns {Promise<string>} the saved filename
+   */
+  exportReport(reportId, format, filters = {}) {
+    return this.client.download(`/reports/${reportId}/export`, { ...filters, format });
+  }
+
   async report(reportId, filters = {}) {
     const payload = await this.client.get(`/reports/${reportId}`, filters);
     return { ...payload.data, meta: payload.meta };

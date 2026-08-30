@@ -31,6 +31,9 @@ export function createApp() {
         callback(new Error('Origin not allowed by CORS policy'));
       },
       credentials: true,
+      // Without this the browser hides content-disposition from JavaScript, so
+      // a download would be saved under a fallback name with no extension.
+      exposedHeaders: ['content-disposition'],
     })
   );
 

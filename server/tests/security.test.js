@@ -233,6 +233,90 @@ suite('report catalogue', () => {
   });
 });
 
+suite('report export', () => {
+  it('produces a real xlsx workbook', async () => {
+    const res = await request(app)
+      .get('/api/reports/pur-supplier/export?format=xlsx')
+      .set('authorization', `Bearer ${tokens.Admin}`)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('spreadsheetml');
+    expect(res.headers['content-disposition']).toContain('.xlsx');
+    // .xlsx is a zip container; every one starts with the PK local-file header.
+    expect(res.body.subarray(0, 2).toString('latin1')).toBe('PK');
+    expect(res.body.length).toBeGreaterThan(1000);
+  });
+
+  it('produces a real pdf', async () => {
+    const res = await request(app)
+      .get('/api/reports/pur-supplier/export?format=pdf')
+      .set('authorization', `Bearer ${tokens.Admin}`)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(res.body.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(res.body.length).toBeGreaterThan(500);
+  });
+
+  it('names the file after the report and the date', async () => {
+    const res = await request(app)
+      .get('/api/reports/crop-batch-profit/export?format=xlsx')
+      .set('authorization', `Bearer ${tokens.Admin}`);
+    expect(res.headers['content-disposition']).toMatch(
+      /filename="batch-wise-crop-profit-\d{4}-\d{2}-\d{2}\.xlsx"/
+    );
+  });
+
+  it('exposes content-disposition so the browser can read the filename', async () => {
+    // Cross-origin, JavaScript cannot see this header unless it is exposed,
+    // and the file would then save under a fallback name with no extension.
+    const res = await request(app)
+      .get('/api/reports/pur-supplier/export?format=xlsx')
+      .set('origin', 'http://localhost:5290')
+      .set('authorization', `Bearer ${tokens.Admin}`);
+    expect(res.headers['access-control-expose-headers'] || '').toMatch(/content-disposition/i);
+  });
+
+  it('refuses to export a report the role may not view', async () => {
+    const res = await request(app)
+      .get('/api/reports/crop-batch-profit/export?format=xlsx')
+      .set('authorization', `Bearer ${tokens.Sales}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses an unauthenticated export', async () => {
+    const res = await request(app).get('/api/reports/pur-supplier/export?format=xlsx');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects an unknown format with the standard envelope', async () => {
+    const res = await request(app)
+      .get('/api/reports/pur-supplier/export?format=docx')
+      .set('authorization', `Bearer ${tokens.Admin}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_FAILED');
+  });
+
+  it('answers 404 for a report that does not exist', async () => {
+    const res = await request(app)
+      .get('/api/reports/not-a-report/export?format=xlsx')
+      .set('authorization', `Bearer ${tokens.Admin}`);
+    expect(res.status).toBe(404);
+  });
+});
+
 suite('cross-user access', () => {
   it('scopes reads to the signed-in user organisation', async () => {
     const res = await request(app)

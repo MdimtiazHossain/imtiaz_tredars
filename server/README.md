@@ -130,12 +130,28 @@ totalPages, hasNext, hasPrev } }`.
 | Inventory | `GET /api/inventory`, `GET /api/inventory/movements`, `POST /api/inventory/adjustments`, `GET /api/inventory/reconciliation` |
 | Finance | `GET /api/accounts`, `/api/payment-methods`, `/api/receivables`, `/api/payables`, `GET/POST /api/payments`, `GET/POST /api/expenses` |
 | Approvals | `GET /api/approvals`, `GET /api/approvals/:id/history`, `POST /api/approvals/:id/decide`, `GET /api/approvals/rules` |
-| Reports | `GET /api/dashboard/dashboard`, `GET /api/reports/catalogue`, `GET /api/reports/:reportId` |
+| Reports | `GET /api/dashboard/dashboard`, `GET /api/reports/catalogue`, `GET /api/reports/:reportId`, `GET /api/reports/:reportId/export?format=xlsx\|pdf` |
 | Audit | `GET /api/audit` |
 
 Every list endpoint accepts `page`, `pageSize`, `sort`, `dir`, `q`, `from`, `to`
 and `businessType` (`DEALER` | `BULK_CROP` | `ALL`). Sorting maps a key onto an
 allow-list of columns; a column name is never taken from the client.
+
+### Export
+
+`GET /api/reports/:reportId/export?format=xlsx|pdf` builds the file from the
+same definition the screen uses, so a download cannot show different numbers
+from the table it came from. It enforces the same permission, and is
+deliberately unpaged — a page is a screen concern, a file is the whole answer.
+
+Excel writes money and quantities as real numbers with accounting formats, not
+text, so a recipient can total a column without cleaning it first.
+
+PDFKit's built-in fonts encode Latin-1 only, so a Bengali party name would
+otherwise throw. Set `PDF_FONT_PATH` to a `.ttf` covering the scripts you use
+(Noto Sans Bengali, for example) and it is embedded; without one, characters
+outside Latin-1 are replaced rather than allowed to fail the request. Excel has
+no such limit — `.xlsx` is UTF-8 throughout.
 
 ### Roles
 
