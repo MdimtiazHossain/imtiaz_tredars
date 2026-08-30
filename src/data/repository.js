@@ -14,6 +14,10 @@ import { ApiRepository } from './apiRepository.js';
  * | -------------------------- | --------------------------------------------- |
  * | `load()`                   | the whole working set the app boots from      |
  * | `createCustomer(record)`   | add a customer, returns the stored record     |
+ * | `listMaster(kind, query)`  | one page of a master list                     |
+ * | `createMaster(kind, body)` | add a crop, customer, supplier or company     |
+ * | `updateMaster(kind, ...)`  | edit one of them                              |
+ * | `retireMaster(kind, id)`   | deactivate one; master rows are never deleted |
  * | `postCropPurchase(args)`   | post a bulk crop purchase                     |
  * | `postCropSale(args)`       | post a bulk crop sale (FIFO allocation)       |
  * | `postDealerPurchase(args)` | post a dealer purchase                        |

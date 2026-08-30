@@ -13,6 +13,24 @@ import { NAV, TITLES } from './seed.js';
  * API: they describe the shell, not the business, and the role filtering
  * applied to them is presentation.
  */
+/**
+ * Master data lives at the root of the API, one path per entity. The crop
+ * master shares `/crops` with crop trading, which sits under `/crops/purchases`
+ * and `/crops/sales`, so the two do not collide.
+ */
+const MASTER_PATHS = {
+  crop: '/crops',
+  customer: '/customers',
+  supplier: '/suppliers',
+  company: '/companies',
+};
+
+/** Which code -> id map a saved record belongs in, where one is kept. */
+const MASTER_ID_MAPS = {
+  crop: 'crops',
+  customer: 'customers',
+};
+
 export class ApiRepository {
   /**
    * @param {object} [options]
@@ -198,6 +216,36 @@ export class ApiRepository {
       action: 'POST',
     });
     return payload.data;
+  }
+
+  /**
+   * Master data.
+   *
+   * All four entities sit behind the same three routes, so one method each
+   * covers crops, customers, suppliers and companies. Nothing is deleted --
+   * `retireMaster` deactivates, and the server refuses even that while the
+   * party still owes money or the crop is still in stock.
+   */
+  async listMaster(kind, params = {}) {
+    const payload = await this.client.get(MASTER_PATHS[kind], params);
+    return payload.data;
+  }
+
+  async createMaster(kind, body) {
+    const saved = (await this.client.post(MASTER_PATHS[kind], body)).data;
+    // Keep the code -> id map current, so a write naming this record by code
+    // can still resolve the id the server expects.
+    const map = this._ids[MASTER_ID_MAPS[kind]];
+    if (map && saved.code) map.set(saved.code, saved.id);
+    return saved;
+  }
+
+  async updateMaster(kind, id, body) {
+    return (await this.client.patch(`${MASTER_PATHS[kind]}/${id}`, body)).data;
+  }
+
+  async retireMaster(kind, id) {
+    return (await this.client.delete(`${MASTER_PATHS[kind]}/${id}`)).data;
   }
 
   /** Record a receipt or a payment, with its invoice allocations. */

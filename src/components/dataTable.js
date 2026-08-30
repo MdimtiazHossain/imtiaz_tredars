@@ -29,13 +29,17 @@ import { C, SURFACE, MONO } from '../styles/tokens.js';
  * @param {boolean} [o.badge]         render as a pill instead of plain text
  * @param {string}  [o.badgeBg]
  * @param {string}  [o.badgeFg]
+ * @param {Array<{label:string, onClick:Function, danger?:boolean}>} [o.actions]
+ *   row-level buttons rendered instead of text, e.g. edit and retire
  */
 export function cell(text, o) {
   o = o || {};
+  // A cell shows exactly one of three things: buttons, a badge, or text.
+  const actions = Array.isArray(o.actions) ? o.actions : null;
   const x = {
     text: text,
     align: o.align || 'left',
-    plain: !o.badge,
+    plain: !o.badge && !actions,
     font: o.mono ? MONO : 'inherit',
     weight: o.weight || '400',
     color: o.color || C.ink,
@@ -45,6 +49,15 @@ export function cell(text, o) {
     badge: !!o.badge,
     badgeBg: o.badgeBg || SURFACE.badgeBg,
     badgeFg: o.badgeFg || SURFACE.badgeFg,
+    hasActions: !!actions,
+    // Row-level actions -- edit, retire and the like. The table stays generic:
+    // it renders whatever labels and handlers the screen hands it.
+    actions: (actions || []).map((a) => ({
+      label: a.label,
+      onClick: a.onClick,
+      color: a.danger ? C.dngr : C.mut,
+      hoverColor: a.danger ? C.dngr : C.ink,
+    })),
   };
   x.just = x.align === 'right' ? 'flex-end' : x.align === 'center' ? 'center' : 'flex-start';
   return x;

@@ -70,6 +70,114 @@ export class InMemoryRepository {
   }
 
   /**
+   * Master data, without a server.
+   *
+   * The in-memory store is a fixture, not a database: there is no code
+   * sequence, no audit trail and no `is_active` column. These do the least
+   * that keeps the screens honest -- the record really is added, changed or
+   * retired, and what comes back has the shape the API returns.
+   *
+   * Crops are the odd one out. Every screen that offers a crop reads
+   * `data.crops`, which is a list of names, so the master list is derived from
+   * those names and the batches holding them rather than stored twice.
+   */
+  _collection(kind) {
+    const named = { customer: 'customers', supplier: 'suppliers', company: 'companies' };
+    const key = named[kind];
+    if (!key) throw new Error(`Unknown master kind: ${kind}`);
+    if (!this._store[key]) this._store[key] = [];
+    return this._store[key];
+  }
+
+  /** Build the crop master from the crop names and the stock behind them. */
+  _cropRecords() {
+    const batches = this._store.batches || [];
+    return (this._store.crops || []).map((name, i) => {
+      const held = batches.filter((b) => b.crop === name);
+      const quantity = held.reduce((t, b) => t + (Number(b.rem) || 0), 0);
+      return {
+        id: i + 1,
+        code: `CROP-${String(i + 1).padStart(2, '0')}`,
+        name,
+        unit: (this._store.units || ['MT'])[0],
+        rate: held.length ? Number(held[0].cost) || 0 : 0,
+        quantity,
+        value: held.reduce((t, b) => t + (Number(b.rem) || 0) * (Number(b.cost) || 0), 0),
+        last: held.length ? held[0].date || '' : '',
+        status: 'Active',
+      };
+    });
+  }
+
+  _rowsFor(kind) {
+    return kind === 'crop' ? this._cropRecords() : this._collection(kind);
+  }
+
+  /** One page of a master list, filtered by name or code as the server does. */
+  async listMaster(kind, params = {}) {
+    const rows = this._rowsFor(kind);
+    const q = String(params.q || '').toLowerCase();
+    const matched = q
+      ? rows.filter((r) => `${r.name} ${r.code}`.toLowerCase().indexOf(q) > -1)
+      : rows;
+    return settle(clone(matched), this.latency);
+  }
+
+  async createMaster(kind, body) {
+    if (kind === 'crop') {
+      if (!this._store.crops) this._store.crops = [];
+      this._store.crops.push(body.name);
+      return settle(clone(this._cropRecords().slice(-1)[0]), this.latency);
+    }
+
+    const rows = this._collection(kind);
+    const prefix = { customer: 'CUS', supplier: 'SUP', company: 'CMP' }[kind];
+    const width = kind === 'company' ? 2 : 3;
+    const code = `${prefix}-${String(rows.length + 1).padStart(width, '0')}`;
+    const record = { ...clone(body), id: rows.length + 1, code, status: 'Active' };
+    rows.push(record);
+    return settle(clone(record), this.latency);
+  }
+
+  async updateMaster(kind, id, body) {
+    if (kind === 'crop') {
+      const index = this._cropRecords().findIndex((c) => c.id === id || c.code === id);
+      if (index < 0) throw new Error('Crop not found');
+      this._store.crops[index] = body.name;
+      return settle(clone(this._cropRecords()[index]), this.latency);
+    }
+
+    const found = this._collection(kind).filter((r) => r.id === id || r.code === id)[0];
+    if (!found) throw new Error('Record not found');
+    Object.assign(found, clone(body));
+    return settle(clone(found), this.latency);
+  }
+
+  async retireMaster(kind, id) {
+    if (kind === 'crop') {
+      const records = this._cropRecords();
+      const index = records.findIndex((c) => c.id === id || c.code === id);
+      if (index < 0) throw new Error('Crop not found');
+      if (records[index].quantity > 0) {
+        throw new Error(
+          `${records[index].quantity} is still in stock for this crop. ` +
+            'Sell or write the batches off before retiring it.'
+        );
+      }
+      // No is_active column here, so the name leaves the list of crops on
+      // offer -- which is what retiring it means to every other screen.
+      this._store.crops.splice(index, 1);
+      return settle({ ...records[index], status: 'Retired' }, this.latency);
+    }
+
+    const found = this._collection(kind).filter((r) => r.id === id || r.code === id)[0];
+    if (!found) throw new Error('Record not found');
+    // Retired, never removed: the fixture's transactions still point at it.
+    found.status = 'Retired';
+    return settle(clone(found), this.latency);
+  }
+
+  /**
    * Persist a bulk crop purchase together with the batch it creates.
    * @returns {Promise<{logRow: object, batch: object}>}
    */

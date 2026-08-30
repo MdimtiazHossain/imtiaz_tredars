@@ -11,6 +11,7 @@ import { Component } from '../runtime/component.js';
 import { C } from '../styles/tokens.js';
 import { money, int, dec2, lakh } from '../domain/format.js';
 import { cell, column, table } from '../components/dataTable.js';
+import { formModal as formModalOf } from '../components/formModal.js';
 import {
   buildModal,
   defaultsFor,
@@ -18,6 +19,12 @@ import {
   payloadFor,
   autoAllocate,
 } from './transactionForms.js';
+import {
+  defaultsFor as masterDefaults,
+  validate as validateMaster,
+  payloadFor as masterPayload,
+  buildMasterModal,
+} from './masterForms.js';
 import {
   DASHBOARD_KPIS,
   MONTHLY_SERIES,
@@ -35,6 +42,7 @@ import {
   NUMBERING,
   UNIT_CONVERSIONS,
   PAYMENT_METHODS,
+  CASH_ACCOUNTS,
   NOTIFICATION_RULES,
 } from '../data/reference.js';
 
@@ -52,7 +60,7 @@ export class BusinessApp extends Component {
       invTab:'all', invSort:'value', acctTab:'receivable', setSec:'company', repSel:'crop-batch-profit', repLoading:false,
       custSel:'CUS-003', custTab:'purchases', supSel:'SUP-001', supTab:'purchases', valuation:'FIFO',
       cp:{sup:'SUP-001', crop:'Maize', grade:'A (Premium)', wh:'Naogaon Central Godown', date:'2026-08-28', qty:100, unit:'MT', moist:1.5, rate:30000, transport:50000, loading:12000, unloading:8000, other:0, advance:1500000, note:''},
-      extraCusts:[], custModal:false,
+      extraCusts:[], custModal:false, master:null, masterRows:{},
       newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'', district:'Bogura', upazila:'', limit:500000, days:15, opening:0},
       cs:{buyer:'PRAN Agro Business Ltd.', crop:'Maize', date:'2026-08-28', rate:34500, transport:15000, other:5000, target:40, alloc:{}},
       ds:{cust:'CUS-002', date:'2026-08-28', sp:'Shamim Reza', wh:'Bogura Depot', terms:'Credit 15 days', paid:150000,
@@ -69,7 +77,14 @@ export class BusinessApp extends Component {
     };
   }
 
-  go(id) { return () => this.setState({screen:id, qOpen:false, notifOpen:false, userOpen:false, q:''}); }
+  go(id) {
+    return () => {
+      this.setState({screen:id, qOpen:false, notifOpen:false, userOpen:false, q:''});
+      // The crop master is not part of the workspace payload, so it is
+      // fetched when the screen is actually opened rather than on every load.
+      if (id === 'crops') this.loadMasterList('crop');
+    };
+  }
   h(g, k, num) { return e => { const v = num ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value; this.setState(s => { const o = Object.assign({}, s[g]); o[k] = v; return {[g]:o}; }); }; }
   hs(k, v) { return () => this.setState({[k]:v}); }
   tabify(arr, cur, key) { return arr.map(x => ({l:x.l, on:x.k === cur, bg:x.k === cur ? '#fff' : 'transparent',
@@ -240,6 +255,237 @@ export class BusinessApp extends Component {
         this.setState(s => (s.modal ? { modal: { ...s.modal, busy: false, error: err.message } } : null));
       }
     );
+  }
+
+  /* ------------------------------------------------------------ master data */
+
+  /**
+   * Open the add or edit form for a master record.
+   *
+   * `row` absent means a new one. The same modal, validator and submit path
+   * serve crops, customers, suppliers and companies.
+   */
+  openMaster(kind, row) {
+    this.setState({
+      master: { kind, row: row || null, confirm: false, form: masterDefaults(kind, this.data, row), error: '', busy: false },
+    });
+  }
+
+  /**
+   * Ask before retiring a record.
+   *
+   * Retiring changes what every other screen offers, so it gets a deliberate
+   * second step rather than a single click in a table row.
+   */
+  confirmRetire(kind, row) {
+    this.setState({ master: { kind, row, confirm: true, form: {}, error: '', busy: false } });
+  }
+
+  closeMaster() {
+    this.setState({ master: null });
+  }
+
+  /** Change handler for one field of the open master form. */
+  onMasterField(key) {
+    return e => {
+      const value = e.target.value;
+      this.setState(s =>
+        s.master ? { master: { ...s.master, form: { ...s.master.form, [key]: value }, error: '' } } : null
+      );
+    };
+  }
+
+  /** Save a new or edited master record, or carry out a confirmed retirement. */
+  submitMaster() {
+    const state = this.state.master;
+    if (!state || state.busy) return;
+
+    if (state.confirm) return this.retireMaster(state);
+
+    const problem = validateMaster(state.kind, state.form);
+    if (problem) {
+      this.setState({ master: { ...state, error: problem } });
+      return;
+    }
+
+    const payload = masterPayload(state.kind, state.form);
+    this.setState({ master: { ...state, busy: true, error: '' } });
+
+    const write = state.row
+      ? this.persist('updateMaster', state.kind, state.row.id ?? state.row.code, payload)
+      : this.persist('createMaster', state.kind, payload);
+
+    write.then(
+      saved => {
+        this.setState({ master: null });
+        const code = (saved && saved.code) || '';
+        this.fire(
+          (code ? code + ' — ' : '') + payload.name + (state.row ? ' updated' : ' added'),
+          'ok'
+        );
+        this.afterMasterChange(state.kind);
+      },
+      err => this.reportMasterError(err)
+    );
+  }
+
+  retireMaster(state) {
+    this.setState({ master: { ...state, busy: true, error: '' } });
+    this.persist('retireMaster', state.kind, state.row.id ?? state.row.code).then(
+      () => {
+        this.setState({ master: null });
+        this.fire(state.row.code + ' — ' + state.row.name + ' retired', 'ok');
+        this.afterMasterChange(state.kind);
+      },
+      err => this.reportMasterError(err)
+    );
+  }
+
+  /**
+   * Show why a master write was refused, in the form that caused it.
+   *
+   * The server refuses to retire a party that still owes money and says how
+   * much; that belongs next to the button, not in a toast that disappears.
+   */
+  reportMasterError(err) {
+    if (err.silent) return;
+    this.setState(s => (s.master ? { master: { ...s.master, busy: false, error: err.message } } : null));
+  }
+
+  /** A master change moves what every picker offers, so refetch rather than patch. */
+  afterMasterChange(kind) {
+    this.reloadWorkspace();
+    this.loadMasterList(kind);
+  }
+
+  /**
+   * Load one master list from the repository.
+   *
+   * Only the crops screen needs this today -- customers, suppliers and
+   * companies already arrive with the workspace -- but every kind goes through
+   * the same path so the next screen is a call, not a mechanism.
+   */
+  loadMasterList(kind) {
+    if (!this.repository || typeof this.repository.listMaster !== 'function') return;
+    this.repository.listMaster(kind).then(
+      rows => this.setState(s => ({ masterRows: { ...s.masterRows, [kind]: rows } })),
+      () => {}
+    );
+  }
+
+  /**
+   * Whether the signed-in user may do something to master data.
+   *
+   * This only decides what to draw. Every one of these routes checks the same
+   * permission on the server, so hiding a button is a courtesy and not the
+   * control. Without a permission list -- the in-memory fixture, or the demo
+   * with no backend -- nothing is hidden, because there is no server to be
+   * the real check.
+   */
+  mayMaster(kind, action) {
+    const held = this.props.permissions;
+    return !held ? true : held.indexOf(`${kind}.${action}`) > -1;
+  }
+
+  /** The add / edit / retire controls for one master screen. */
+  masterControls(kind, row) {
+    return {
+      canAdd: this.mayMaster(kind, 'create'),
+      canEdit: !!row && this.mayMaster(kind, 'edit'),
+      canRetire: !!row && this.mayMaster(kind, 'delete'),
+      addLabel: `Add ${kind}`,
+      onAdd: () => this.openMaster(kind),
+      onEdit: () => this.openMaster(kind, row),
+      onRetire: () => this.confirmRetire(kind, row),
+    };
+  }
+
+  /** Row actions for a master table. */
+  masterRowActions(kind, row) {
+    const actions = [];
+    if (this.mayMaster(kind, 'edit')) {
+      actions.push({ label: 'Edit', onClick: () => this.openMaster(kind, row) });
+    }
+    if (this.mayMaster(kind, 'delete')) {
+      actions.push({ label: 'Retire', danger: true, onClick: () => this.confirmRetire(kind, row) });
+    }
+    return actions;
+  }
+
+  /** The crops screen: the bulk-trading master, with what each crop is holding. */
+  crops() {
+    const rows = this.state.masterRows.crop || [];
+    const active = rows.filter(c => c.status !== 'Retired');
+    const held = active.reduce((t, c) => t + (Number(c.value) || 0), 0);
+
+    return {
+      ...this.masterControls('crop', null),
+      addLabel: 'Add crop',
+      table: table(
+        [
+          column('Code'),
+          column('Crop'),
+          column('Unit'),
+          column('Last rate', 'right'),
+          column('In stock', 'right'),
+          column('Stock value', 'right'),
+          column('Status', 'center'),
+          column('', 'right'),
+        ],
+        active.map(c => ({
+          cells: [
+            cell(c.code, { mono: true, color: C.mut }),
+            cell(c.name, { weight: '600', sub: c.last ? 'last received ' + c.last : '' }),
+            cell(c.unit, { color: C.mut }),
+            cell(c.rate ? money(c.rate) : '—', { align: 'right', mono: true, color: C.mut }),
+            // Crop quantities are fractional, so rounding 15.61 MT to 16 would
+            // misstate what the godown holds.
+            cell(c.quantity ? dec2(c.quantity) + ' ' + c.unit : '—', { align: 'right', mono: true, weight: '600' }),
+            cell(c.value ? money(c.value) : '—', { align: 'right', mono: true }),
+            cell(c.status, {
+              align: 'center', badge: true,
+              badgeBg: c.status === 'Active' ? C.cropBg : C.warnBg,
+              badgeFg: c.status === 'Active' ? C.crop : C.warn,
+            }),
+            cell('', { align: 'right', actions: this.masterRowActions('crop', c) }),
+          ],
+        })),
+        {
+          emptyTitle: 'No crops yet',
+          emptyNote: 'Add the first crop and it becomes available to purchase, store and sell.',
+          footNote: active.length + (active.length === 1 ? ' crop' : ' crops'),
+          footTotal: 'Stock value ' + money(held),
+        }
+      ),
+    };
+  }
+
+  /** The open master modal: the add/edit form, or the retire confirmation. */
+  masterModal() {
+    const state = this.state.master;
+    const noun = state.kind;
+
+    if (state.confirm) {
+      return formModalOf({
+        open: true,
+        title: `Retire ${noun}`,
+        subtitle: `${state.row.code} · ${state.row.name}`,
+        fields: [],
+        summary: [{ k: 'Status after saving', v: 'Retired', good: false }],
+        error: state.error,
+        busy: state.busy,
+        submitLabel: 'Retire',
+        note: 'Nothing is deleted — past documents keep naming it, and it stops being offered on new ones',
+        onSubmit: () => this.submitMaster(),
+        onCancel: () => this.closeMaster(),
+      });
+    }
+
+    return buildMasterModal(state.kind, state, this.data, {
+      onField: key => this.onMasterField(key),
+      onSubmit: () => this.submitMaster(),
+      onCancel: () => this.closeMaster(),
+    });
   }
 
   formSuccessText(kind, form) {
@@ -502,8 +748,8 @@ export class BusinessApp extends Component {
     return {v:f, cust:cust, lines:lines, custs:all, whs:this.data.warehouses, invNo:'DS-2608-222',
       modal:this.state.custModal, nc:this.state.newCust,
       onNew:() => this.setState({custModal:true}), onCancel:() => this.setState({custModal:false}), onSave:() => this.saveCustomer(),
-      types:['Dealer', 'Retailer', 'Corporate', 'Company', 'Individual', 'Other'],
-      districts:['Bogura', 'Rangpur', 'Naogaon', 'Dinajpur', 'Jashore', 'Rajshahi', 'Pabna', 'Natore'],
+      types:this.optionsInUse(all, 'type', ['Dealer', 'Retailer', 'Corporate', 'Individual']),
+      districts:this.optionsInUse(all.concat(this.data.suppliers, this.data.companies), 'district'),
       grossText:money(gross), discText:'− ' + money(discAmt).slice(1), netText:money(net), costText:money(cost),
       profitText:money(profit), marginText:margin.toFixed(2) + '%', profitColor:profit >= 0 ? C.crop : C.dngr,
       paidText:money(paid), dueText:money(due), limitText:money(cust.limit), outText:money(cust.out),
@@ -790,7 +1036,9 @@ export class BusinessApp extends Component {
       availW:Math.min(100, c.out / c.limit * 100).toFixed(1) + '%', availColor:avail < 0 ? C.dngr : C.crop, daysText:c.days + ' days',
       tabs:this.tabify([{k:'purchases', l:'Purchase history'}, {k:'payments', l:'Payment history'}, {k:'ledger', l:'Ledger'}], S.custTab, 'custTab'),
       isPur:S.custTab === 'purchases', isPay:S.custTab === 'payments', isLed:S.custTab === 'ledger',
-      purchases:purchases, payments:payments, ledger:ledger};
+      purchases:purchases, payments:payments, ledger:ledger,
+      ...this.masterControls('customer', c), addLabel:'Add customer',
+      countText:all.length + (all.length === 1 ? ' customer' : ' customers')};
   }
 
   sup() {
@@ -811,33 +1059,60 @@ export class BusinessApp extends Component {
       on:x.code === S.supSel, bg:x.code === S.supSel ? C.accBg : '#fff', bd:x.code === S.supSel ? C.acc : '#E3E0DA', onClick:this.hs('supSel', x.code)})),
       s:s, purText:money(s.pur), paidText:money(s.paid), outText:money(s.out),
       tabs:this.tabify([{k:'purchases', l:'Purchase history'}, {k:'payments', l:'Payment history'}], S.supTab, 'supTab'),
-      isPur:S.supTab === 'purchases', purchases:pur, payments:pay};
+      isPur:S.supTab === 'purchases', purchases:pur, payments:pay,
+      ...this.masterControls('supplier', s), addLabel:'Add supplier',
+      countText:this.data.suppliers.length + ' suppliers'};
+  }
+
+  /** Values already present in the data, plus a few common ones, sorted. */
+  optionsInUse(rows, key, seed) {
+    const seen = new Set(seed || []);
+    (rows || []).forEach(r => { if (r && r[key]) seen.add(String(r[key])); });
+    return [...seen].sort((a, b) => a.localeCompare(b));
   }
 
   acct() {
     const S = this.state, t = S.acctTab;
+    // Everything the accounts screen states is derived from these three lists,
+    // so a KPI cannot drift from the table underneath it.
+    const owing = this.data.customers.filter(c => c.out > 0);
+    const owedSuppliers = this.data.suppliers.filter(x => x.out > 0);
+    const owedCompanies = this.data.companies.filter(c => c.bal > 0);
+    const receivableTotal = owing.reduce((x, c) => x + c.out, 0);
+    const overdue = owing.reduce((x, c) => x + (c.b60 || 0) + (c.b90 || 0) + (c.b90p || 0), 0);
+    const payableTotal =
+      owedSuppliers.reduce((x, y) => x + y.out, 0) + owedCompanies.reduce((x, y) => x + y.bal, 0);
+    const owedParties = owedSuppliers.length + owedCompanies.length;
+    const pl = PROFIT_AND_LOSS;
+    const netProfit = (pl.find(x => /net profit/i.test(x.k)) || {}).v || 0;
+    // The total, not the first line that happens to say "Sales" -- margin
+    // against one business line rather than both would read three times high.
+    const revenue = (pl.find(x => /total revenue/i.test(x.k)) || {}).v || 0;
+    const margin = revenue ? (netProfit / revenue * 100).toFixed(1) + '%' : '—';
     const rec = table([column('Customer'), column('Type'), column('Credit limit', 'right'), column('0–30', 'right'), column('31–60', 'right'), column('61–90', 'right'), column('90+', 'right'), column('Total due', 'right'), column('', 'center')],
-      this.data.customers.map(c => ({cells:[cell(c.name, {weight:'600', sub:c.district}), cell(c.type, {color:C.mut}),
+      owing.map(c => ({cells:[cell(c.name, {weight:'600', sub:c.district}), cell(c.type, {color:C.mut}),
         cell(money(c.limit), {align:'right', mono:true, color:C.mut}), cell(money(c.b30), {align:'right', mono:true}),
         cell(money(c.b60), {align:'right', mono:true, color:c.b60 ? C.warn : C.mut}),
         cell(money(c.b90), {align:'right', mono:true, color:c.b90 ? '#C4720F' : C.mut}),
         cell(money(c.b90p), {align:'right', mono:true, color:c.b90p ? C.dngr : C.mut, weight:c.b90p ? '600' : '400'}),
         cell(money(c.out), {align:'right', mono:true, weight:'700'}),
         cell('Collect', {align:'center', badge:true, badgeBg:C.accBg, badgeFg:C.acc})]})),
-      {footNote:'6 customers with open balance', footTotal:'Receivable ' + money(this.data.customers.reduce((x, c) => x + c.out, 0))});
+      {footNote:owing.length + (owing.length === 1 ? ' customer' : ' customers') + ' with open balance',
+       footTotal:'Receivable ' + money(owing.reduce((x, c) => x + c.out, 0))});
     const pay = table([column('Party'), column('Kind'), column('Bill / reference'), column('Due date'), column('Outstanding', 'right'), column('', 'center')],
-      this.data.suppliers.filter(s => s.out > 0).map(s => ({cells:[cell(s.name, {weight:'600', sub:s.district}), cell('Farmer / supplier', {badge:true, badgeBg:C.cropBg, badgeFg:C.crop}),
+      owedSuppliers.map(s => ({cells:[cell(s.name, {weight:'600', sub:s.district}), cell('Farmer / supplier', {badge:true, badgeBg:C.cropBg, badgeFg:C.crop}),
         cell('PC balance', {color:C.mut}), cell('30 Aug 2026', {color:C.mut}), cell(money(s.out), {align:'right', mono:true, weight:'700'}),
         cell('Pay', {align:'center', badge:true, badgeBg:C.accBg, badgeFg:C.acc})]}))
-        .concat(this.data.companies.filter(c => c.bal > 0).map(c => ({cells:[cell(c.name, {weight:'600', sub:c.district}), cell('Principal company', {badge:true, badgeBg:C.dealBg, badgeFg:C.deal}),
+        .concat(owedCompanies.map(c => ({cells:[cell(c.name, {weight:'600', sub:c.district}), cell('Principal company', {badge:true, badgeBg:C.dealBg, badgeFg:C.deal}),
           cell('Invoice ' + c.code, {color:C.mut}), cell('05 Sep 2026', {color:C.mut}), cell(money(c.bal), {align:'right', mono:true, weight:'700'}),
           cell('Pay', {align:'center', badge:true, badgeBg:C.accBg, badgeFg:C.acc})]}))),
-      {footNote:'Payables across farmers and companies', footTotal:'Payable ' + money(4030000)});
+      {footNote:'Payables across farmers and companies', footTotal:'Payable ' + money(payableTotal)});
+    const cashTotal = CASH_ACCOUNTS.reduce((t, r) => t + r.balance, 0);
     const cash = table([column('Account'), column('Type'), column('Last movement'), column('Balance', 'right')],
-      [['Office cash — Bogura', 'Cash', '28 Aug 2026', 385000], ['Islami Bank — 20501...4417', 'Bank', '28 Aug 2026', 2140000],
-       ['DBBL — 1471...8802', 'Bank', '27 Aug 2026', 1520000], ['bKash Merchant — 01755...', 'MFS', '28 Aug 2026', 240000]].map(r => ({cells:[
-        cell(r[0], {weight:'600'}), cell(r[1], {badge:true, badgeBg:'#F0EEE9', badgeFg:'#3D3A36'}), cell(r[2], {color:C.mut}),
-        cell(money(r[3]), {align:'right', mono:true, weight:'700'})]})), {footNote:'4 accounts', footTotal:'Total ' + money(4285000)});
+      CASH_ACCOUNTS.map(r => ({cells:[
+        cell(r.name, {weight:'600'}), cell(r.type, {badge:true, badgeBg:'#F0EEE9', badgeFg:'#3D3A36'}), cell(r.last, {color:C.mut}),
+        cell(money(r.balance), {align:'right', mono:true, weight:'700'})]})),
+      {footNote:CASH_ACCOUNTS.length + ' accounts', footTotal:'Total ' + money(cashTotal)});
     const exp = table([column('Voucher'), column('Date'), column('Category'), column('Note'), column('Business'), column('Amount', 'right')],
       [['EXP-2608-118', '27 Aug', 'Transport', 'Dinajpur → Bogura, 3 trucks', 'crop', 96000], ['EXP-2608-112', '26 Aug', 'Loading / Unloading', 'Naogaon godown labour', 'crop', 34000],
        ['EXP-2608-108', '25 Aug', 'Salary', 'August advance — 4 staff', 'both', 128000], ['EXP-2608-101', '23 Aug', 'Warehouse', 'Rangpur store rent', 'both', 45000],
@@ -845,7 +1120,6 @@ export class BusinessApp extends Component {
         cell(r[0], {mono:true, weight:'600'}), cell(r[1], {color:C.mut}), cell(r[2]), cell(r[3], {color:C.mut}),
         cell(r[4] === 'crop' ? 'Bulk Crop' : r[4] === 'dealer' ? 'Dealer' : 'Shared', {badge:true, badgeBg:r[4] === 'crop' ? C.cropBg : r[4] === 'dealer' ? C.dealBg : '#F0EEE9', badgeFg:r[4] === 'crop' ? C.crop : r[4] === 'dealer' ? C.deal : '#3D3A36'}),
         cell(money(r[5]), {align:'right', mono:true, weight:'600'})]})), {footNote:'August 2026 expenses', footTotal:'Total ' + money(384100)});
-    const pl = PROFIT_AND_LOSS;
     return {tabs:this.tabify([{k:'receivable', l:'Receivable'}, {k:'payable', l:'Payable'}, {k:'cash', l:'Cash & Bank'}, {k:'expense', l:'Expense'}, {k:'pl', l:'Profit & Loss'}], t, 'acctTab'),
       actions:[
         {l:'Receive payment', onClick:() => this.openForm('payment', {direction:'RECEIPT', partyType:'CUSTOMER'})},
@@ -854,8 +1128,12 @@ export class BusinessApp extends Component {
       ],
       isRec:t === 'receivable', isPay:t === 'payable', isCash:t === 'cash', isExp:t === 'expense', isPl:t === 'pl',
       rec:rec, pay:pay, cash:cash, exp:exp,
-      kpis:[{k:'Total receivable', v:money(3100000), s:'৳12.4 L overdue'}, {k:'Total payable', v:money(4030000), s:'৳6.7 L due this week'},
-        {k:'Cash & bank', v:money(4285000), s:'4 accounts'}, {k:'Net profit — August', v:money(3553100), s:'margin 10.3%'}],
+      // Read from the same rows the tables below are built from, so a KPI can
+      // never disagree with the table it sits above.
+      kpis:[{k:'Total receivable', v:money(receivableTotal), s:money(overdue) + ' overdue'},
+        {k:'Total payable', v:money(payableTotal), s:owedParties + ' parties'},
+        {k:'Cash & bank', v:money(cashTotal), s:CASH_ACCOUNTS.length + ' accounts'},
+        {k:'Net profit — August', v:money(netProfit), s:'margin ' + margin}],
       pl:pl.map(x => ({k:x.k, v:money(x.v), bold:x.bold ? '600' : '400', size:x.big ? '17px' : '13.5px',
         color:x.good ? C.crop : x.v < 0 ? '#3D3A36' : C.ink, bg:x.bold ? '#FAF9F7' : '#fff'}))};
   }
@@ -1033,12 +1311,14 @@ export class BusinessApp extends Component {
             return {cells:[cell(p.name, {weight:'600'}), cell(p.cat, {color:C.mut}), cell(int(q) + ' ' + p.unit, {align:'right', mono:true}),
               cell(money(sv), {align:'right', mono:true, weight:'600'}), cell(money(c), {align:'right', mono:true, color:C.mut}),
               cell(money(sv - c), {align:'right', mono:true, color:C.crop, weight:'600'}), cell(((sv - c) / sv * 100).toFixed(1) + '%', {align:'right', mono:true})]}; }),
-          {footNote:'6 products', footTotal:'Sales ' + money(1738020)})},
+          {footNote:this.data.products.length + ' products',
+           footTotal:'Sales ' + money(this.data.products.reduce((t, x) => t + (x.sale || 0) * (x.sold || 0), 0))})},
       'pur-supplier':{title:'Supplier-wise purchase', note:'FY 2026-27 to date · bulk crop',
         t:table([column('Supplier'), column('Type'), column('District'), column('Purchase value', 'right'), column('Paid', 'right'), column('Outstanding', 'right')],
           this.data.suppliers.map(s => ({cells:[cell(s.name, {weight:'600', sub:s.bn}), cell(s.type, {color:C.mut}), cell(s.district), cell(money(s.pur), {align:'right', mono:true, weight:'600'}),
             cell(money(s.paid), {align:'right', mono:true, color:C.crop}), cell(money(s.out), {align:'right', mono:true, weight:'600', color:s.out ? C.dngr : C.mut})]})),
-          {footNote:'5 suppliers', footTotal:'Purchase ' + money(33510000)})}
+          {footNote:this.data.suppliers.length + ' suppliers',
+           footTotal:'Purchase ' + money(this.data.suppliers.reduce((t, x) => t + (x.pur || 0), 0))})}
     };
     const server = S.serverReport && S.serverReport.id === S.repSel ? S.serverReport : null;
     // When the repository can serve reports, the bundled definitions are not a
@@ -1114,7 +1394,8 @@ export class BusinessApp extends Component {
     const pendCount = S.approvals.filter(a => a.status === 'pending').length;
     const empSet = EMPLOYEES;
     return {
-      modal:buildModal(this),
+      modal:this.state.master ? this.masterModal() : buildModal(this),
+      crop:this.crops(),
       co:this.data.company, role:role, biz:S.biz, screen:S.screen, titleMain:title[0], titleSub:title[1], is:is,
       bizTabs:[{k:'all', l:'All business'}, {k:'dealer', l:'Dealer'}, {k:'crop', l:'Bulk Crop'}].map(x => ({l:x.l, on:x.k === S.biz,
         bg:x.k === S.biz ? '#fff' : 'transparent', color:x.k === S.biz ? C.ink : C.mut, sh:x.k === S.biz ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
@@ -1183,13 +1464,15 @@ export class BusinessApp extends Component {
         {k:'Credit sale above customer limit', v:'always requires approval'}],
       setNotif: NOTIFICATION_RULES,
       phones: PHONE_SCREENS,
-      companiesTable:table([column('Code'), column('Company'), column('Role'), column('Contact person'), column('Mobile'), column('Credit limit', 'right'), column('Balance', 'right'), column('Status', 'center')],
+      companyAdd:{canAdd:this.mayMaster('company', 'create'), addLabel:'Add company', onAdd:() => this.openMaster('company')},
+      companiesTable:table([column('Code'), column('Company'), column('Role'), column('Contact person'), column('Mobile'), column('Credit limit', 'right'), column('Balance', 'right'), column('Status', 'center'), column('', 'right')],
         this.data.companies.map(c => ({cells:[cell(c.code, {mono:true, color:C.mut}), cell(c.name, {weight:'600', sub:c.district}),
           cell(c.type, {badge:true, badgeBg:c.type === 'Buyer' ? C.cropBg : c.type === 'Principal' ? C.dealBg : '#F0EEE9', badgeFg:c.type === 'Buyer' ? C.crop : c.type === 'Principal' ? C.deal : '#3D3A36'}),
           cell(c.person), cell(c.mobile, {mono:true}), cell(c.limit ? money(c.limit) : '—', {align:'right', mono:true, color:C.mut}),
           cell((c.bal < 0 ? 'Receivable ' : 'Payable ') + money(Math.abs(c.bal)), {align:'right', mono:true, weight:'600', color:c.bal < 0 ? C.crop : C.ink}),
-          cell(c.status, {align:'center', badge:true, badgeBg:c.status === 'Active' ? C.cropBg : C.warnBg, badgeFg:c.status === 'Active' ? C.crop : C.warn})]})),
-        {footNote:'7 companies · one company can act as both supplier and buyer'})
+          cell(c.status, {align:'center', badge:true, badgeBg:c.status === 'Active' ? C.cropBg : C.warnBg, badgeFg:c.status === 'Active' ? C.crop : C.warn}),
+          cell('', {align:'right', actions:this.masterRowActions('company', c)})]})),
+        {footNote:this.data.companies.length + ' companies · one company can act as both supplier and buyer'})
     };
   }
 }

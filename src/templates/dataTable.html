@@ -33,6 +33,11 @@
                   <sc-if value="{{ c.plain }}" hint-placeholder-val="{{ true }}">
                     <span style="font-family:{{ c.font }};font-weight:{{ c.weight }};color:{{ c.color }};font-size:{{ c.size }}">{{ c.text }}</span>
                   </sc-if>
+                  <sc-if value="{{ c.hasActions }}">
+                    <sc-for list="{{ c.actions }}" as="a" hint-placeholder-count="2">
+                      <button onClick="{{ a.onClick }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:{{ a.color }}" style-hover="border-color:{{ a.hoverColor }};color:{{ a.hoverColor }}">{{ a.label }}</button>
+                    </sc-for>
+                  </sc-if>
                 </div>
                 <sc-if value="{{ c.sub }}">
                   <div style="margin-top:3px;font-size:11px;color:#8C877F;text-align:{{ c.align }}">{{ c.sub }}</div>

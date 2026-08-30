@@ -160,6 +160,15 @@ export class ApiClient {
     return this.request('PATCH', path, { body });
   }
 
+  /**
+   * DELETE never removes a row in this API -- the master routes deactivate.
+   * The verb is here because that is what the route declares; what it means is
+   * "retire", and the server keeps the record for the documents that cite it.
+   */
+  delete(path) {
+    return this.request('DELETE', path);
+  }
+
   /** Refresh at most once at a time, so a burst of 401s makes one round trip. */
   _refreshOnce() {
     if (!this._refreshing) {

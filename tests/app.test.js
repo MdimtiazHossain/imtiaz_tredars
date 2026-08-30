@@ -835,3 +835,217 @@ describe('payment allocation', () => {
     expect(alloc.emptyNote).toMatch(/sit on account/i);
   });
 });
+
+describe('master data', () => {
+  it('offers every master screen a way to add a record', async () => {
+    const { app } = await mountApp();
+    const vals = app.renderVals();
+    expect(vals.cust.canAdd).toBe(true);
+    expect(vals.sup.canAdd).toBe(true);
+    expect(vals.companyAdd.canAdd).toBe(true);
+    expect(vals.crop.canAdd).toBe(true);
+  });
+
+  it('hides what the signed-in user may not do', async () => {
+    // Sales can add and edit customers but not retire them, and cannot touch
+    // crops at all. The server enforces the same codes; this only decides
+    // what to draw.
+    const { app } = await mountApp({ permissions: ['customer.create', 'customer.edit'] });
+    const vals = app.renderVals();
+    expect(vals.cust.canAdd).toBe(true);
+    expect(vals.cust.canEdit).toBe(true);
+    expect(vals.cust.canRetire).toBe(false);
+    expect(vals.crop.canAdd).toBe(false);
+  });
+
+  it('opens an empty form to add and a filled one to edit', async () => {
+    const { app } = await mountApp();
+    app.openMaster('supplier');
+    expect(app.state.master.row).toBeNull();
+    expect(app.state.master.form.name).toBe('');
+
+    const existing = app.data.suppliers[0];
+    app.openMaster('supplier', existing);
+    expect(app.state.master.form.name).toBe(existing.name);
+    expect(app.state.master.form.district).toBe(existing.district);
+    expect(app.renderVals().modal.title).toMatch(/edit supplier/i);
+  });
+
+  it('refuses a record with no name', async () => {
+    const { app } = await mountApp();
+    let called = false;
+    app.repository.createMaster = async () => { called = true; return {}; };
+
+    app.openMaster('customer');
+    app.submitForm && app.submitMaster();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(called).toBe(false);
+    expect(app.state.master.error).toMatch(/name/i);
+  });
+
+  it('refuses a party with no mobile number', async () => {
+    const { app } = await mountApp();
+    app.openMaster('supplier');
+    app.onMasterField('name')({ target: { value: 'Imtiaz Krishi Bhandar' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(app.state.master.error).toMatch(/mobile/i);
+  });
+
+  it('sends a new supplier and closes on success', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.createMaster = async (kind, body) => {
+      sent.push([kind, body]);
+      return { id: 9, code: 'SUP-009', ...body };
+    };
+
+    app.openMaster('supplier');
+    app.onMasterField('name')({ target: { value: 'Imtiaz Krishi Bhandar' } });
+    app.onMasterField('mobile')({ target: { value: '01711000111' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0][0]).toBe('supplier');
+    expect(sent[0][1]).toMatchObject({ name: 'Imtiaz Krishi Bhandar', mobile: '01711000111' });
+    expect(app.state.master).toBeNull();
+    expect(app.state.toast.msg).toContain('SUP-009');
+  });
+
+  it('edits through update rather than create', async () => {
+    const { app } = await mountApp();
+    const calls = [];
+    app.repository.createMaster = async () => { calls.push('create'); return {}; };
+    app.repository.updateMaster = async (kind, id, body) => {
+      calls.push(['update', kind, id]);
+      return { id, code: 'CUS-001', ...body };
+    };
+
+    const existing = app.data.customers[0];
+    app.openMaster('customer', existing);
+    app.onMasterField('district')({ target: { value: 'Naogaon' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe('update');
+    expect(calls[0][1]).toBe('customer');
+  });
+
+  it('asks before retiring, and does nothing until confirmed', async () => {
+    const { app } = await mountApp();
+    let retired = 0;
+    app.repository.retireMaster = async () => { retired += 1; return {}; };
+
+    const existing = app.data.suppliers[0];
+    app.confirmRetire('supplier', existing);
+    expect(retired).toBe(0);
+
+    const modal = app.renderVals().modal;
+    expect(modal.title).toMatch(/retire supplier/i);
+    // The confirmation is a decision, not a form to fill in.
+    expect(modal.fields).toEqual([]);
+    expect(modal.submitLabel).toBe('Retire');
+
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(retired).toBe(1);
+    expect(app.state.master).toBeNull();
+  });
+
+  it('shows the server refusal in the form rather than losing it', async () => {
+    const { app } = await mountApp();
+    app.repository.retireMaster = async () => {
+      throw new Error('Tk 2,46,700 is still payable to this supplier.');
+    };
+
+    app.confirmRetire('supplier', app.data.suppliers[0]);
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Still open, with the reason attached, so the operator can see why.
+    expect(app.state.master).not.toBeNull();
+    expect(app.state.master.error).toMatch(/still payable/i);
+    expect(app.state.master.busy).toBe(false);
+  });
+
+  it('builds the crop list from the repository, with row actions', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('crop');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const crop = app.renderVals().crop;
+    expect(crop.table.rows.length).toBeGreaterThan(0);
+
+    const actions = crop.table.rows[0].cells.slice(-1)[0].actions;
+    expect(actions.map((a) => a.label)).toEqual(['Edit', 'Retire']);
+    // The retire action reads as the destructive one.
+    expect(actions[1].color).not.toBe(actions[0].color);
+  });
+
+  it('will not retire a crop that still has stock', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('crop');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const held = app.state.masterRows.crop.find((c) => c.quantity > 0);
+    expect(held).toBeTruthy();
+
+    app.confirmRetire('crop', held);
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(app.state.master.error).toMatch(/still in stock/i);
+  });
+
+  it('offers districts the data already uses rather than a fixed list', async () => {
+    const { app } = await mountApp();
+    app.openMaster('customer');
+    const districts = app
+      .renderVals()
+      .modal.fields.find((f) => f.key === 'district')
+      .options.map((o) => o.value);
+
+    const known = app.data.customers
+      .concat(app.data.suppliers)
+      .concat(app.data.companies)
+      .map((p) => p.district);
+    expect(districts.length).toBeGreaterThan(0);
+    districts.forEach((d) => expect(known).toContain(d));
+  });
+});
+
+describe('derived figures', () => {
+  it('states a receivable total that matches the rows above it', async () => {
+    const { app } = await mountApp();
+    const vals = app.renderVals();
+    const kpi = vals.acct.kpis.find((k) => k.k === 'Total receivable').v;
+    expect(vals.acct.rec.footTotal).toContain(kpi);
+  });
+
+  it('counts the customers it actually lists', async () => {
+    const { app } = await mountApp();
+    const acct = app.renderVals().acct;
+    const listed = acct.rec.rows.length;
+    expect(acct.rec.footNote).toBe(
+      listed + (listed === 1 ? ' customer' : ' customers') + ' with open balance'
+    );
+  });
+
+  it('totals the cash accounts it shows rather than repeating a number', async () => {
+    const { app } = await mountApp();
+    const acct = app.renderVals().acct;
+    const kpi = acct.kpis.find((k) => k.k === 'Cash & bank').v;
+    expect(acct.cash.footTotal).toContain(kpi);
+    expect(acct.cash.footNote).toBe(acct.cash.rows.length + ' accounts');
+  });
+
+  it('takes the margin against total revenue, not one business line', async () => {
+    const { app } = await mountApp();
+    const kpi = app.renderVals().acct.kpis.find((k) => k.k.startsWith('Net profit'));
+    // Both lines together, so the margin cannot read several times high.
+    expect(kpi.s).toBe('margin 10.3%');
+  });
+});

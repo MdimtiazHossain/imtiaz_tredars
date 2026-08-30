@@ -368,3 +368,136 @@ suite('cross-user access', () => {
 afterAll(async () => {
   if (!pool.ended) await closePool().catch(() => {});
 });
+
+suite('master data', () => {
+  let app2;
+  const t = {};
+
+  beforeAll(async () => {
+    app2 = createApp();
+    for (const role of ['Admin', 'Sales', 'Warehouse', 'Purchase']) {
+      t[role] = await signIn(role);
+    }
+  });
+
+  const asAdmin = (method, path) =>
+    request(app2)[method](path).set('authorization', `Bearer ${t.Admin}`);
+
+  it('creates, edits and retires a crop', async () => {
+    const created = await asAdmin('post', '/api/crops').send({
+      name: 'Mustard (Tori-7)',
+      unit: 'MT',
+      rate: 98000,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data.code).toMatch(/^CROP-\d+$/);
+    expect(created.body.data.status).toBe('Active');
+    const id = created.body.data.id;
+
+    // A partial edit leaves everything it did not mention alone.
+    const edited = await asAdmin('patch', `/api/crops/${id}`).send({ rate: 101500 });
+    expect(edited.status).toBe(200);
+    expect(edited.body.data.rate).toBe(101500);
+    expect(edited.body.data.name).toBe('Mustard (Tori-7)');
+
+    const retired = await asAdmin('delete', `/api/crops/${id}`);
+    expect(retired.status).toBe(200);
+    expect(retired.body.data.status).toBe('Retired');
+
+    // Nothing was deleted, so the row is still there to be named by history.
+    const { rows } = await query('SELECT is_active FROM crops WHERE id = $1', [id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].is_active).toBe(false);
+
+    await query('DELETE FROM crops WHERE id = $1', [id]);
+  });
+
+  it('refuses to retire a crop that is still in stock', async () => {
+    const { rows } = await query(
+      `SELECT crop_id FROM crop_batches
+        WHERE is_active AND quantity_remaining > 0 LIMIT 1`
+    );
+    const res = await asAdmin('delete', `/api/crops/${rows[0].crop_id}`);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('HAS_STOCK');
+    // The message says what is in the way, not just that it failed.
+    expect(res.body.error.message).toMatch(/still in stock/i);
+  });
+
+  it('refuses to retire a supplier who is still owed money', async () => {
+    const { rows } = await query(
+      'SELECT supplier_id FROM v_supplier_outstanding WHERE outstanding > 0 LIMIT 1'
+    );
+    const res = await asAdmin('delete', `/api/suppliers/${rows[0].supplier_id}`);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('HAS_OUTSTANDING');
+  });
+
+  it('refuses to retire the same record twice', async () => {
+    const created = await asAdmin('post', '/api/companies').send({
+      name: 'Bengal Feed Mills Ltd.',
+      role: 'BUYER',
+    });
+    const id = created.body.data.id;
+
+    expect((await asAdmin('delete', `/api/companies/${id}`)).status).toBe(200);
+    const again = await asAdmin('delete', `/api/companies/${id}`);
+    expect(again.status).toBe(422);
+    expect(again.body.error.code).toBe('ALREADY_INACTIVE');
+
+    await query('DELETE FROM companies WHERE id = $1', [id]);
+  });
+
+  it('validates before it writes', async () => {
+    const noName = await asAdmin('post', '/api/crops').send({ unit: 'MT' });
+    expect(noName.status).toBe(400);
+    expect(noName.body.error.code).toBe('VALIDATION_FAILED');
+
+    const badUnit = await asAdmin('post', '/api/crops').send({ name: 'Test', unit: 'Quintal' });
+    expect(badUnit.status).toBe(404);
+
+    const { rows } = await query("SELECT COUNT(*)::int AS n FROM crops WHERE name = 'Test'");
+    expect(rows[0].n).toBe(0);
+  });
+
+  it('enforces master permissions on the server, not just in the UI', async () => {
+    // Warehouse may look at crops but not change them, and Sales may not add a
+    // company. Hiding the buttons is a courtesy; this is the control.
+    const cases = [
+      ['Warehouse', 'post', '/api/crops', { name: 'X', unit: 'MT' }],
+      ['Warehouse', 'delete', '/api/crops/1', null],
+      ['Sales', 'post', '/api/companies', { name: 'X', role: 'BUYER' }],
+      ['Sales', 'delete', '/api/suppliers/1', null],
+      ['Purchase', 'delete', '/api/crops/1', null],
+    ];
+
+    for (const [role, method, path, body] of cases) {
+      const req = request(app2)[method](path).set('authorization', `Bearer ${t[role]}`);
+      const res = await (body ? req.send(body) : req);
+      expect(res.status, `${role} ${method.toUpperCase()} ${path}`).toBe(403);
+    }
+  });
+
+  it('lets Purchase maintain the procurement master it already creates', async () => {
+    const created = await request(app2)
+      .post('/api/crops')
+      .set('authorization', `Bearer ${t.Purchase}`)
+      .send({ name: 'Sesame', unit: 'MT', rate: 120000 });
+
+    expect(created.status).toBe(201);
+    await query('DELETE FROM crops WHERE id = $1', [created.body.data.id]);
+  });
+
+  it('lists crops with what each one is holding', async () => {
+    const res = await asAdmin('get', '/api/crops?pageSize=50');
+    expect(res.status).toBe(200);
+
+    const withStock = res.body.data.find((c) => c.quantity > 0);
+    expect(withStock).toBeTruthy();
+    expect(withStock.unit).toBeTruthy();
+    // A date, not a stringified JS Date -- "Wed Aug 12" is not a date.
+    expect(withStock.last).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Money rounded to paisa, not carrying binary-fraction noise.
+    expect(String(withStock.value)).not.toMatch(/\.\d{3,}/);
+  });
+});

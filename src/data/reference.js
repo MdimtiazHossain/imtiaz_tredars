@@ -77,3 +77,17 @@ export const PAYMENT_METHODS = [{k:'Cash', d:'Office cash — Bogura', on:true},
 export const NOTIFICATION_RULES = [{k:'Customer payment overdue', d:'daily 9:00 am for invoices past due date'}, {k:'Supplier payment due', d:'2 days before due date'},
         {k:'Low stock', d:'when quantity falls below minimum stock'}, {k:'Dead stock', d:'crop batch older than 60 days'},
         {k:'Large transaction', d:'any single transaction above ' + money(2000000)}, {k:'Expense threshold', d:'expense above ' + money(50000)}];
+
+/**
+ * Cash and bank accounts shown on the Accounts screen without a backend.
+ *
+ * Named rather than written inline so the table, its footer and the KPI above
+ * it all count the same list. With the API wired the balances come from the
+ * server's account rows instead.
+ */
+export const CASH_ACCOUNTS = [
+  { name: 'Office cash — Bogura', type: 'Cash', last: '28 Aug 2026', balance: 385000 },
+  { name: 'Islami Bank — 20501...4417', type: 'Bank', last: '28 Aug 2026', balance: 2140000 },
+  { name: 'DBBL — 1471...8802', type: 'Bank', last: '27 Aug 2026', balance: 1520000 },
+  { name: 'bKash Merchant — 01755...', type: 'MFS', last: '28 Aug 2026', balance: 240000 },
+];

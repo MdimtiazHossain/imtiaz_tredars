@@ -1,22 +1,18 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { query, withTransaction, num } from '../lib/db.js';
+import { query, num } from '../lib/db.js';
 import {
   handler,
   ok,
-  created,
-  parseBody,
   parseQuery,
   listQuerySchema,
   orderBy,
   paginate,
   pageMeta,
-  idParamSchema,
-  parseParams,
 } from '../lib/http.js';
 import { requirePermission } from '../middleware/auth.js';
-import { writeAudit, changedFields } from '../lib/audit.js';
 import { notFound } from '../lib/errors.js';
+import { registerMasterCrud } from './masterCrud.js';
 
 /**
  * Master data: customers, suppliers, companies, products, warehouses and
@@ -104,139 +100,76 @@ const customerSchema = z.object({
   opening: z.coerce.number().min(0).default(0),
 });
 
-router.post(
-  '/customers',
-  requirePermission('customer.create'),
+/* ------------------------------------------------------------------- crops */
+
+/*
+ * The crop master shares `/crops` with crop trading, which is mounted after
+ * this router. That works because the trading routes all sit under
+ * `/crops/purchases`, `/crops/sales` and `/crops/batches` while these are
+ * `/crops` and `/crops/:id`. Adding a `GET /crops/:id` here would shadow
+ * `/crops/batches`, so don't.
+ */
+
+router.get(
+  '/crops',
+  requirePermission('crop.view'),
   handler(async (req, res) => {
-    const body = parseBody(customerSchema, req);
+    const q = parseQuery(listQuerySchema, req);
+    const { limit, offset } = paginate(q.page, q.pageSize);
 
-    const record = await withTransaction(async (client) => {
-      // Codes are allocated under the transaction so two clerks adding a
-      // customer at the same moment cannot land on the same one.
-      const { rows: seq } = await client.query(
-        `SELECT COALESCE(MAX(NULLIF(regexp_replace(code, '\\D', '', 'g'), '')::int), 0) + 1 AS next
-           FROM customers WHERE org_id = $1`,
-        [req.orgId]
-      );
-      const code = `CUS-${String(seq[0].next).padStart(3, '0')}`;
+    const params = [req.orgId];
+    let where = 'c.org_id = $1';
+    if (q.q) {
+      params.push(`%${q.q}%`);
+      where += ` AND (c.name ILIKE $${params.length} OR c.code ILIKE $${params.length})`;
+    }
 
-      const { rows } = await client.query(
-        `INSERT INTO customers
-           (org_id, code, name, name_bn, customer_type, contact_person, mobile,
-            district, upazila, credit_limit, credit_days, opening_balance, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-         RETURNING *`,
-        [
-          req.orgId,
-          code,
-          body.name,
-          body.bn || null,
-          body.type,
-          body.person || null,
-          body.mobile,
-          body.district || null,
-          body.upazila || null,
-          body.limit,
-          body.days,
-          body.opening,
-          req.user.id,
-        ]
-      );
+    const { rows: countRows } = await query(
+      `SELECT COUNT(*)::int AS total FROM crops c WHERE ${where}`,
+      params
+    );
 
-      await writeAudit(client, {
-        actor: req.actor,
-        entityType: 'customers',
-        entityId: Number(rows[0].id),
-        action: 'CREATE',
-        newValue: { code, name: body.name, mobile: body.mobile, creditLimit: body.limit },
-        summary: `Customer ${code} — ${body.name} created`,
-      });
+    // Stock and the last purchase come from the batches, so the screen shows
+    // what a crop is actually worth holding rather than just its name.
+    const { rows } = await query(
+      `SELECT c.id, c.code, c.name, c.last_rate, c.is_active, u.code AS unit,
+              COALESCE(b.quantity, 0)  AS quantity,
+              COALESCE(b.value, 0)     AS value,
+              b.received_on
+         FROM crops c
+         JOIN units u ON u.id = c.default_unit_id
+         LEFT JOIN (
+           SELECT crop_id,
+                  SUM(quantity_remaining)                     AS quantity,
+                  ROUND(SUM(quantity_remaining * cost_per_unit), 2) AS value,
+                  -- Formatted in SQL: a bare date arrives as a JS Date, and
+                  -- stringifying that gives "Wed Aug 12", not a date.
+                  to_char(MAX(received_on), 'YYYY-MM-DD')     AS received_on
+             FROM crop_batches
+            WHERE is_active AND quantity_remaining > 0
+            GROUP BY crop_id
+         ) b ON b.crop_id = c.id
+        WHERE ${where}
+        ORDER BY ${orderBy(q.sort, q.dir, { code: 'c.code', name: 'c.name', quantity: 'b.quantity' }, 'c.code')}
+        LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
 
-      return rows[0];
-    });
-
-    created(res, {
-      id: Number(record.id),
-      code: record.code,
-      name: record.name,
-      bn: record.name_bn || '',
-      type: record.customer_type,
-      person: record.contact_person || '',
-      mobile: record.mobile,
-      district: record.district || '',
-      upazila: record.upazila || '',
-      limit: num(record.credit_limit),
-      days: num(record.credit_days),
-      sales: 0,
-      coll: 0,
-      out: num(record.opening_balance),
-      last: '—',
-      b30: num(record.opening_balance),
-      b60: 0,
-      b90: 0,
-      b90p: 0,
-    });
-  })
-);
-
-router.patch(
-  '/customers/:id',
-  requirePermission('customer.edit'),
-  handler(async (req, res) => {
-    const { id } = parseParams(idParamSchema, req);
-    const body = parseBody(customerSchema.partial(), req);
-
-    const updated = await withTransaction(async (client) => {
-      const { rows: existing } = await client.query(
-        'SELECT * FROM customers WHERE id = $1 AND org_id = $2 FOR UPDATE',
-        [id, req.orgId]
-      );
-      if (!existing.length) throw notFound('Customer');
-
-      const before = existing[0];
-      const { rows } = await client.query(
-        `UPDATE customers SET
-           name = COALESCE($1, name),
-           name_bn = COALESCE($2, name_bn),
-           customer_type = COALESCE($3, customer_type),
-           contact_person = COALESCE($4, contact_person),
-           mobile = COALESCE($5, mobile),
-           district = COALESCE($6, district),
-           upazila = COALESCE($7, upazila),
-           credit_limit = COALESCE($8, credit_limit),
-           credit_days = COALESCE($9, credit_days),
-           updated_by = $10
-         WHERE id = $11 RETURNING *`,
-        [
-          body.name ?? null,
-          body.bn ?? null,
-          body.type ?? null,
-          body.person ?? null,
-          body.mobile ?? null,
-          body.district ?? null,
-          body.upazila ?? null,
-          body.limit ?? null,
-          body.days ?? null,
-          req.user.id,
-          id,
-        ]
-      );
-
-      const diff = changedFields(before, rows[0]);
-      if (diff) {
-        await writeAudit(client, {
-          actor: req.actor,
-          entityType: 'customers',
-          entityId: id,
-          action: 'UPDATE',
-          ...diff,
-          summary: `Customer ${before.code} updated`,
-        });
-      }
-      return rows[0];
-    });
-
-    ok(res, { id: Number(updated.id), code: updated.code, name: updated.name });
+    ok(
+      res,
+      rows.map((r) => ({
+        id: Number(r.id),
+        code: r.code,
+        name: r.name,
+        unit: r.unit,
+        rate: num(r.last_rate),
+        quantity: num(r.quantity),
+        value: num(r.value),
+        last: r.received_on || '',
+        status: r.is_active ? 'Active' : 'Retired',
+      })),
+      pageMeta(q.page, q.pageSize, countRows[0].total)
+    );
   })
 );
 
@@ -526,5 +459,223 @@ router.get(
     });
   })
 );
+
+/* ----------------------------------------------------- master maintenance */
+
+/**
+ * Create, edit and retire, generated from one description per entity.
+ *
+ * Nothing here deletes. Master rows are referenced by posted documents, so a
+ * retired party keeps naming itself on last season's reports and simply stops
+ * being offered on new ones.
+ */
+
+const money = (n) => `Tk ${Math.round(n).toLocaleString('en-IN')}`;
+
+const supplierSchema = z.object({
+  name: z.string().trim().min(1, 'Supplier name is required').max(200),
+  bn: z.string().trim().max(200).optional().default(''),
+  type: z.string().trim().max(40).default('Farmer'),
+  mobile: z.string().trim().min(1, 'Mobile number is required').max(30),
+  district: z.string().trim().max(80).optional().default(''),
+  upazila: z.string().trim().max(80).optional().default(''),
+  bank: z.string().trim().max(60).optional().default(''),
+  opening: z.coerce.number().min(0).default(0),
+});
+
+const companySchema = z.object({
+  name: z.string().trim().min(1, 'Company name is required').max(200),
+  role: z
+    .enum(['PRINCIPAL', 'SUPPLIER', 'BUYER', 'SUPPLIER_AND_BUYER'])
+    .default('SUPPLIER'),
+  person: z.string().trim().max(120).optional().default(''),
+  mobile: z.string().trim().max(30).optional().default(''),
+  district: z.string().trim().max(80).optional().default(''),
+  limit: z.coerce.number().min(0).default(0),
+  days: z.coerce.number().int().min(0).max(365).default(0),
+});
+
+const cropSchema = z.object({
+  name: z.string().trim().min(1, 'Crop name is required').max(120),
+  unit: z.string().trim().min(1, 'Choose a unit').max(20).default('MT'),
+  rate: z.coerce.number().min(0).default(0),
+});
+
+registerMasterCrud(router, {
+  path: 'customers',
+  table: 'customers',
+  label: 'Customer',
+  permissions: { create: 'customer.create', edit: 'customer.edit', remove: 'customer.delete' },
+  code: { prefix: 'CUS', width: 3 },
+  schema: customerSchema,
+  tracksUser: true,
+  columns: (b) => ({
+    name: b.name,
+    name_bn: b.bn || null,
+    customer_type: b.type,
+    contact_person: b.person || null,
+    mobile: b.mobile,
+    district: b.district || null,
+    upazila: b.upazila || null,
+    credit_limit: b.limit,
+    credit_days: b.days,
+    opening_balance: b.opening,
+  }),
+  blockers: [
+    {
+      sql: `SELECT outstanding AS value FROM v_customer_outstanding
+             WHERE customer_id = $1 AND org_id = $2`,
+      code: 'HAS_OUTSTANDING',
+      message: (n) =>
+        `This customer still owes ${money(n)}. Collect or write off the balance before retiring them.`,
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    bn: r.name_bn || '',
+    type: r.customer_type,
+    person: r.contact_person || '',
+    mobile: r.mobile,
+    district: r.district || '',
+    upazila: r.upazila || '',
+    limit: num(r.credit_limit),
+    days: num(r.credit_days),
+    status: r.is_active ? 'Active' : 'Retired',
+    sales: 0,
+    coll: 0,
+    out: num(r.opening_balance),
+    last: '—',
+    b30: num(r.opening_balance),
+    b60: 0,
+    b90: 0,
+    b90p: 0,
+  }),
+});
+
+registerMasterCrud(router, {
+  path: 'suppliers',
+  table: 'suppliers',
+  label: 'Supplier',
+  permissions: { create: 'supplier.create', edit: 'supplier.edit', remove: 'supplier.delete' },
+  code: { prefix: 'SUP', width: 3 },
+  schema: supplierSchema,
+  tracksUser: true,
+  columns: (b) => ({
+    name: b.name,
+    name_bn: b.bn || null,
+    supplier_type: b.type,
+    mobile: b.mobile,
+    district: b.district || null,
+    upazila: b.upazila || null,
+    bank_account: b.bank || null,
+    opening_balance: b.opening,
+  }),
+  blockers: [
+    {
+      sql: `SELECT outstanding AS value FROM v_supplier_outstanding
+             WHERE supplier_id = $1 AND org_id = $2`,
+      code: 'HAS_OUTSTANDING',
+      message: (n) =>
+        `${money(n)} is still payable to this supplier. Settle it before retiring them.`,
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    bn: r.name_bn || '',
+    type: r.supplier_type,
+    mobile: r.mobile,
+    district: r.district || '',
+    upazila: r.upazila || '',
+    bank: r.bank_account || '',
+    status: r.is_active ? 'Active' : 'Retired',
+    pur: 0,
+    paid: 0,
+    out: num(r.opening_balance),
+  }),
+});
+
+registerMasterCrud(router, {
+  path: 'companies',
+  table: 'companies',
+  label: 'Company',
+  permissions: { create: 'company.create', edit: 'company.edit', remove: 'company.delete' },
+  code: { prefix: 'CMP', width: 2 },
+  schema: companySchema,
+  columns: (b) => ({
+    name: b.name,
+    role: b.role,
+    contact_person: b.person || null,
+    mobile: b.mobile || null,
+    district: b.district || null,
+    credit_limit: b.limit,
+    credit_days: b.days,
+  }),
+  blockers: [
+    {
+      // A company can sit on both sides of the ledger, so both are checked.
+      sql: `SELECT COALESCE((SELECT SUM(balance) FROM payables
+                              WHERE party_type = 'COMPANY' AND party_id = $1 AND org_id = $2), 0)
+                 + COALESCE((SELECT SUM(balance) FROM receivables
+                              WHERE party_type = 'COMPANY' AND party_id = $1 AND org_id = $2), 0)
+                 AS value`,
+      code: 'HAS_OUTSTANDING',
+      message: (n) =>
+        `${money(n)} is still open with this company. Settle it before retiring them.`,
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    role: r.role,
+    person: r.contact_person || '',
+    mobile: r.mobile || '',
+    district: r.district || '',
+    limit: num(r.credit_limit),
+    days: num(r.credit_days),
+    status: r.is_active ? 'Active' : 'Retired',
+  }),
+});
+
+registerMasterCrud(router, {
+  path: 'crops',
+  table: 'crops',
+  label: 'Crop',
+  permissions: { create: 'crop.create', edit: 'crop.edit', remove: 'crop.delete' },
+  code: { prefix: 'CROP', width: 2 },
+  schema: cropSchema,
+  columns: (b) => ({ name: b.name, last_rate: b.rate }),
+  // The screen knows unit codes, not the ids behind them.
+  resolve: async (client, body) => {
+    if (body.unit === undefined) return {};
+    const { rows } = await client.query(
+      'SELECT id FROM units WHERE code = $1 AND is_active',
+      [body.unit]
+    );
+    if (!rows.length) throw notFound(`Unit ${body.unit}`);
+    return { default_unit_id: Number(rows[0].id) };
+  },
+  blockers: [
+    {
+      sql: `SELECT COALESCE(SUM(quantity_remaining), 0) AS value FROM crop_batches
+             WHERE crop_id = $1 AND org_id = $2 AND is_active`,
+      code: 'HAS_STOCK',
+      message: (n) =>
+        `${n} is still in stock for this crop. Sell or write the batches off before retiring it.`,
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    rate: num(r.last_rate),
+    unitId: Number(r.default_unit_id),
+    status: r.is_active ? 'Active' : 'Retired',
+  }),
+});
 
 export default router;

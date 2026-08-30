@@ -38,6 +38,9 @@ function readProps(user) {
           ? true
           : showProfit !== 'false',
     approvalLimit: Number.isFinite(limit) && limit > 0 ? limit : 500000,
+    // What the signed-in user may do, used to decide which master-data
+    // controls to draw. The server checks the same codes on every route.
+    permissions: user?.permissions || null,
     repository,
   };
 }

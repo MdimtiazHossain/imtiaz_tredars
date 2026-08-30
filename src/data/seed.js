@@ -21,7 +21,8 @@ export const NAV = [
       {id:'inventory', label:'Inventory', icon:'M2.5 4h11v9.5h-11zM2.5 7h11M6 4V2.5h4V4', roles:['Admin','Management','Purchase','Warehouse','Sales']},
       {id:'customers', label:'Customers', icon:'M6 7.5a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5zM1.75 13.5c0-2.3 1.9-3.75 4.25-3.75s4.25 1.45 4.25 3.75M11 3.5a2.25 2.25 0 010 4.25M12.25 13.5c0-1.4-.4-2.4-1.2-3', roles:['Admin','Management','Sales','Accounts']},
       {id:'suppliers', label:'Suppliers / Farmers', icon:'M13.5 2.5C7 2.5 3.5 5.5 3.5 10c0 1 .3 1.7.3 1.7 4.7 0 9.7-3.2 9.7-9.2zM3.8 11.7 2 13.5', roles:['Admin','Management','Purchase','Accounts']},
-      {id:'companies', label:'Companies', icon:'M3 13.5V3h6v10.5M9 6.5h4v7M5 5.5h2M5 8h2M5 10.5h2M1.5 13.5h13', roles:['Admin','Management','Purchase','Accounts']}]},
+      {id:'companies', label:'Companies', icon:'M3 13.5V3h6v10.5M9 6.5h4v7M5 5.5h2M5 8h2M5 10.5h2M1.5 13.5h13', roles:['Admin','Management','Purchase','Accounts']},
+      {id:'crops', label:'Crops', icon:'M8 14V7.5M8 7.5C8 5 6.2 3 3.5 2.5 3 5.2 5 7.3 8 7.5zM8 9.2c.2-2.2 2-4 4.5-4.4.4 2.4-1.4 4.3-4.5 4.4z', roles:['Admin','Management','Purchase','Sales','Warehouse','Accounts']}]},
     {g:'Finance', items:[
       {id:'accounts', label:'Accounts & Outstanding', icon:'M2 4.5h11.5v9H2zM2 4.5 11 2v2.5M10 9h2.5', roles:['Admin','Management','Accounts']},
       {id:'approvals', label:'Approvals', icon:'M8 14A6 6 0 108 2a6 6 0 000 12zM5.5 8.2l1.9 1.9 3.3-3.8', roles:['Admin','Management','Accounts']}]},
@@ -42,6 +43,7 @@ export const TITLES = {dashboard:['Business Overview','Consolidated position acr
     customers:['Customers','Dealer, retailer and corporate master'],
     suppliers:['Suppliers & Farmers','Procurement party master'],
     companies:['Companies','Principal, supplier and buyer companies'],
+    crops:['Crops','What the bulk trading side buys, stores and sells'],
     accounts:['Accounts & Outstanding','Receivable, payable, cash and profitability'],
     approvals:['Approval Queue','Transactions waiting on authorisation'],
     reports:['Reports Centre','Filterable reports across both business types'],
