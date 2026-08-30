@@ -82,7 +82,7 @@ export class InMemoryRepository {
    * those names and the batches holding them rather than stored twice.
    */
   _collection(kind) {
-    const named = { customer: 'customers', supplier: 'suppliers', company: 'companies' };
+    const named = { product: 'products', customer: 'customers', supplier: 'suppliers', company: 'companies' };
     const key = named[kind];
     if (!key) throw new Error(`Unknown master kind: ${kind}`);
     if (!this._store[key]) this._store[key] = [];
@@ -131,8 +131,8 @@ export class InMemoryRepository {
     }
 
     const rows = this._collection(kind);
-    const prefix = { customer: 'CUS', supplier: 'SUP', company: 'CMP' }[kind];
-    const width = kind === 'company' ? 2 : 3;
+    const prefix = { product: 'P', customer: 'CUS', supplier: 'SUP', company: 'CMP' }[kind];
+    const width = kind === 'product' ? 4 : kind === 'company' ? 2 : 3;
     const code = `${prefix}-${String(rows.length + 1).padStart(width, '0')}`;
     const record = { ...clone(body), id: rows.length + 1, code, status: 'Active' };
     rows.push(record);

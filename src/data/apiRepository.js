@@ -20,6 +20,7 @@ import { NAV, TITLES } from './seed.js';
  */
 const MASTER_PATHS = {
   crop: '/crops',
+  product: '/products',
   customer: '/customers',
   supplier: '/suppliers',
   company: '/companies',
@@ -28,6 +29,7 @@ const MASTER_PATHS = {
 /** Which code -> id map a saved record belongs in, where one is kept. */
 const MASTER_ID_MAPS = {
   crop: 'crops',
+  product: 'products',
   customer: 'customers',
 };
 

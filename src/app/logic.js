@@ -83,6 +83,7 @@ export class BusinessApp extends Component {
       // The crop master is not part of the workspace payload, so it is
       // fetched when the screen is actually opened rather than on every load.
       if (id === 'crops') this.loadMasterList('crop');
+      if (id === 'products') this.loadMasterList('product');
     };
   }
   h(g, k, num) { return e => { const v = num ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value; this.setState(s => { const o = Object.assign({}, s[g]); o[k] = v; return {[g]:o}; }); }; }
@@ -410,6 +411,55 @@ export class BusinessApp extends Component {
       actions.push({ label: 'Retire', danger: true, onClick: () => this.confirmRetire(kind, row) });
     }
     return actions;
+  }
+
+  /** The products screen: the dealer catalogue, with what each line is holding. */
+  products() {
+    const rows = this.state.masterRows.product || this.data.products || [];
+    const active = rows.filter(p => p.status !== 'Retired');
+    const low = active.filter(p => p.min && p.stock < p.min);
+
+    return {
+      ...this.masterControls('product', null),
+      addLabel: 'Add product',
+      table: table(
+        [
+          column('Code'),
+          column('Product'),
+          column('Category'),
+          column('Unit'),
+          column('Purchase', 'right'),
+          column('Sale', 'right'),
+          column('In stock', 'right'),
+          column('', 'right'),
+        ],
+        active.map(p => ({
+          cells: [
+            cell(p.code, { mono: true, color: C.mut }),
+            cell(p.name, { weight: '600', sub: p.brand }),
+            cell(p.cat || '—', { color: C.mut }),
+            cell(p.unit, { color: C.mut }),
+            cell(money(p.pur), { align: 'right', mono: true, color: C.mut }),
+            cell(money(p.sale), { align: 'right', mono: true, weight: '600' }),
+            // Below the minimum reads as a warning, since that is the number
+            // the reorder decision is made on.
+            cell(int(p.stock) + ' ' + p.unit, {
+              align: 'right', mono: true, weight: '600',
+              color: p.min && p.stock < p.min ? C.dngr : C.ink,
+              sub: p.min && p.stock < p.min ? 'below minimum ' + int(p.min) : '',
+            }),
+            cell('', { align: 'right', actions: this.masterRowActions('product', p) }),
+          ],
+        })),
+        {
+          emptyTitle: 'No products yet',
+          emptyNote: 'Add the first product and it becomes available to buy and sell.',
+          footNote: active.length + (active.length === 1 ? ' product' : ' products')
+            + (low.length ? ' · ' + low.length + ' below minimum' : ''),
+          footTotal: 'Stock value ' + money(active.reduce((t, p) => t + p.stock * p.pur, 0)),
+        }
+      ),
+    };
   }
 
   /** The crops screen: the bulk-trading master, with what each crop is holding. */
@@ -1396,6 +1446,7 @@ export class BusinessApp extends Component {
     return {
       modal:this.state.master ? this.masterModal() : buildModal(this),
       crop:this.crops(),
+      prod:this.products(),
       co:this.data.company, role:role, biz:S.biz, screen:S.screen, titleMain:title[0], titleSub:title[1], is:is,
       bizTabs:[{k:'all', l:'All business'}, {k:'dealer', l:'Dealer'}, {k:'crop', l:'Bulk Crop'}].map(x => ({l:x.l, on:x.k === S.biz,
         bg:x.k === S.biz ? '#fff' : 'transparent', color:x.k === S.biz ? C.ink : C.mut, sh:x.k === S.biz ? '0 1px 2px rgba(0,0,0,.08)' : 'none',

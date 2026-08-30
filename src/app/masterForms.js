@@ -1,11 +1,11 @@
 import { field, formModal } from '../components/formModal.js';
 
 /**
- * Master data forms: crops, customers, suppliers and companies.
+ * Master data forms: crops, products, customers, suppliers and companies.
  *
  * Same shape as `transactionForms.js` -- each entity is described once and the
- * modal is built from the description, so the four screens share one form, one
- * validator and one submit path rather than four near-identical copies.
+ * modal is built from the description, so every master screen shares one form,
+ * one validator and one submit path rather than a copy each.
  *
  * The lists an operator picks from (party types, districts, units) come from
  * the data already loaded, not from constants here. A district that exists
@@ -43,10 +43,11 @@ const COMPANY_ROLES = [
   { value: 'SUPPLIER_AND_BUYER', label: 'Supplier and buyer' },
 ];
 
-export const MASTER_KINDS = ['crop', 'customer', 'supplier', 'company'];
+export const MASTER_KINDS = ['crop', 'product', 'customer', 'supplier', 'company'];
 
 const TITLES = {
   crop: ['crop', 'Crops are what the bulk trading side buys, stores and sells'],
+  product: ['product', 'Agrochemicals, fertiliser, seed and feed sold through dealers'],
   customer: ['customer', 'Dealers, retailers and corporate buyers'],
   supplier: ['supplier', 'Farmers, aratdars and traders you buy from'],
   company: ['company', 'Principals, supplier companies and buyer companies'],
@@ -65,6 +66,18 @@ export function defaultsFor(kind, data, row) {
       name: row ? row.name : '',
       unit: row ? row.unit || (data.units || [])[0] : (data.units || [])[0] || 'MT',
       rate: row ? row.rate : '',
+    };
+  }
+
+  if (kind === 'product') {
+    return {
+      name: row ? row.name : '',
+      cat: row ? row.cat : optionsFrom(data.products, 'cat')[0] || '',
+      brand: row ? row.brand : optionsFrom(data.products, 'brand')[0] || '',
+      unit: row ? row.unit : (data.units || [])[0] || 'Pcs',
+      pur: row ? row.pur : '',
+      sale: row ? row.sale : '',
+      min: row ? row.min : '',
     };
   }
 
@@ -135,6 +148,44 @@ export function fieldsFor(kind, form, data, on, row) {
         onChange: on('rate'),
         placeholder: '0',
         hint: 'Used as the opening suggestion on a purchase',
+      }),
+    ];
+  }
+
+  if (kind === 'product') {
+    return [
+      field('name', 'Product name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'Ridomil Gold MZ 72 WP 100g',
+        wide: true,
+      }),
+      // Categories and brands are the ones the catalogue already uses; the
+      // server refuses an unknown one rather than quietly inventing it.
+      field('cat', 'Category', {
+        options: optionsFrom(data.products, 'cat', form.cat),
+        value: form.cat,
+        onChange: on('cat'),
+      }),
+      field('brand', 'Brand', {
+        options: optionsFrom(data.products, 'brand', form.brand),
+        value: form.brand,
+        onChange: on('brand'),
+      }),
+      field('unit', 'Unit', {
+        options: data.units || [],
+        value: form.unit,
+        onChange: on('unit'),
+      }),
+      field('pur', 'Purchase rate', {
+        type: 'number', value: form.pur, onChange: on('pur'), placeholder: '0',
+      }),
+      field('sale', 'Sale rate', {
+        type: 'number', value: form.sale, onChange: on('sale'), placeholder: '0',
+      }),
+      field('min', 'Minimum stock', {
+        type: 'number', value: form.min, onChange: on('min'), placeholder: '0',
+        hint: 'Below this the product is flagged as low stock',
       }),
     ];
   }
@@ -273,6 +324,17 @@ export function validate(kind, form) {
     return null;
   }
 
+  if (kind === 'product') {
+    if (!form.unit) return 'Choose the unit this product is sold in.';
+    if (Number(form.pur) < 0 || Number(form.sale) < 0) return 'A rate cannot be negative.';
+    // Not an error -- a loss leader is a real decision -- but worth saying so
+    // it is not a typo that only shows up in the profit report.
+    if (Number(form.sale) && Number(form.sale) < Number(form.pur)) {
+      return 'The sale rate is below the purchase rate; every sale would lose money.';
+    }
+    return null;
+  }
+
   if (kind !== 'company' && !String(form.mobile || '').trim()) {
     return 'Enter a mobile number — it is how the party is reached and matched.';
   }
@@ -289,6 +351,18 @@ export function payloadFor(kind, form) {
 
   if (kind === 'crop') {
     return { name: text(form.name), unit: form.unit, rate: number(form.rate) };
+  }
+
+  if (kind === 'product') {
+    return {
+      name: text(form.name),
+      cat: text(form.cat),
+      brand: text(form.brand),
+      unit: form.unit,
+      pur: number(form.pur),
+      sale: number(form.sale),
+      min: number(form.min),
+    };
   }
 
   if (kind === 'company') {

@@ -1000,6 +1000,73 @@ describe('master data', () => {
     expect(app.state.master.error).toMatch(/still in stock/i);
   });
 
+  it('builds the product catalogue with row actions and a low-stock note', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('product');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const prod = app.renderVals().prod;
+    expect(prod.canAdd).toBe(true);
+    expect(prod.table.rows.length).toBeGreaterThan(0);
+    expect(prod.table.rows[0].cells.slice(-1)[0].actions.map((a) => a.label)).toEqual([
+      'Edit',
+      'Retire',
+    ]);
+
+    // A product under its minimum is called out where the reorder decision is
+    // made, rather than only in a report.
+    const below = app.data.products.find((p) => p.min && p.stock < p.min);
+    expect(below).toBeTruthy();
+    expect(prod.table.footNote).toMatch(/below minimum/);
+  });
+
+  it('warns when a product would sell below cost', async () => {
+    const { app } = await mountApp();
+    app.openMaster('product');
+    app.onMasterField('name')({ target: { value: 'Amistar Top' } });
+    app.onMasterField('pur')({ target: { value: '420' } });
+    app.onMasterField('sale')({ target: { value: '380' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(app.state.master.error).toMatch(/below the purchase rate/i);
+  });
+
+  it('offers only categories and brands the catalogue already uses', async () => {
+    const { app } = await mountApp();
+    app.openMaster('product');
+    const fields = app.renderVals().modal.fields;
+    const known = app.data.products;
+
+    const cats = fields.find((f) => f.key === 'cat').options.map((o) => o.value);
+    const brands = fields.find((f) => f.key === 'brand').options.map((o) => o.value);
+    expect(cats.length).toBeGreaterThan(0);
+    cats.forEach((c) => expect(known.map((p) => p.cat)).toContain(c));
+    brands.forEach((b) => expect(known.map((p) => p.brand)).toContain(b));
+  });
+
+  it('sends a new product with the names the server resolves', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.createMaster = async (kind, body) => {
+      sent.push([kind, body]);
+      return { id: 7, code: 'P-1007', ...body };
+    };
+
+    app.openMaster('product');
+    app.onMasterField('name')({ target: { value: 'Amistar Top 325 SC 50ml' } });
+    app.onMasterField('pur')({ target: { value: '420' } });
+    app.onMasterField('sale')({ target: { value: '510' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent[0][0]).toBe('product');
+    // Unit code, category and brand names -- not ids the screen has no reason
+    // to know.
+    expect(sent[0][1]).toMatchObject({ name: 'Amistar Top 325 SC 50ml', pur: 420, sale: 510 });
+    expect(typeof sent[0][1].unit).toBe('string');
+    expect(app.state.toast.msg).toContain('P-1007');
+  });
+
   it('offers districts the data already uses rather than a fixed list', async () => {
     const { app } = await mountApp();
     app.openMaster('customer');

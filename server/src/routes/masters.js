@@ -501,6 +501,16 @@ const cropSchema = z.object({
   rate: z.coerce.number().min(0).default(0),
 });
 
+const productSchema = z.object({
+  name: z.string().trim().min(1, 'Product name is required').max(200),
+  cat: z.string().trim().max(80).optional().default(''),
+  brand: z.string().trim().max(80).optional().default(''),
+  unit: z.string().trim().min(1, 'Choose a unit').max(20).default('Pcs'),
+  pur: z.coerce.number().min(0).default(0),
+  sale: z.coerce.number().min(0).default(0),
+  min: z.coerce.number().min(0).default(0),
+});
+
 registerMasterCrud(router, {
   path: 'customers',
   table: 'customers',
@@ -674,6 +684,91 @@ registerMasterCrud(router, {
     name: r.name,
     rate: num(r.last_rate),
     unitId: Number(r.default_unit_id),
+    status: r.is_active ? 'Active' : 'Retired',
+  }),
+});
+
+/**
+ * Look up a row by name in one of the small reference tables a product points
+ * at, creating nothing: a typo should not quietly become a new brand.
+ *
+ * Categories and brands are shared across organisations rather than owned by
+ * one, so there is no org_id to filter on here.
+ */
+async function referenceId(client, table, name) {
+  const { rows } = await client.query(
+    `SELECT id FROM ${table} WHERE lower(name) = lower($1) AND is_active`,
+    [name]
+  );
+  return rows.length ? Number(rows[0].id) : null;
+}
+
+registerMasterCrud(router, {
+  path: 'products',
+  table: 'products',
+  label: 'Product',
+  permissions: { create: 'product.create', edit: 'product.edit', remove: 'product.delete' },
+  code: { prefix: 'P', width: 4 },
+  schema: productSchema,
+  columns: (b) => ({
+    name: b.name,
+    purchase_rate: b.pur,
+    sale_rate: b.sale,
+    min_stock: b.min,
+  }),
+  // The screen works in unit codes and category and brand names; the ids
+  // behind them are not its business.
+  resolve: async (client, body) => {
+    const resolved = {};
+
+    if (body.unit !== undefined) {
+      const { rows } = await client.query(
+        'SELECT id FROM units WHERE code = $1 AND is_active',
+        [body.unit]
+      );
+      if (!rows.length) throw notFound(`Unit ${body.unit}`);
+      resolved.unit_id = Number(rows[0].id);
+    }
+
+    // Category and brand are optional, so an empty one clears the column
+    // rather than failing.
+    if (body.cat !== undefined) {
+      if (!body.cat) resolved.category_id = null;
+      else {
+        const id = await referenceId(client, 'product_categories', body.cat);
+        if (!id) throw notFound(`Category ${body.cat}`);
+        resolved.category_id = id;
+      }
+    }
+
+    if (body.brand !== undefined) {
+      if (!body.brand) resolved.brand_id = null;
+      else {
+        const id = await referenceId(client, 'brands', body.brand);
+        if (!id) throw notFound(`Brand ${body.brand}`);
+        resolved.brand_id = id;
+      }
+    }
+
+    return resolved;
+  },
+  blockers: [
+    {
+      sql: `SELECT COALESCE(SUM(quantity), 0) AS value FROM stock
+             WHERE product_id = $1 AND item_type = 'PRODUCT' AND org_id = $2`,
+      code: 'HAS_STOCK',
+      message: (n) =>
+        `${n} of this product is still in stock. Sell or write it off before retiring it.`,
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    unitId: Number(r.unit_id),
+    pur: num(r.purchase_rate),
+    sale: num(r.sale_rate),
+    min: num(r.min_stock),
     status: r.is_active ? 'Active' : 'Retired',
   }),
 });

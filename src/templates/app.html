@@ -1110,6 +1110,17 @@
         </div>
       </sc-if>
 
+      <sc-if value="{{ is.products }}">
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <sc-if value="{{ prod.canAdd }}">
+            <div style="display:flex;justify-content:flex-end">
+              <button onClick="{{ prod.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ prod.addLabel }}</button>
+            </div>
+          </sc-if>
+          <dc-import name="DataTable" t="{{ prod.table }}" hint-size="100%,420px"></dc-import>
+        </div>
+      </sc-if>
+
       <sc-if value="{{ is.crops }}">
         <div style="display:flex;flex-direction:column;gap:10px">
           <sc-if value="{{ crop.canAdd }}">

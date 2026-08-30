@@ -469,6 +469,8 @@ suite('master data', () => {
       ['Sales', 'post', '/api/companies', { name: 'X', role: 'BUYER' }],
       ['Sales', 'delete', '/api/suppliers/1', null],
       ['Purchase', 'delete', '/api/crops/1', null],
+      ['Warehouse', 'post', '/api/products', { name: 'X', unit: 'Pcs' }],
+      ['Sales', 'delete', '/api/products/1', null],
     ];
 
     for (const [role, method, path, body] of cases) {
@@ -486,6 +488,54 @@ suite('master data', () => {
 
     expect(created.status).toBe(201);
     await query('DELETE FROM crops WHERE id = $1', [created.body.data.id]);
+  });
+
+  it('creates a product, resolving the unit, category and brand it was given', async () => {
+    const created = await asAdmin('post', '/api/products').send({
+      name: 'Amistar Top 325 SC 50ml',
+      cat: 'Agrochemical',
+      brand: 'Syngenta',
+      unit: 'Pcs',
+      pur: 420,
+      sale: 510,
+      min: 150,
+    });
+    expect(created.status).toBe(201);
+    const id = created.body.data.id;
+
+    // The screen sent names and a unit code; the row carries the ids.
+    const listed = await asAdmin('get', '/api/products?q=Amistar');
+    expect(listed.body.data[0]).toMatchObject({
+      id, cat: 'Agrochemical', brand: 'Syngenta', unit: 'Pcs', sale: 510,
+    });
+
+    await query('DELETE FROM products WHERE id = $1', [id]);
+  });
+
+  it('refuses a product naming a brand that does not exist', async () => {
+    const created = await asAdmin('post', '/api/products').send({
+      name: 'Test product', unit: 'Pcs',
+    });
+    const id = created.body.data.id;
+
+    // A typo must not quietly become a new brand.
+    const res = await asAdmin('patch', `/api/products/${id}`).send({ brand: 'Bayer' });
+    expect(res.status).toBe(404);
+
+    const { rows } = await query("SELECT COUNT(*)::int AS n FROM brands WHERE name = 'Bayer'");
+    expect(rows[0].n).toBe(0);
+
+    await query('DELETE FROM products WHERE id = $1', [id]);
+  });
+
+  it('refuses to retire a product that is still in stock', async () => {
+    const { rows } = await query(
+      `SELECT product_id FROM stock
+        WHERE item_type = 'PRODUCT' AND quantity > 0 LIMIT 1`
+    );
+    const res = await asAdmin('delete', `/api/products/${rows[0].product_id}`);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('HAS_STOCK');
   });
 
   it('lists crops with what each one is holding', async () => {

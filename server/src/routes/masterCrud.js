@@ -87,9 +87,9 @@ async function loadRow(client, entity, id, orgId) {
  * @param {(row:object) => object} entity.present   the API shape
  * @param {boolean} [entity.tracksUser]  table has created_by / updated_by
  * @param {Array}  [entity.blockers]     reasons a deactivation is refused
- * @param {(client:object, body:object) => Promise<object>} [entity.resolve]
- *   extra columns needing a lookup, so a screen can send a unit code rather
- *   than an id it has no reason to know
+ * @param {(client:object, body:object, orgId:number) => Promise<object>} [entity.resolve]
+ *   extra columns needing a lookup, so a screen can send a unit code or a
+ *   brand name rather than an id it has no reason to know
  */
 export function registerMasterCrud(router, entity) {
   const { path, table, label, permissions } = entity;
@@ -108,7 +108,7 @@ export function registerMasterCrud(router, entity) {
           width: entity.code.width,
         });
 
-        const resolved = entity.resolve ? await entity.resolve(client, body) : {};
+        const resolved = entity.resolve ? await entity.resolve(client, body, req.orgId) : {};
         const columns = { code, ...entity.columns(body), ...resolved };
         if (entity.tracksUser) columns.created_by = req.user.id;
         columns.org_id = req.orgId;
@@ -148,7 +148,7 @@ export function registerMasterCrud(router, entity) {
       const record = await withTransaction(async (client) => {
         const before = await loadRow(client, entity, id, req.orgId);
 
-        const resolved = entity.resolve ? await entity.resolve(client, body) : {};
+        const resolved = entity.resolve ? await entity.resolve(client, body, req.orgId) : {};
         const changes = supplied({ ...entity.columns(body), ...resolved });
         if (!changes.length) return before;
         if (entity.tracksUser) changes.push(['updated_by', req.user.id]);
