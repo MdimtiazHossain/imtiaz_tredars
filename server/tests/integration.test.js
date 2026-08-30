@@ -4,6 +4,7 @@ import { createCropPurchase, cancelCropPurchase } from '../src/services/cropPurc
 import { createCropSale } from '../src/services/cropSaleService.js';
 import { createDealerPurchase, createDealerSale } from '../src/services/dealerService.js';
 import { allocatePayment } from '../src/services/financeService.js';
+import { createTransfer, cancelTransfer } from '../src/services/transferService.js';
 import { nextDocumentNo } from '../src/lib/numbering.js';
 import { HAS_DB } from './helpers/database.js';
 
@@ -238,7 +239,12 @@ suite('posting integrity', () => {
             transportCost: 0,
             otherCost: 0,
             paidAmount: 0,
-            lines: [{ cropId: ctx.cropId, unitId: ctx.unitId, quantity: total, rate: 5000 }],
+            // A nominal rate keeps the sale under the approval ceiling no
+            // matter how large the shared pool has grown. At a realistic rate
+            // both sales would route to approval instead of competing for
+            // stock, and the test would pass two winners without ever
+            // exercising the lock it exists to check.
+            lines: [{ cropId: ctx.cropId, unitId: ctx.unitId, quantity: total, rate: 1 }],
             action: 'POST',
           },
         })
@@ -558,5 +564,252 @@ suite('dashboard trend', () => {
 
     const union = new Set([...saleMonths, ...purchases.rows.map((r) => r.month)]);
     expect(union.size).toBeGreaterThan(saleMonths.size);
+  });
+});
+
+suite('stock transfer', () => {
+  let tctx;
+
+  beforeAll(async () => {
+    const { rows: users } = await query(
+      `SELECT u.id, u.org_id FROM users u
+        JOIN user_roles ur ON ur.user_id = u.id
+        JOIN roles r ON r.id = ur.role_id
+       WHERE r.code = 'Admin' LIMIT 1`
+    );
+    const orgId = Number(users[0].org_id);
+    const [warehouses, supplier, crop, grade, unit] = await Promise.all([
+      query('SELECT id FROM warehouses WHERE org_id = $1 AND is_active ORDER BY id LIMIT 2', [orgId]),
+      query('SELECT id FROM suppliers WHERE org_id = $1 ORDER BY id LIMIT 1', [orgId]),
+      query("SELECT id FROM crops WHERE org_id = $1 AND code = 'CROP-04'", [orgId]),
+      query("SELECT id FROM crop_grades WHERE code = 'A'", []),
+      query("SELECT id FROM units WHERE code = 'MT'", []),
+    ]);
+    if (warehouses.rows.length < 2) throw new Error('Two warehouses are needed to test a transfer');
+
+    tctx = {
+      orgId,
+      user: { id: Number(users[0].id) },
+      actor: { userId: Number(users[0].id), orgId, ip: null, userAgent: 'vitest' },
+      fromWarehouseId: Number(warehouses.rows[0].id),
+      toWarehouseId: Number(warehouses.rows[1].id),
+      supplierId: Number(supplier.rows[0].id),
+      cropId: Number(crop.rows[0].id),
+      gradeId: Number(grade.rows[0].id),
+      unitId: Number(unit.rows[0].id),
+    };
+  });
+
+  /** Buy stock into the source warehouse so each test owns the batch it moves. */
+  const stockUp = (client, qty) =>
+    createCropPurchase(client, {
+      orgId: tctx.orgId,
+      user: tctx.user,
+      actor: tctx.actor,
+      input: {
+        txnDate: '2026-08-28',
+        supplierId: tctx.supplierId,
+        warehouseId: tctx.fromWarehouseId,
+        transportCost: 0,
+        loadingCost: 0,
+        unloadingCost: 0,
+        otherCost: 0,
+        advancePaid: 0,
+        lines: [
+          {
+            cropId: tctx.cropId,
+            gradeId: tctx.gradeId,
+            unitId: tctx.unitId,
+            grossQuantity: qty,
+            moisturePct: 0,
+            rate: 1000,
+          },
+        ],
+        action: 'POST',
+      },
+    });
+
+  const transferInput = (batchId, quantity) => ({
+    txnDate: '2026-08-28',
+    businessType: 'BULK_CROP',
+    fromWarehouseId: tctx.fromWarehouseId,
+    toWarehouseId: tctx.toWarehouseId,
+    lines: [{ itemType: 'CROP_BATCH', batchId, quantity }],
+  });
+
+  it('splits a batch, carrying the cost and the receipt date to the destination', async () => {
+    const { source, child } = await withTransaction(async (client) => {
+      const purchase = await stockUp(client, 40);
+      const batchId = purchase.batches[0].id;
+      const { rows: before } = await client.query(
+        'SELECT cost_per_unit, received_on FROM crop_batches WHERE id = $1',
+        [batchId]
+      );
+
+      const result = await createTransfer(client, {
+        orgId: tctx.orgId,
+        user: tctx.user,
+        actor: tctx.actor,
+        input: transferInput(batchId, 15),
+      });
+      expect(result.status).toBe('POSTED');
+
+      const { rows: after } = await client.query(
+        `SELECT id, warehouse_id, quantity_remaining, cost_per_unit, received_on
+           FROM crop_batches WHERE id = $1 OR id IN (
+             SELECT batch_id FROM stock_movements
+              WHERE reference_type = 'stock_transfers' AND reference_id = $2
+                AND movement_type = 'TRANSFER_IN')
+          ORDER BY id`,
+        [batchId, result.id]
+      );
+      return { source: { ...before[0], ...after[0] }, child: after[1] };
+    });
+
+    // The source keeps what stayed behind; the child holds what moved.
+    expect(num(source.quantity_remaining)).toBe(25);
+    expect(num(child.quantity_remaining)).toBe(15);
+    expect(Number(child.warehouse_id)).toBe(tctx.toWarehouseId);
+
+    // Cost travels, so the move neither creates nor destroys value...
+    expect(num(child.cost_per_unit)).toBe(num(source.cost_per_unit));
+    // ...and neither does age, so FIFO keeps issuing this stock in order.
+    expect(String(child.received_on)).toBe(String(source.received_on));
+  });
+
+  it('writes one movement out and one movement in, leaving the ledger balanced', async () => {
+    const rows = await withTransaction(async (client) => {
+      const purchase = await stockUp(client, 20);
+      const result = await createTransfer(client, {
+        orgId: tctx.orgId,
+        user: tctx.user,
+        actor: tctx.actor,
+        input: transferInput(purchase.batches[0].id, 8),
+      });
+      const { rows: moves } = await client.query(
+        `SELECT movement_type, warehouse_id, quantity_in, quantity_out
+           FROM stock_movements
+          WHERE reference_type = 'stock_transfers' AND reference_id = $1
+          ORDER BY id`,
+        [result.id]
+      );
+      return moves;
+    });
+
+    expect(rows.map((r) => r.movement_type)).toEqual(['TRANSFER_OUT', 'TRANSFER_IN']);
+    expect(num(rows[0].quantity_out)).toBe(8);
+    expect(num(rows[1].quantity_in)).toBe(8);
+    expect(Number(rows[0].warehouse_id)).toBe(tctx.fromWarehouseId);
+    expect(Number(rows[1].warehouse_id)).toBe(tctx.toWarehouseId);
+
+    const { rows: drift } = await query(
+      'SELECT COUNT(*)::int AS n FROM v_stock_reconciliation WHERE difference <> 0'
+    );
+    expect(drift[0].n).toBe(0);
+  });
+
+  it('refuses to move more than the batch holds', async () => {
+    await expect(
+      withTransaction(async (client) => {
+        const purchase = await stockUp(client, 10);
+        return createTransfer(client, {
+          orgId: tctx.orgId,
+          user: tctx.user,
+          actor: tctx.actor,
+          input: transferInput(purchase.batches[0].id, 11),
+        });
+      })
+    ).rejects.toMatchObject({ code: 'INSUFFICIENT_STOCK' });
+  });
+
+  it('refuses a transfer to the warehouse the stock is already in', async () => {
+    await expect(
+      withTransaction(async (client) => {
+        const purchase = await stockUp(client, 10);
+        return createTransfer(client, {
+          orgId: tctx.orgId,
+          user: tctx.user,
+          actor: tctx.actor,
+          input: {
+            ...transferInput(purchase.batches[0].id, 5),
+            toWarehouseId: tctx.fromWarehouseId,
+          },
+        });
+      })
+    ).rejects.toMatchObject({ code: 'SAME_WAREHOUSE' });
+  });
+
+  it('puts the stock back when a transfer is cancelled', async () => {
+    const { before, after, status, sourceRemaining, child } = await withTransaction(
+      async (client) => {
+      const purchase = await stockUp(client, 30);
+      const batchId = purchase.batches[0].id;
+      const result = await createTransfer(client, {
+        orgId: tctx.orgId,
+        user: tctx.user,
+        actor: tctx.actor,
+        input: transferInput(batchId, 12),
+      });
+
+      const readDestination = async () => {
+        const { rows } = await client.query(
+          `SELECT quantity FROM stock
+            WHERE warehouse_id = $1 AND item_type = 'CROP_BATCH'
+              AND batch_id IN (SELECT batch_id FROM stock_movements
+                                WHERE reference_type = 'stock_transfers' AND reference_id = $2
+                                  AND movement_type = 'TRANSFER_IN')`,
+          [tctx.toWarehouseId, result.id]
+        );
+        return num(rows[0]?.quantity);
+      };
+
+      const moved = await readDestination();
+      const cancelled = await cancelTransfer(client, {
+        orgId: tctx.orgId,
+        user: tctx.user,
+        actor: tctx.actor,
+        transferId: result.id,
+        reason: 'Sent to the wrong godown',
+      });
+
+      const { rows: parent } = await client.query(
+        'SELECT quantity_remaining FROM crop_batches WHERE id = $1',
+        [batchId]
+      );
+      const { rows: children } = await client.query(
+        `SELECT quantity_remaining, is_active FROM crop_batches WHERE parent_batch_id = $1`,
+        [batchId]
+      );
+
+      return {
+        before: moved,
+        after: await readDestination(),
+        status: cancelled.status,
+        sourceRemaining: num(parent[0].quantity_remaining),
+        child: children[0],
+      };
+    });
+
+    expect(before).toBe(12);
+    // Cancelling reverses the movements rather than deleting them, so the
+    // destination is left holding nothing.
+    expect(after).toBe(0);
+    expect(status).toBe('CANCELLED');
+
+    // The split has to be undone as well as the ledger. FIFO allocates from
+    // `quantity_remaining`, so a child batch left holding 12 after its stock
+    // went back would offer stock the warehouse does not have.
+    expect(sourceRemaining).toBe(30);
+    expect(num(child.quantity_remaining)).toBe(0);
+    expect(child.is_active).toBe(false);
+  });
+
+  it('leaves no batch claiming stock its warehouse does not hold', async () => {
+    // The stock/ledger reconciliation cannot see this class of drift: both
+    // sides of it agree while `crop_batches` disagrees with them.
+    const { rows } = await query(
+      'SELECT batch_no, difference FROM v_batch_reconciliation WHERE difference <> 0'
+    );
+    expect(rows).toEqual([]);
   });
 });

@@ -211,6 +211,11 @@ export class ApiRepository {
     return (await this.client.post('/expenses', expense)).data;
   }
 
+  /** Move stock between warehouses. */
+  async createStockTransfer(transfer) {
+    return (await this.client.post('/inventory/transfers', transfer)).data;
+  }
+
   /** Record a stock adjustment; the server routes it for approval. */
   async createStockAdjustment(adjustment) {
     return (await this.client.post('/inventory/adjustments', adjustment)).data;

@@ -7,7 +7,9 @@ import {
   created,
   parseBody,
   parseQuery,
+  parseParams,
   listQuerySchema,
+  idParamSchema,
   paginate,
   pageMeta,
   orderBy,
@@ -17,6 +19,7 @@ import { recordMovement } from '../services/inventoryService.js';
 import { nextDocumentNo } from '../lib/numbering.js';
 import { writeAudit } from '../lib/audit.js';
 import { evaluateRules, requestApproval } from '../services/approvalService.js';
+import { createTransfer, cancelTransfer } from '../services/transferService.js';
 
 /**
  * Inventory: unified stock across dealer products and bulk crop batches, plus
@@ -318,6 +321,112 @@ router.post(
     });
 
     created(res, result);
+  })
+);
+
+/* ------------------------------------------------------------------ transfers */
+
+const transferSchema = z.object({
+  txnDate: z.string().date(),
+  businessType: z.enum(['DEALER', 'BULK_CROP']),
+  fromWarehouseId: z.coerce.number().int().positive(),
+  toWarehouseId: z.coerce.number().int().positive(),
+  note: z.string().max(300).optional(),
+  lines: z
+    .array(
+      z.object({
+        itemType: z.enum(['PRODUCT', 'CROP_BATCH']),
+        productId: z.coerce.number().int().positive().optional(),
+        batchId: z.coerce.number().int().positive().optional(),
+        quantity: z.coerce.number().positive('Quantity must be greater than zero'),
+      })
+    )
+    .min(1, 'Add at least one item to move'),
+});
+
+router.post(
+  '/transfers',
+  requirePermission('inventory.transfer'),
+  handler(async (req, res) => {
+    const input = parseBody(transferSchema, req);
+    const result = await withTransaction((client) =>
+      createTransfer(client, { orgId: req.orgId, user: req.user, actor: req.actor, input })
+    );
+    created(res, result);
+  })
+);
+
+router.get(
+  '/transfers',
+  requirePermission('inventory.view'),
+  handler(async (req, res) => {
+    const q = parseQuery(listQuerySchema, req);
+    const { limit, offset } = paginate(q.page, q.pageSize);
+
+    const params = [req.orgId];
+    let where = 't.org_id = $1';
+    if (q.from) {
+      params.push(q.from);
+      where += ` AND t.txn_date >= $${params.length}`;
+    }
+    if (q.to) {
+      params.push(q.to);
+      where += ` AND t.txn_date <= $${params.length}`;
+    }
+
+    const { rows: countRows } = await query(
+      `SELECT COUNT(*)::int AS total FROM stock_transfers t WHERE ${where}`,
+      params
+    );
+    const { rows } = await query(
+      `SELECT t.id, t.txn_no, t.txn_date, t.status, t.note,
+              f.name AS from_warehouse, d.name AS to_warehouse,
+              (SELECT COUNT(*)::int FROM stock_transfer_items i WHERE i.transfer_id = t.id) AS lines
+         FROM stock_transfers t
+         JOIN warehouses f ON f.id = t.from_warehouse_id
+         JOIN warehouses d ON d.id = t.to_warehouse_id
+        WHERE ${where}
+        ORDER BY t.txn_date DESC, t.id DESC
+        LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+
+    ok(
+      res,
+      rows.map((r) => ({
+        id: Number(r.id),
+        no: r.txn_no,
+        date: r.txn_date,
+        from: r.from_warehouse,
+        to: r.to_warehouse,
+        lines: r.lines,
+        note: r.note || '',
+        status: r.status,
+      })),
+      pageMeta(q.page, q.pageSize, countRows[0].total)
+    );
+  })
+);
+
+router.post(
+  '/transfers/:id/cancel',
+  requirePermission('inventory.transfer'),
+  handler(async (req, res) => {
+    const { id } = parseParams(idParamSchema, req);
+    const body = parseBody(
+      z.object({ reason: z.string().trim().min(3, 'Give a reason').max(300) }),
+      req
+    );
+    const result = await withTransaction((client) =>
+      cancelTransfer(client, {
+        orgId: req.orgId,
+        user: req.user,
+        actor: req.actor,
+        transferId: id,
+        reason: body.reason,
+      })
+    );
+    ok(res, result);
   })
 );
 

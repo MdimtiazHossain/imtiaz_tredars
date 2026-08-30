@@ -541,6 +541,77 @@ describe('transaction forms', () => {
     expect(app.state.modal.form.party).toMatch(/^SUP-/);
   });
 
+  it('defaults a transfer to two different warehouses', async () => {
+    const { app } = await mountApp();
+    app.openForm('transfer');
+    const { fromWarehouse, toWarehouse } = app.state.modal.form;
+    // Moving stock to where it already is has no meaning, so the form must not
+    // open in a state the server would reject.
+    expect(fromWarehouse).not.toBe(toWarehouse);
+  });
+
+  it('refuses a transfer into the same warehouse', async () => {
+    const { app } = await mountApp();
+    let called = false;
+    app.repository.createStockTransfer = async () => { called = true; return {}; };
+
+    app.openForm('transfer');
+    const from = app.state.modal.form.fromWarehouse;
+    app.onFormField('toWarehouse')({ target: { value: from } });
+    app.onFormField('quantity')({ target: { value: '5' } });
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(called).toBe(false);
+    expect(app.state.modal.error).toMatch(/different warehouses/i);
+  });
+
+  it('refuses a transfer of nothing', async () => {
+    const { app } = await mountApp();
+    app.openForm('transfer');
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(app.state.modal.error).toMatch(/quantity/i);
+  });
+
+  it('shows what stays behind without floating-point noise', async () => {
+    const { app } = await mountApp();
+    app.openForm('transfer');
+    const batch = app.data.batches.find((b) => b.id === app.state.modal.form.item);
+    app.onFormField('quantity')({ target: { value: String(batch.rem - 15.6) } });
+
+    const summary = app.renderVals().modal.summary.map((s) => s.v);
+    // 21.6 - 6 is 15.600000000000001 in binary floating point; the form shows
+    // quantities the way the schema stores them.
+    expect(summary.every((v) => !String(v).includes('000000'))).toBe(true);
+    expect(summary).toContain('15.6');
+  });
+
+  it('sends the transfer the server expects, with database ids', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.createStockTransfer = async (t) => {
+      sent.push(t);
+      return { txnNo: 'TRF-9999-001', status: 'POSTED' };
+    };
+
+    // In API mode the workspace carries a name-to-id map; the payload must use
+    // it, because the server takes ids and an undefined one fails every write.
+    app.data.warehouseIds = Object.fromEntries(app.data.warehouses.map((w, i) => [w, i + 1]));
+
+    app.openForm('transfer');
+    app.onFormField('quantity')({ target: { value: '4' } });
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].fromWarehouseId).not.toBe(sent[0].toWarehouseId);
+    expect(sent[0].lines).toHaveLength(1);
+    expect(sent[0].lines[0]).toMatchObject({ itemType: 'CROP_BATCH', quantity: 4 });
+    expect(app.state.modal).toBeNull();
+    expect(app.state.toast.msg).toContain('TRF-9999-001');
+  });
+
   it('resets the item when the stock kind changes', async () => {
     const { app } = await mountApp();
     app.openForm('adjustment');

@@ -92,7 +92,7 @@ export class BusinessApp extends Component {
    * The design never drew these, but its dashboard has always offered them as
    * quick actions. They reuse the design's own modal treatment.
    *
-   * @param {'payment'|'expense'|'adjustment'} kind
+   * @param {'payment'|'expense'|'adjustment'|'transfer'} kind
    * @param {object} [seed] pre-selected values, e.g. paying a specific supplier
    */
   openForm(kind, seed) {
@@ -202,6 +202,7 @@ export class BusinessApp extends Component {
     payment: 'createPayment',
     expense: 'createExpense',
     adjustment: 'createStockAdjustment',
+    transfer: 'createStockTransfer',
   };
 
   submitForm() {
@@ -247,6 +248,9 @@ export class BusinessApp extends Component {
       return form.direction === 'RECEIPT' ? amount + ' received' : amount + ' paid';
     }
     if (kind === 'expense') return amount + ' expense recorded';
+    if (kind === 'transfer') {
+      return Number(form.quantity) + ' moved from ' + form.fromWarehouse + ' to ' + form.toWarehouse;
+    }
     return 'stock adjustment recorded';
   }
 
@@ -715,7 +719,7 @@ export class BusinessApp extends Component {
         {l:'New Dealer Purchase', onClick:this.go('dealer-purchase')},
         {l:'Receive Payment', onClick:() => this.openForm('payment', {direction:'RECEIPT', partyType:'CUSTOMER'})},
         {l:'Pay Supplier', onClick:() => this.openForm('payment', {direction:'PAYMENT', partyType:'SUPPLIER'})},
-        {l:'Stock Transfer', onClick:this.go('inventory')},
+        {l:'Stock Transfer', onClick:() => this.openForm('transfer')},
         {l:'Add Expense', onClick:() => this.openForm('expense')}
       ],
       recent:table([column('Reference'), column('Date'), column('Type'), column('Party'), column('Business'), column('Amount', 'right'), column('Status', 'center')],
@@ -740,7 +744,10 @@ export class BusinessApp extends Component {
     rows.sort((a, b) => sort === 'value' ? b.val - a.val : sort === 'age' ? (b.age || 0) - (a.age || 0) : sort === 'qty' ? b.qty - a.qty : a.name.localeCompare(b.name));
     const mark = k => sort === k ? '  ↓' : '';
     const total = rows.reduce((t2, r) => t2 + r.val, 0);
-    return {actions:[{l:'Adjust stock', onClick:() => this.openForm('adjustment')}],
+    return {actions:[
+        {l:'Transfer stock', onClick:() => this.openForm('transfer')},
+        {l:'Adjust stock', onClick:() => this.openForm('adjustment')}
+      ],
       tabs:[{k:'all', l:'All stock'}, {k:'crop', l:'Bulk crops'}, {k:'dealer', l:'Dealer products'}].map(x => ({l:x.l, on:x.k === t,
         bg:x.k === t ? '#fff' : 'transparent', color:x.k === t ? C.ink : C.mut, onClick:this.hs('invTab', x.k)})),
       kpis:[{k:'Total stock value', v:money(24360000), s:'across 4 warehouses'}, {k:'Bulk crop stock', v:'365 MT', s:money(18740000)}, {k:'Dealer product stock', v:'3,842 units', s:money(5620000)}, {k:'Low stock / dead stock', v:'3 items', s:'needs action'}],

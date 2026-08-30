@@ -65,7 +65,21 @@ function readSchema() {
   }
 
   // Views are readable but have no writable column list we check.
-  const views = new Set([...sql.matchAll(/CREATE VIEW (\w+)/g)].map((v) => v[1]));
+  const views = new Set(
+    [...sql.matchAll(/CREATE (?:OR REPLACE )?(?:MATERIALIZED )?VIEW (\w+)/gi)].map((v) =>
+      v[1].toLowerCase()
+    )
+  );
+
+  // A later migration may add a column rather than recreate the table, so
+  // apply ALTER TABLE ... ADD COLUMN too. Without this, every additive
+  // migration makes the checker report the new column as non-existent.
+  const alterRe = /ALTER TABLE (?:ONLY\s+)?(\w+)[\s\S]*?ADD COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)/gi;
+  let a;
+  while ((a = alterRe.exec(sql))) {
+    const table = tables.get(a[1].toLowerCase());
+    if (table) table.add(a[2].toLowerCase());
+  }
 
   return { tables, views };
 }
@@ -165,8 +179,15 @@ for (const file of sourceFiles()) {
   }
 
   // ---- 3. FROM/JOIN/UPDATE against unknown relations ---------------------
+  // Scan only the template literals that actually hold a query. Error messages
+  // are template literals too, and prose like "sold from the destination"
+  // would otherwise be read as a FROM clause on a table named "the".
+  const scannable = [...code.matchAll(/`(?:[^`\\]|\\.)*`/g)]
+    .map((lit) => lit[0].slice(1, -1))
+    .filter((lit) => /^\s*(?:SELECT|INSERT|UPDATE|DELETE|WITH)\b/i.test(lit))
+    .join('\n;\n');
   const relRe = /\b(?:FROM|JOIN|UPDATE)\s+([a-z_][a-z0-9_]*)\b/gi;
-  while ((m = relRe.exec(code))) {
+  while ((m = relRe.exec(scannable))) {
     const name = m[1].toLowerCase();
     if (['select', 'set', 'where', 'values', 'only', 'lateral'].includes(name)) continue;
     if (tables.has(name) || views.has(name)) continue;

@@ -133,6 +133,18 @@ export class InMemoryRepository {
     );
   }
 
+  /** Move stock between warehouses. */
+  async createStockTransfer(transfer) {
+    return settle(
+      {
+        ...clone(transfer),
+        txnNo: `TRF-2608-${String(10 + this._counter('transfer')).padStart(3, '0')}`,
+        status: 'POSTED',
+      },
+      this.latency
+    );
+  }
+
   /** Record a stock adjustment. */
   async createStockAdjustment(adjustment) {
     return settle(
