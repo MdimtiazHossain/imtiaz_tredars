@@ -1067,6 +1067,79 @@ describe('master data', () => {
     expect(app.state.toast.msg).toContain('P-1007');
   });
 
+  it('builds the warehouse screen from what each godown holds', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('warehouse');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const wh = app.renderVals().wh;
+    expect(wh.table.rows.length).toBeGreaterThan(0);
+    expect(wh.table.rows[0].cells.slice(-1)[0].actions.map((a) => a.label)).toEqual([
+      'Edit',
+      'Retire',
+    ]);
+    expect(wh.table.footNote).toMatch(/warehouses?$/);
+  });
+
+  it('renders the employee directory from the repository, not a fixed list', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('employee');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const team = app.renderVals().team;
+    const rows = app.state.masterRows.employee;
+    // The footer counts what is actually listed, including its departments.
+    const departments = new Set(rows.map((e) => e.department));
+    expect(team.table.rows).toHaveLength(rows.length);
+    expect(team.table.footNote).toBe(
+      rows.length + ' employees · ' + departments.size + ' departments'
+    );
+  });
+
+  it('offers only departments that exist', async () => {
+    const { app } = await mountApp();
+    app.loadMasterList('employee');
+    await new Promise((r) => setTimeout(r, 40));
+
+    app.openMaster('employee');
+    const options = app
+      .renderVals()
+      .modal.fields.find((f) => f.key === 'department')
+      .options.map((o) => o.value);
+
+    const known = app.state.masterRows.employee.map((e) => e.department);
+    expect(options.length).toBeGreaterThan(0);
+    options.forEach((d) => expect(known).toContain(d));
+  });
+
+  it('refuses a joining date in the future', async () => {
+    const { app } = await mountApp();
+    app.openMaster('employee');
+    app.onMasterField('name')({ target: { value: 'Tanvir Ahmed' } });
+    app.onMasterField('joined')({ target: { value: '2099-01-01' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(app.state.master.error).toMatch(/future/i);
+  });
+
+  it('sends a warehouse without asking for a mobile number it has no use for', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.createMaster = async (kind, body) => {
+      sent.push([kind, body]);
+      return { id: 5, code: 'WH-05', ...body };
+    };
+
+    app.openMaster('warehouse');
+    app.onMasterField('name')({ target: { value: 'Sherpur Transit Store' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent[0][0]).toBe('warehouse');
+    expect(sent[0][1]).toMatchObject({ name: 'Sherpur Transit Store' });
+    expect(app.state.toast.msg).toContain('WH-05');
+  });
+
   it('offers districts the data already uses rather than a fixed list', async () => {
     const { app } = await mountApp();
     app.openMaster('customer');

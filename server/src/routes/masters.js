@@ -334,11 +334,41 @@ router.get(
   '/warehouses',
   requirePermission('inventory.view'),
   handler(async (req, res) => {
+    // Carries what each godown is holding as well as its name, so the
+    // warehouse screen and the dropdowns can share one route.
     const { rows } = await query(
-      'SELECT id, code, name, district FROM warehouses WHERE org_id = $1 AND is_active ORDER BY id',
+      `SELECT w.id, w.code, w.name, w.district, w.is_active,
+              COALESCE(st.lines, 0)    AS lines,
+              COALESCE(st.quantity, 0) AS quantity,
+              COALESCE(st.value, 0)    AS value
+         FROM warehouses w
+         LEFT JOIN (
+           SELECT warehouse_id,
+                  COUNT(*)                                  AS lines,
+                  SUM(quantity)                             AS quantity,
+                  ROUND(SUM(quantity * avg_cost), 2)        AS value
+             FROM stock
+            WHERE quantity > 0
+            GROUP BY warehouse_id
+         ) st ON st.warehouse_id = w.id
+        WHERE w.org_id = $1 AND w.is_active
+        ORDER BY w.id`,
       [req.orgId]
     );
-    ok(res, rows.map((r) => ({ id: Number(r.id), code: r.code, name: r.name, district: r.district })));
+
+    ok(
+      res,
+      rows.map((r) => ({
+        id: Number(r.id),
+        code: r.code,
+        name: r.name,
+        district: r.district || '',
+        lines: Number(r.lines),
+        quantity: num(r.quantity),
+        value: num(r.value),
+        status: r.is_active ? 'Active' : 'Closed',
+      }))
+    );
   })
 );
 
@@ -347,8 +377,8 @@ router.get(
   requirePermission('employee.view'),
   handler(async (req, res) => {
     const { rows } = await query(
-      `SELECT e.code, e.name, e.designation, d.name AS department, e.mobile,
-              e.joined_on, e.is_active,
+      `SELECT e.id, e.code, e.name, e.designation, d.name AS department, e.mobile,
+              to_char(e.joined_on, 'YYYY-MM-DD') AS joined_on, e.is_active,
               COALESCE((SELECT r.code FROM user_roles ur
                           JOIN roles r ON r.id = ur.role_id
                           JOIN users u ON u.id = ur.user_id
@@ -363,14 +393,15 @@ router.get(
     ok(
       res,
       rows.map((r) => ({
+        id: Number(r.id),
         code: r.code,
         name: r.name,
         designation: r.designation || '',
         department: r.department || '',
         mobile: r.mobile || '',
         role: r.role,
-        joined: r.joined_on,
-        status: r.is_active ? 'Active' : 'Inactive',
+        joined: r.joined_on || '',
+        status: r.is_active ? 'Active' : 'Retired',
       }))
     );
   })
@@ -499,6 +530,23 @@ const cropSchema = z.object({
   name: z.string().trim().min(1, 'Crop name is required').max(120),
   unit: z.string().trim().min(1, 'Choose a unit').max(20).default('MT'),
   rate: z.coerce.number().min(0).default(0),
+});
+
+const warehouseSchema = z.object({
+  name: z.string().trim().min(1, 'Warehouse name is required').max(160),
+  district: z.string().trim().max(80).optional().default(''),
+});
+
+const employeeSchema = z.object({
+  name: z.string().trim().min(1, 'Employee name is required').max(160),
+  designation: z.string().trim().max(120).optional().default(''),
+  department: z.string().trim().max(80).optional().default(''),
+  mobile: z.string().trim().max(30).optional().default(''),
+  joined: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-08-30')
+    .optional(),
 });
 
 const productSchema = z.object({
@@ -689,17 +737,49 @@ registerMasterCrud(router, {
 });
 
 /**
- * Look up a row by name in one of the small reference tables a product points
- * at, creating nothing: a typo should not quietly become a new brand.
+ * The small reference tables a master row points at by name.
  *
- * Categories and brands are shared across organisations rather than owned by
- * one, so there is no org_id to filter on here.
+ * They are not shaped alike: categories and brands are shared across
+ * organisations and can be retired, while departments belong to one
+ * organisation and have no active flag at all. Describing that here keeps the
+ * lookup honest instead of assuming every one of them has both columns.
  */
-async function referenceId(client, table, name) {
-  const { rows } = await client.query(
-    `SELECT id FROM ${table} WHERE lower(name) = lower($1) AND is_active`,
-    [name]
-  );
+/**
+ * A date column as YYYY-MM-DD.
+ *
+ * A `date` comes back from pg as a JS Date, and stringifying one gives
+ * "Sat Aug 01". Reading the local parts rather than calling toISOString is
+ * deliberate: pg parses a bare date into local midnight, so converting to UTC
+ * would move it a day back east of Greenwich.
+ */
+const isoDate = (value) => {
+  if (!value) return '';
+  if (typeof value === 'string') return value.slice(0, 10);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+};
+
+const REFERENCE_TABLES = {
+  product_categories: { orgScoped: false, retirable: true },
+  brands: { orgScoped: false, retirable: true },
+  departments: { orgScoped: true, retirable: false },
+};
+
+/**
+ * Resolve a reference row by name, creating nothing: a typo should not quietly
+ * become a new brand that then appears in every picker.
+ */
+async function referenceId(client, table, name, orgId) {
+  const shape = REFERENCE_TABLES[table];
+  const params = [name];
+  let where = 'lower(name) = lower($1)';
+  if (shape.orgScoped) {
+    params.push(orgId);
+    where += ` AND org_id = $${params.length}`;
+  }
+  if (shape.retirable) where += ' AND is_active';
+
+  const { rows } = await client.query(`SELECT id FROM ${table} WHERE ${where}`, params);
   return rows.length ? Number(rows[0].id) : null;
 }
 
@@ -718,7 +798,7 @@ registerMasterCrud(router, {
   }),
   // The screen works in unit codes and category and brand names; the ids
   // behind them are not its business.
-  resolve: async (client, body) => {
+  resolve: async (client, body, orgId) => {
     const resolved = {};
 
     if (body.unit !== undefined) {
@@ -735,7 +815,7 @@ registerMasterCrud(router, {
     if (body.cat !== undefined) {
       if (!body.cat) resolved.category_id = null;
       else {
-        const id = await referenceId(client, 'product_categories', body.cat);
+        const id = await referenceId(client, 'product_categories', body.cat, orgId);
         if (!id) throw notFound(`Category ${body.cat}`);
         resolved.category_id = id;
       }
@@ -744,7 +824,7 @@ registerMasterCrud(router, {
     if (body.brand !== undefined) {
       if (!body.brand) resolved.brand_id = null;
       else {
-        const id = await referenceId(client, 'brands', body.brand);
+        const id = await referenceId(client, 'brands', body.brand, orgId);
         if (!id) throw notFound(`Brand ${body.brand}`);
         resolved.brand_id = id;
       }
@@ -769,6 +849,74 @@ registerMasterCrud(router, {
     pur: num(r.purchase_rate),
     sale: num(r.sale_rate),
     min: num(r.min_stock),
+    status: r.is_active ? 'Active' : 'Retired',
+  }),
+});
+
+registerMasterCrud(router, {
+  path: 'warehouses',
+  table: 'warehouses',
+  label: 'Warehouse',
+  permissions: { create: 'warehouse.create', edit: 'warehouse.edit', remove: 'warehouse.delete' },
+  code: { prefix: 'WH', width: 2 },
+  schema: warehouseSchema,
+  columns: (b) => ({ name: b.name, district: b.district || null }),
+  blockers: [
+    {
+      sql: `SELECT COALESCE(SUM(quantity), 0) AS value FROM stock
+             WHERE warehouse_id = $1 AND org_id = $2`,
+      code: 'HAS_STOCK',
+      message: (n) =>
+        `${n} is still held in this warehouse. Transfer or write the stock off before closing it.`,
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    district: r.district || '',
+    status: r.is_active ? 'Active' : 'Closed',
+  }),
+});
+
+registerMasterCrud(router, {
+  path: 'employees',
+  table: 'employees',
+  label: 'Employee',
+  permissions: { create: 'employee.create', edit: 'employee.edit', remove: 'employee.delete' },
+  code: { prefix: 'EMP', width: 2 },
+  schema: employeeSchema,
+  columns: (b) => ({
+    name: b.name,
+    designation: b.designation || null,
+    mobile: b.mobile || null,
+    joined_on: b.joined,
+  }),
+  resolve: async (client, body, orgId) => {
+    if (body.department === undefined) return {};
+    if (!body.department) return { department_id: null };
+    const id = await referenceId(client, 'departments', body.department, orgId);
+    if (!id) throw notFound(`Department ${body.department}`);
+    return { department_id: id };
+  },
+  blockers: [
+    {
+      // Retiring someone whose login still works leaves an account nobody
+      // owns. The account is deactivated first, deliberately.
+      sql: `SELECT COUNT(*)::int AS value FROM users
+             WHERE employee_id = $1 AND org_id = $2 AND is_active`,
+      code: 'HAS_ACTIVE_LOGIN',
+      message: () =>
+        'This employee still has an active login. Deactivate the user account before retiring them.',
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    designation: r.designation || '',
+    mobile: r.mobile || '',
+    joined: isoDate(r.joined_on),
     status: r.is_active ? 'Active' : 'Retired',
   }),
 });

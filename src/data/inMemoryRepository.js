@@ -1,5 +1,6 @@
 import * as seed from './seed.js';
 import { ACCOUNTS, PAYMENT_METHOD_OPTIONS, EXPENSE_CATEGORIES } from './financeLookups.js';
+import { EMPLOYEES } from './reference.js';
 
 /**
  * In-memory implementation of the repository contract.
@@ -44,6 +45,7 @@ export class InMemoryRepository {
       products: clone(seed.PRODUCTS),
       crops: clone(seed.CROPS),
       warehouses: clone(seed.WAREHOUSES),
+      employees: clone(EMPLOYEES),
       units: clone(seed.UNITS),
       grades: clone(seed.GRADES),
       buyers: clone(seed.BUYERS),
@@ -82,11 +84,32 @@ export class InMemoryRepository {
    * those names and the batches holding them rather than stored twice.
    */
   _collection(kind) {
-    const named = { product: 'products', customer: 'customers', supplier: 'suppliers', company: 'companies' };
+    const named = {
+      product: 'products', customer: 'customers', supplier: 'suppliers',
+      company: 'companies', employee: 'employees',
+    };
     const key = named[kind];
     if (!key) throw new Error(`Unknown master kind: ${kind}`);
     if (!this._store[key]) this._store[key] = [];
     return this._store[key];
+  }
+
+  /** Build the warehouse master from the names and the stock each one holds. */
+  _warehouseRecords() {
+    const batches = this._store.batches || [];
+    return (this._store.warehouses || []).map((name, i) => {
+      const held = batches.filter((b) => b.wh === name);
+      return {
+        id: i + 1,
+        code: `WH-${String(i + 1).padStart(2, '0')}`,
+        name,
+        district: name.split(' ')[0],
+        lines: held.length,
+        quantity: held.reduce((t, b) => t + (Number(b.rem) || 0), 0),
+        value: held.reduce((t, b) => t + (Number(b.rem) || 0) * (Number(b.cost) || 0), 0),
+        status: 'Active',
+      };
+    });
   }
 
   /** Build the crop master from the crop names and the stock behind them. */
@@ -110,7 +133,9 @@ export class InMemoryRepository {
   }
 
   _rowsFor(kind) {
-    return kind === 'crop' ? this._cropRecords() : this._collection(kind);
+    if (kind === 'crop') return this._cropRecords();
+    if (kind === 'warehouse') return this._warehouseRecords();
+    return this._collection(kind);
   }
 
   /** One page of a master list, filtered by name or code as the server does. */
@@ -131,8 +156,8 @@ export class InMemoryRepository {
     }
 
     const rows = this._collection(kind);
-    const prefix = { product: 'P', customer: 'CUS', supplier: 'SUP', company: 'CMP' }[kind];
-    const width = kind === 'product' ? 4 : kind === 'company' ? 2 : 3;
+    const prefix = { product: 'P', customer: 'CUS', supplier: 'SUP', company: 'CMP', employee: 'EMP' }[kind];
+    const width = kind === 'product' ? 4 : kind === 'company' || kind === 'employee' ? 2 : 3;
     const code = `${prefix}-${String(rows.length + 1).padStart(width, '0')}`;
     const record = { ...clone(body), id: rows.length + 1, code, status: 'Active' };
     rows.push(record);

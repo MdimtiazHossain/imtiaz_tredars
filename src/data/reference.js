@@ -10,18 +10,26 @@ import { money } from '../domain/format.js';
  */
 
 /** Team directory: id, name, designation, department, mobile, role, joined. */
+/**
+ * The team, as records rather than a positional table.
+ *
+ * The employees screen used to render these by index, which meant it could
+ * only ever show this fixed list. As records they seed the in-memory store and
+ * the screen renders whatever the repository returns -- the real table with a
+ * backend, this fixture without one.
+ */
 export const EMPLOYEES = [
-      ['EMP-01', 'Rakib Hasan', 'Managing Director', 'Management', '01711-330099', 'Admin', '01 Jan 2019'],
-      ['EMP-02', 'Nasrin Akter', 'Accounts Manager', 'Accounts', '01715-882204', 'Accounts', '12 Mar 2020'],
-      ['EMP-03', 'Sohel Rana', 'Purchase Officer', 'Purchase', '01816-445521', 'Purchase', '05 Jul 2021'],
-      ['EMP-04', 'Shamim Reza', 'Senior Sales Officer', 'Sales', '01912-006733', 'Sales', '18 Sep 2021'],
-      ['EMP-05', 'Jamal Uddin', 'Warehouse In-charge', 'Warehouse', '01755-119043', 'Warehouse', '02 Feb 2022'],
-      ['EMP-06', 'Farhana Yeasmin', 'Accounts Officer', 'Accounts', '01633-220871', 'Accounts', '20 Jun 2022'],
-      ['EMP-07', 'Mizanur Rahman', 'Sales Officer', 'Sales', '01521-778812', 'Sales', '11 Nov 2023'],
-      ['EMP-08', 'Ashraful Islam', 'Field Officer — Crop', 'Operations', '01844-663019', 'Purchase', '03 Jan 2024'],
-      ['EMP-09', 'Sumaiya Khatun', 'Data Entry Operator', 'Operations', '01977-334528', 'Sales', '15 Apr 2025'],
-      ['EMP-10', 'Habibur Rahman', 'Store Assistant', 'Warehouse', '01686-901254', 'Warehouse', '01 Feb 2026']
-    ];
+  { code: 'EMP-01', name: 'Rakib Hasan', designation: 'Managing Director', department: 'Management', mobile: '01711-330099', role: 'Admin', joined: '2019-01-01' },
+  { code: 'EMP-02', name: 'Nasrin Akter', designation: 'Accounts Manager', department: 'Accounts', mobile: '01715-882204', role: 'Accounts', joined: '2020-03-12' },
+  { code: 'EMP-03', name: 'Sohel Rana', designation: 'Purchase Officer', department: 'Purchase', mobile: '01816-445521', role: 'Purchase', joined: '2021-07-05' },
+  { code: 'EMP-04', name: 'Shamim Reza', designation: 'Senior Sales Officer', department: 'Sales', mobile: '01912-006733', role: 'Sales', joined: '2021-09-18' },
+  { code: 'EMP-05', name: 'Jamal Uddin', designation: 'Warehouse In-charge', department: 'Warehouse', mobile: '01755-119043', role: 'Warehouse', joined: '2022-02-02' },
+  { code: 'EMP-06', name: 'Farhana Yeasmin', designation: 'Accounts Officer', department: 'Accounts', mobile: '01633-220871', role: 'Accounts', joined: '2022-06-20' },
+  { code: 'EMP-07', name: 'Mizanur Rahman', designation: 'Sales Officer', department: 'Sales', mobile: '01521-778812', role: 'Sales', joined: '2023-11-11' },
+  { code: 'EMP-08', name: 'Ashraful Islam', designation: 'Field Officer — Crop', department: 'Operations', mobile: '01844-663019', role: 'Purchase', joined: '2024-01-03' },
+  { code: 'EMP-09', name: 'Sumaiya Khatun', designation: 'Data Entry Operator', department: 'Operations', mobile: '01977-334528', role: 'Sales', joined: '2025-04-15' },
+  { code: 'EMP-10', name: 'Habibur Rahman', designation: 'Store Assistant', department: 'Warehouse', mobile: '01686-901254', role: 'Warehouse', joined: '2026-02-01' },
+];
 
 /** Which role may do what, per module. */
 export const PERMISSION_MATRIX = {cols:['Module', 'Admin', 'Management', 'Sales', 'Purchase', 'Accounts', 'Warehouse'],

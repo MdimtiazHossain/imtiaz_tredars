@@ -35,7 +35,6 @@ import {
   REPORT_GROUPS,
 } from '../data/analytics.js';
 import {
-  EMPLOYEES,
   PERMISSION_MATRIX,
   PHONE_SCREENS,
   FINANCIAL_YEARS,
@@ -84,6 +83,8 @@ export class BusinessApp extends Component {
       // fetched when the screen is actually opened rather than on every load.
       if (id === 'crops') this.loadMasterList('crop');
       if (id === 'products') this.loadMasterList('product');
+      if (id === 'warehouses') this.loadMasterList('warehouse');
+      if (id === 'employees') this.loadMasterList('employee');
     };
   }
   h(g, k, num) { return e => { const v = num ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value; this.setState(s => { const o = Object.assign({}, s[g]); o[k] = v; return {[g]:o}; }); }; }
@@ -268,8 +269,23 @@ export class BusinessApp extends Component {
    */
   openMaster(kind, row) {
     this.setState({
-      master: { kind, row: row || null, confirm: false, form: masterDefaults(kind, this.data, row), error: '', busy: false },
+      master: { kind, row: row || null, confirm: false, form: masterDefaults(kind, this.masterData(), row), error: '', busy: false },
     });
+  }
+
+  /**
+   * The workspace, plus the master lists fetched on demand.
+   *
+   * Employees are not part of the workspace payload, so a form asking which
+   * departments exist has to see the rows the employees screen loaded.
+   */
+  masterData() {
+    const rows = this.state.masterRows;
+    return {
+      ...this.data,
+      employees: rows.employee || this.data.employees || [],
+      products: rows.product || this.data.products || [],
+    };
   }
 
   /**
@@ -413,6 +429,91 @@ export class BusinessApp extends Component {
     return actions;
   }
 
+  /** The warehouses screen: the godowns, and what each one is holding. */
+  warehouses() {
+    const rows = this.state.masterRows.warehouse || [];
+    const active = rows.filter(w => w.status !== 'Closed');
+
+    return {
+      ...this.masterControls('warehouse', null),
+      addLabel: 'Add warehouse',
+      table: table(
+        [
+          column('Code'),
+          column('Warehouse'),
+          column('District'),
+          column('Stock lines', 'right'),
+          column('Quantity', 'right'),
+          column('Stock value', 'right'),
+          column('', 'right'),
+        ],
+        active.map(w => ({
+          cells: [
+            cell(w.code, { mono: true, color: C.mut }),
+            cell(w.name, { weight: '600' }),
+            cell(w.district || '—', { color: C.mut }),
+            cell(w.lines ? String(w.lines) : '—', { align: 'right', mono: true, color: C.mut }),
+            cell(w.quantity ? dec2(w.quantity) : '—', { align: 'right', mono: true, weight: '600' }),
+            cell(w.value ? money(w.value) : '—', { align: 'right', mono: true }),
+            cell('', { align: 'right', actions: this.masterRowActions('warehouse', w) }),
+          ],
+        })),
+        {
+          emptyTitle: 'No warehouses yet',
+          emptyNote: 'Add a godown and stock can be received into it.',
+          footNote: active.length + (active.length === 1 ? ' warehouse' : ' warehouses'),
+          footTotal: 'Stock value ' + money(active.reduce((t, w) => t + (w.value || 0), 0)),
+        }
+      ),
+    };
+  }
+
+  /** The employees screen: the team directory. */
+  employees() {
+    const rows = this.state.masterRows.employee || this.data.employees || [];
+    const active = rows.filter(e => e.status !== 'Retired');
+    const departments = new Set(active.map(e => e.department).filter(Boolean));
+
+    return {
+      ...this.masterControls('employee', null),
+      addLabel: 'Add employee',
+      table: table(
+        [
+          column('ID'),
+          column('Name'),
+          column('Designation'),
+          column('Department'),
+          column('Mobile'),
+          column('System role'),
+          column('Joined'),
+          column('', 'right'),
+        ],
+        active.map(e => ({
+          cells: [
+            cell(e.code, { mono: true, color: C.mut }),
+            cell(e.name, { weight: '600' }),
+            cell(e.designation || '—'),
+            cell(e.department || '—', { color: C.mut }),
+            cell(e.mobile || '—', { mono: true }),
+            // Someone with no login is not a lesser employee, so it reads as a
+            // plain dash rather than an empty badge.
+            e.role && e.role !== '—'
+              ? cell(e.role, { badge: true, badgeBg: C.dealBg, badgeFg: C.deal })
+              : cell('—', { color: C.mut }),
+            cell(e.joined || '—', { color: C.mut }),
+            cell('', { align: 'right', actions: this.masterRowActions('employee', e) }),
+          ],
+        })),
+        {
+          emptyTitle: 'No employees yet',
+          emptyNote: 'Add the team and each one can be given a system role.',
+          footNote: active.length + (active.length === 1 ? ' employee' : ' employees')
+            + ' · ' + departments.size + (departments.size === 1 ? ' department' : ' departments'),
+        }
+      ),
+    };
+  }
+
   /** The products screen: the dealer catalogue, with what each line is holding. */
   products() {
     const rows = this.state.masterRows.product || this.data.products || [];
@@ -531,7 +632,7 @@ export class BusinessApp extends Component {
       });
     }
 
-    return buildMasterModal(state.kind, state, this.data, {
+    return buildMasterModal(state.kind, state, this.masterData(), {
       onField: key => this.onMasterField(key),
       onSubmit: () => this.submitMaster(),
       onCancel: () => this.closeMaster(),
@@ -1442,11 +1543,12 @@ export class BusinessApp extends Component {
     const title = this.data.titles[S.screen] || ['', ''];
     const is = {}; Object.keys(this.data.titles).forEach(k => { is[k.split('-').join('')] = S.screen === k; });
     const pendCount = S.approvals.filter(a => a.status === 'pending').length;
-    const empSet = EMPLOYEES;
     return {
       modal:this.state.master ? this.masterModal() : buildModal(this),
       crop:this.crops(),
       prod:this.products(),
+      wh:this.warehouses(),
+      team:this.employees(),
       co:this.data.company, role:role, biz:S.biz, screen:S.screen, titleMain:title[0], titleSub:title[1], is:is,
       bizTabs:[{k:'all', l:'All business'}, {k:'dealer', l:'Dealer'}, {k:'crop', l:'Bulk Crop'}].map(x => ({l:x.l, on:x.k === S.biz,
         bg:x.k === S.biz ? '#fff' : 'transparent', color:x.k === S.biz ? C.ink : C.mut, sh:x.k === S.biz ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
@@ -1484,10 +1586,7 @@ export class BusinessApp extends Component {
       setIs:{company:S.setSec === 'company', fy:S.setSec === 'fy', numbering:S.setSec === 'numbering', units:S.setSec === 'units',
         pay:S.setSec === 'pay', limits:S.setSec === 'limits', valuation:S.setSec === 'valuation', roles:S.setSec === 'roles', notif:S.setSec === 'notif'},
       matrix: PERMISSION_MATRIX,
-      emp:table([column('ID'), column('Name'), column('Designation'), column('Department'), column('Mobile'), column('System role'), column('Joined'), column('Status', 'center')],
-        empSet.map(e => ({cells:[cell(e[0], {mono:true, color:C.mut}), cell(e[1], {weight:'600'}), cell(e[2]), cell(e[3], {color:C.mut}),
-          cell(e[4], {mono:true}), cell(e[5], {badge:true, badgeBg:C.dealBg, badgeFg:C.deal}), cell(e[6], {color:C.mut}),
-          cell('Active', {align:'center', badge:true, badgeBg:C.cropBg, badgeFg:C.crop})]})), {footNote:'10 employees · 6 departments'}),
+
       audit:table([column('When'), column('User'), column('Action'), column('Record'), column('Field'), column('Previous'), column('New')],
         [['28 Aug, 10:12 am', 'Sohel Rana', 'Created', 'PC-2608-014', 'Purchase', '—', '৳30,20,000'],
          ['28 Aug, 9:58 am', 'Sohel Rana', 'Edited', 'PC-2608-014', 'Transport cost', '৳42,000', '৳50,000'],

@@ -471,6 +471,8 @@ suite('master data', () => {
       ['Purchase', 'delete', '/api/crops/1', null],
       ['Warehouse', 'post', '/api/products', { name: 'X', unit: 'Pcs' }],
       ['Sales', 'delete', '/api/products/1', null],
+      ['Warehouse', 'post', '/api/warehouses', { name: 'X' }],
+      ['Sales', 'post', '/api/employees', { name: 'X' }],
     ];
 
     for (const [role, method, path, body] of cases) {
@@ -536,6 +538,75 @@ suite('master data', () => {
     const res = await asAdmin('delete', `/api/products/${rows[0].product_id}`);
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('HAS_STOCK');
+  });
+
+  it('opens and closes a warehouse', async () => {
+    const created = await asAdmin('post', '/api/warehouses').send({
+      name: 'Sherpur Transit Store',
+      district: 'Bogura',
+    });
+    expect(created.status).toBe(201);
+    const id = created.body.data.id;
+
+    const closed = await asAdmin('delete', `/api/warehouses/${id}`);
+    expect(closed.status).toBe(200);
+    expect(closed.body.data.status).toBe('Closed');
+
+    await query('DELETE FROM warehouses WHERE id = $1', [id]);
+  });
+
+  it('refuses to close a warehouse that still holds stock', async () => {
+    const { rows } = await query(
+      'SELECT warehouse_id FROM stock WHERE quantity > 0 LIMIT 1'
+    );
+    const res = await asAdmin('delete', `/api/warehouses/${rows[0].warehouse_id}`);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('HAS_STOCK');
+  });
+
+  it('creates an employee and returns the joining date as a date', async () => {
+    const created = await asAdmin('post', '/api/employees').send({
+      name: 'Tanvir Ahmed',
+      designation: 'Warehouse Assistant',
+      department: 'Warehouse',
+      mobile: '01799001122',
+      joined: '2026-08-01',
+    });
+    expect(created.status).toBe(201);
+    // A bare date comes back from pg as a JS Date; stringifying one gives
+    // "Sat Aug 01", which is not a date.
+    expect(created.body.data.joined).toBe('2026-08-01');
+
+    await query('DELETE FROM employees WHERE id = $1', [created.body.data.id]);
+  });
+
+  it('refuses an employee naming a department that does not exist', async () => {
+    const res = await asAdmin('post', '/api/employees').send({
+      name: 'Tanvir Ahmed',
+      department: 'Logistics',
+    });
+    expect(res.status).toBe(404);
+
+    const { rows } = await query("SELECT COUNT(*)::int AS n FROM departments WHERE name = 'Logistics'");
+    expect(rows[0].n).toBe(0);
+  });
+
+  it('refuses a joining date that is not a date', async () => {
+    const res = await asAdmin('post', '/api/employees').send({
+      name: 'Tanvir Ahmed',
+      joined: '01 Aug 2026',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_FAILED');
+  });
+
+  it('refuses to retire an employee whose login still works', async () => {
+    const { rows } = await query(
+      'SELECT employee_id FROM users WHERE is_active AND employee_id IS NOT NULL LIMIT 1'
+    );
+    const res = await asAdmin('delete', `/api/employees/${rows[0].employee_id}`);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('HAS_ACTIVE_LOGIN');
   });
 
   it('lists crops with what each one is holding', async () => {

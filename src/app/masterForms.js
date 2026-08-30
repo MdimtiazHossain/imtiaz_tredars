@@ -43,7 +43,9 @@ const COMPANY_ROLES = [
   { value: 'SUPPLIER_AND_BUYER', label: 'Supplier and buyer' },
 ];
 
-export const MASTER_KINDS = ['crop', 'product', 'customer', 'supplier', 'company'];
+export const MASTER_KINDS = [
+  'crop', 'product', 'customer', 'supplier', 'company', 'warehouse', 'employee',
+];
 
 const TITLES = {
   crop: ['crop', 'Crops are what the bulk trading side buys, stores and sells'],
@@ -51,6 +53,8 @@ const TITLES = {
   customer: ['customer', 'Dealers, retailers and corporate buyers'],
   supplier: ['supplier', 'Farmers, aratdars and traders you buy from'],
   company: ['company', 'Principals, supplier companies and buyer companies'],
+  warehouse: ['warehouse', 'Godowns and depots that hold stock'],
+  employee: ['employee', 'The team, and the department each one belongs to'],
 };
 
 /** The empty form for a new record, or the values of the one being edited. */
@@ -66,6 +70,23 @@ export function defaultsFor(kind, data, row) {
       name: row ? row.name : '',
       unit: row ? row.unit || (data.units || [])[0] : (data.units || [])[0] || 'MT',
       rate: row ? row.rate : '',
+    };
+  }
+
+  if (kind === 'warehouse') {
+    return {
+      name: row ? row.name : '',
+      district: row ? row.district : firstDistrict,
+    };
+  }
+
+  if (kind === 'employee') {
+    return {
+      name: row ? row.name : '',
+      designation: row ? row.designation : '',
+      department: row ? row.department : optionsFrom(data.employees, 'department')[0] || '',
+      mobile: row ? row.mobile : '',
+      joined: row ? row.joined : '',
     };
   }
 
@@ -148,6 +169,52 @@ export function fieldsFor(kind, form, data, on, row) {
         onChange: on('rate'),
         placeholder: '0',
         hint: 'Used as the opening suggestion on a purchase',
+      }),
+    ];
+  }
+
+  if (kind === 'warehouse') {
+    return [
+      field('name', 'Warehouse name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'Naogaon Central Godown',
+        wide: true,
+      }),
+      field('district', 'District', {
+        options: districts,
+        value: form.district,
+        onChange: on('district'),
+      }),
+    ];
+  }
+
+  if (kind === 'employee') {
+    return [
+      field('name', 'Name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'Tanvir Ahmed',
+        wide: true,
+      }),
+      field('designation', 'Designation', {
+        value: form.designation,
+        onChange: on('designation'),
+        placeholder: 'Warehouse Assistant',
+      }),
+      // Departments are the ones that exist; the server refuses an unknown one
+      // rather than inventing a department nobody set up.
+      field('department', 'Department', {
+        options: optionsFrom(data.employees, 'department', form.department),
+        value: form.department,
+        onChange: on('department'),
+      }),
+      field('mobile', 'Mobile', { value: form.mobile, onChange: on('mobile'), mono: true }),
+      field('joined', 'Joined on', {
+        type: 'date',
+        value: form.joined,
+        onChange: on('joined'),
+        hint: 'Leave blank if it is not known',
       }),
     ];
   }
@@ -335,6 +402,16 @@ export function validate(kind, form) {
     return null;
   }
 
+  if (kind === 'warehouse') return null;
+
+  if (kind === 'employee') {
+    // A joining date in the future is a data-entry slip, not a plan.
+    if (form.joined && form.joined > new Date().toISOString().slice(0, 10)) {
+      return 'The joining date is in the future.';
+    }
+    return null;
+  }
+
   if (kind !== 'company' && !String(form.mobile || '').trim()) {
     return 'Enter a mobile number — it is how the party is reached and matched.';
   }
@@ -351,6 +428,22 @@ export function payloadFor(kind, form) {
 
   if (kind === 'crop') {
     return { name: text(form.name), unit: form.unit, rate: number(form.rate) };
+  }
+
+  if (kind === 'warehouse') {
+    return { name: text(form.name), district: text(form.district) };
+  }
+
+  if (kind === 'employee') {
+    return {
+      name: text(form.name),
+      designation: text(form.designation),
+      department: text(form.department),
+      mobile: text(form.mobile),
+      // Omitted rather than sent empty: the column is nullable and the schema
+      // only accepts a real date.
+      joined: form.joined || undefined,
+    };
   }
 
   if (kind === 'product') {

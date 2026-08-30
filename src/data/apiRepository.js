@@ -21,6 +21,8 @@ import { NAV, TITLES } from './seed.js';
 const MASTER_PATHS = {
   crop: '/crops',
   product: '/products',
+  warehouse: '/warehouses',
+  employee: '/employees',
   customer: '/customers',
   supplier: '/suppliers',
   company: '/companies',
@@ -30,6 +32,7 @@ const MASTER_PATHS = {
 const MASTER_ID_MAPS = {
   crop: 'crops',
   product: 'products',
+  warehouse: 'warehouses',
   customer: 'customers',
 };
 

@@ -1110,6 +1110,17 @@
         </div>
       </sc-if>
 
+      <sc-if value="{{ is.warehouses }}">
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <sc-if value="{{ wh.canAdd }}">
+            <div style="display:flex;justify-content:flex-end">
+              <button onClick="{{ wh.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ wh.addLabel }}</button>
+            </div>
+          </sc-if>
+          <dc-import name="DataTable" t="{{ wh.table }}" hint-size="100%,420px"></dc-import>
+        </div>
+      </sc-if>
+
       <sc-if value="{{ is.products }}">
         <div style="display:flex;flex-direction:column;gap:10px">
           <sc-if value="{{ prod.canAdd }}">
@@ -1416,7 +1427,14 @@
       </sc-if>
 
       <sc-if value="{{ is.employees }}">
-        <dc-import name="DataTable" t="{{ emp }}" hint-size="100%,470px"></dc-import>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <sc-if value="{{ team.canAdd }}">
+            <div style="display:flex;justify-content:flex-end">
+              <button onClick="{{ team.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ team.addLabel }}</button>
+            </div>
+          </sc-if>
+          <dc-import name="DataTable" t="{{ team.table }}" hint-size="100%,470px"></dc-import>
+        </div>
       </sc-if>
 
       <sc-if value="{{ is.audit }}">
