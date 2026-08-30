@@ -52,7 +52,7 @@ function ago(value) {
 
 async function loadCustomers(orgId) {
   const { rows } = await query(
-    `SELECT c.code, c.name, c.name_bn, c.customer_type, c.contact_person, c.mobile,
+    `SELECT c.id, c.code, c.name, c.name_bn, c.customer_type, c.contact_person, c.mobile,
             c.district, c.upazila, c.credit_limit, c.credit_days,
             o.invoiced_amount, o.collected_amount, o.outstanding,
             (SELECT max(txn_date) FROM dealer_sales s
@@ -75,6 +75,8 @@ async function loadCustomers(orgId) {
   );
 
   return rows.map((r) => ({
+    // The numeric id the API needs on a write; screens go on using `code`.
+    id: Number(r.id),
     code: r.code,
     name: r.name,
     bn: r.name_bn || '',
@@ -98,7 +100,7 @@ async function loadCustomers(orgId) {
 
 async function loadSuppliers(orgId) {
   const { rows } = await query(
-    `SELECT s.code, s.name, s.name_bn, s.supplier_type, s.mobile, s.district,
+    `SELECT s.id, s.code, s.name, s.name_bn, s.supplier_type, s.mobile, s.district,
             s.upazila, s.bank_account, o.billed_amount, o.paid_amount, o.outstanding,
             (SELECT max(txn_date) FROM crop_purchases p
               WHERE p.supplier_id = s.id AND p.status = 'POSTED') AS last_purchase
@@ -110,6 +112,7 @@ async function loadSuppliers(orgId) {
   );
 
   return rows.map((r) => ({
+    id: Number(r.id),
     code: r.code,
     name: r.name,
     bn: r.name_bn || '',
@@ -134,7 +137,7 @@ const COMPANY_ROLE_LABEL = {
 
 async function loadCompanies(orgId) {
   const { rows } = await query(
-    `SELECT c.code, c.name, c.role, c.contact_person, c.mobile, c.district,
+    `SELECT c.id, c.code, c.name, c.role, c.contact_person, c.mobile, c.district,
             c.credit_limit, c.credit_days, c.is_active,
             COALESCE((SELECT SUM(balance) FROM payables p
                        WHERE p.party_type = 'COMPANY' AND p.party_id = c.id
@@ -149,6 +152,7 @@ async function loadCompanies(orgId) {
   );
 
   return rows.map((r) => ({
+    id: Number(r.id),
     code: r.code,
     name: r.name,
     type: COMPANY_ROLE_LABEL[r.role] || r.role,
@@ -166,7 +170,7 @@ async function loadCompanies(orgId) {
 
 async function loadProducts(orgId) {
   const { rows } = await query(
-    `SELECT p.code, p.name, pc.name AS category, b.name AS brand, u.code AS unit,
+    `SELECT p.id, p.code, p.name, pc.name AS category, b.name AS brand, u.code AS unit,
             p.purchase_rate, p.sale_rate, p.min_stock,
             COALESCE((SELECT SUM(s.quantity) FROM stock s
                        WHERE s.product_id = p.id AND s.item_type = 'PRODUCT'), 0) AS stock
@@ -180,6 +184,7 @@ async function loadProducts(orgId) {
   );
 
   return rows.map((r) => ({
+    id: Number(r.id),
     code: r.code,
     name: r.name,
     cat: r.category || '',
@@ -194,7 +199,7 @@ async function loadProducts(orgId) {
 
 async function loadBatches(orgId) {
   const { rows } = await query(
-    `SELECT b.batch_no, c.name AS crop, g.name AS grade, w.name AS warehouse,
+    `SELECT b.id AS db_id, b.batch_no, c.name AS crop, g.name AS grade, w.name AS warehouse,
             b.quantity_received, b.quantity_remaining, b.cost_per_unit,
             b.received_on, s.name AS supplier
        FROM crop_batches b
@@ -208,7 +213,10 @@ async function loadBatches(orgId) {
   );
 
   return rows.map((r) => ({
+    // `id` remains the batch number every screen already renders; the numeric
+    // key the API needs travels alongside it.
     id: r.batch_no,
+    dbId: Number(r.db_id),
     crop: r.crop,
     grade: r.grade || '',
     wh: r.warehouse,
@@ -418,6 +426,47 @@ async function loadNotifications(orgId) {
   return notifications;
 }
 
+/**
+ * Small reference lists the forms need: where money moves, how it moves, and
+ * what an expense can be booked against. They belong in the boot payload
+ * rather than a separate round trip on every modal open.
+ */
+async function loadFinanceLookups(orgId) {
+  const [accounts, methods, categories] = await Promise.all([
+    query(
+      `SELECT id, code, name, account_type FROM accounts
+        WHERE org_id = $1 AND is_active ORDER BY id`,
+      [orgId]
+    ),
+    query(
+      `SELECT id, code, name, account_id FROM payment_methods
+        WHERE org_id = $1 AND is_active ORDER BY id`,
+      [orgId]
+    ),
+    query('SELECT id, code, name FROM expense_categories WHERE is_active ORDER BY id'),
+  ]);
+
+  return {
+    accounts: accounts.rows.map((r) => ({
+      id: Number(r.id),
+      code: r.code,
+      name: r.name,
+      type: r.account_type,
+    })),
+    paymentMethods: methods.rows.map((r) => ({
+      id: Number(r.id),
+      code: r.code,
+      name: r.name,
+      accountId: r.account_id ? Number(r.account_id) : null,
+    })),
+    expenseCategories: categories.rows.map((r) => ({
+      id: Number(r.id),
+      code: r.code,
+      name: r.name,
+    })),
+  };
+}
+
 /* ------------------------------------------------------------------ public */
 
 // Navigation groups and screen titles stay in the frontend: they describe the
@@ -442,6 +491,7 @@ export async function loadWorkspace({ orgId, user }) {
     cropLog,
     saleLog,
     notifications,
+    finance,
     lookups,
   ] = await Promise.all([
     query(
@@ -460,6 +510,7 @@ export async function loadWorkspace({ orgId, user }) {
     loadCropLog(orgId),
     loadSaleLog(orgId, showProfit),
     loadNotifications(orgId),
+    loadFinanceLookups(orgId),
     Promise.all([
       query('SELECT name, last_rate FROM crops WHERE org_id = $1 AND is_active ORDER BY id', [orgId]),
       query('SELECT name FROM warehouses WHERE org_id = $1 AND is_active ORDER BY id', [orgId]),
@@ -507,5 +558,8 @@ export async function loadWorkspace({ orgId, user }) {
     cropLog,
     saleLog,
     notifications,
+    accounts: finance.accounts,
+    paymentMethods: finance.paymentMethods,
+    expenseCategories: finance.expenseCategories,
   };
 }

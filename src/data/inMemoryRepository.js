@@ -1,4 +1,5 @@
 import * as seed from './seed.js';
+import { ACCOUNTS, PAYMENT_METHOD_OPTIONS, EXPENSE_CATEGORIES } from './financeLookups.js';
 
 /**
  * In-memory implementation of the repository contract.
@@ -52,6 +53,9 @@ export class InMemoryRepository {
       cropLog: clone(seed.CROP_LOG),
       saleLog: clone(seed.SALE_LOG),
       notifications: clone(seed.NOTIFICATIONS),
+      accounts: clone(ACCOUNTS),
+      paymentMethods: clone(PAYMENT_METHOD_OPTIONS),
+      expenseCategories: clone(EXPENSE_CATEGORIES),
     };
     return settle(clone(this._store), this.latency);
   }
@@ -94,6 +98,59 @@ export class InMemoryRepository {
   /** Persist a dealer purchase bill. */
   async postDealerPurchase(bill) {
     return settle(clone(bill), this.latency);
+  }
+
+  /**
+   * Record a receipt or a payment.
+   *
+   * The in-memory store has no ledger, so this returns what a server would
+   * have created. It exists so the payment screen works without a backend and
+   * the tests can exercise the flow.
+   */
+  async createPayment(payment) {
+    const prefix = payment.direction === 'RECEIPT' ? 'RC' : 'PY';
+    const allocated = (payment.allocations || []).reduce((t, a) => t + Number(a.amount || 0), 0);
+    return settle(
+      {
+        ...clone(payment),
+        txnNo: `${prefix}-2608-${String(300 + this._counter('payment')).padStart(3, '0')}`,
+        allocated,
+        unallocated: Number(payment.amount || 0) - allocated,
+      },
+      this.latency
+    );
+  }
+
+  /** Record an expense voucher. */
+  async createExpense(expense) {
+    return settle(
+      {
+        ...clone(expense),
+        txnNo: `EXP-2608-${String(120 + this._counter('expense')).padStart(3, '0')}`,
+        status: 'POSTED',
+      },
+      this.latency
+    );
+  }
+
+  /** Record a stock adjustment. */
+  async createStockAdjustment(adjustment) {
+    return settle(
+      {
+        ...clone(adjustment),
+        txnNo: `ADJ-2608-${String(30 + this._counter('adjustment')).padStart(3, '0')}`,
+        // Adjustments always require approval, matching the seeded rule.
+        status: 'PENDING_APPROVAL',
+      },
+      this.latency
+    );
+  }
+
+  /** Monotonic per-kind counter, so numbers do not repeat within a session. */
+  _counter(kind) {
+    if (!this._counters) this._counters = {};
+    this._counters[kind] = (this._counters[kind] || 0) + 1;
+    return this._counters[kind];
   }
 
   /** Record an approve/reject decision against a pending request. */

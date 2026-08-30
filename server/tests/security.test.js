@@ -317,6 +317,39 @@ suite('report export', () => {
   });
 });
 
+suite('workspace payload', () => {
+  it('carries the numeric ids the client needs to write back', async () => {
+    // The screens work in codes, but every write sends an id. Without these the
+    // repository maps every code to undefined and no post can succeed.
+    const res = await request(app)
+      .get('/api/workspace')
+      .set('authorization', `Bearer ${tokens.Admin}`);
+
+    expect(res.status).toBe(200);
+    for (const key of ['customers', 'suppliers', 'companies', 'products']) {
+      const first = res.body.data[key][0];
+      expect(first, `${key} is empty`).toBeDefined();
+      expect(typeof first.id, `${key}[0].id`).toBe('number');
+      expect(first.code, `${key}[0].code`).toBeTruthy();
+    }
+
+    // A batch keeps its number as `id`, so the numeric key travels separately.
+    const batch = res.body.data.batches[0];
+    expect(batch.id).toMatch(/^BC-/);
+    expect(typeof batch.dbId).toBe('number');
+  });
+
+  it('carries the finance lookups the payment and expense forms select from', async () => {
+    const res = await request(app)
+      .get('/api/workspace')
+      .set('authorization', `Bearer ${tokens.Admin}`);
+    expect(res.body.data.accounts.length).toBeGreaterThan(0);
+    expect(res.body.data.paymentMethods.length).toBeGreaterThan(0);
+    expect(res.body.data.expenseCategories.length).toBeGreaterThan(0);
+    expect(typeof res.body.data.accounts[0].id).toBe('number');
+  });
+});
+
 suite('cross-user access', () => {
   it('scopes reads to the signed-in user organisation', async () => {
     const res = await request(app)

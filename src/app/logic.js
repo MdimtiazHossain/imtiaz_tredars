@@ -12,6 +12,12 @@ import { C } from '../styles/tokens.js';
 import { money, int, dec2, lakh } from '../domain/format.js';
 import { cell, column, table } from '../components/dataTable.js';
 import {
+  buildModal,
+  defaultsFor,
+  validate as validateForm,
+  payloadFor,
+} from './transactionForms.js';
+import {
   DASHBOARD_KPIS,
   MONTHLY_SERIES,
   TOP_CUSTOMERS,
@@ -57,6 +63,8 @@ export class BusinessApp extends Component {
       cropLog: data.cropLog,
       saleLog: data.saleLog,
       notifs: data.notifications,
+      // One transaction form is open at a time, or none.
+      modal: null,
     };
   }
 
@@ -74,6 +82,123 @@ export class BusinessApp extends Component {
 
   bizOf(v) { const b = this.state.biz; return b === 'dealer' ? v.d : b === 'crop' ? v.c : v.d + v.c; }
   custList() { return this.data.customers.concat(this.state.extraCusts || []); }
+
+  /* ------------------------------------------------- payment / expense / stock */
+
+  /**
+   * Open one of the transaction forms.
+   *
+   * The design never drew these, but its dashboard has always offered them as
+   * quick actions. They reuse the design's own modal treatment.
+   *
+   * @param {'payment'|'expense'|'adjustment'} kind
+   * @param {object} [seed] pre-selected values, e.g. paying a specific supplier
+   */
+  openForm(kind, seed) {
+    this.setState({
+      modal: { kind, form: defaultsFor(kind, this.data, seed), error: '', busy: false },
+    });
+  }
+
+  closeForm() {
+    this.setState({ modal: null });
+  }
+
+  /** Change handler for one field of the open form. */
+  onFormField(key) {
+    return e => {
+      const value = e.target.value;
+      this.setState(s => {
+        if (!s.modal) return null;
+        const form = { ...s.modal.form, [key]: value };
+
+        // Switching the party type or stock kind invalidates the selection
+        // beneath it, so reset to the first item of the new list.
+        if (key === 'partyType') {
+          form.party = defaultsFor('payment', this.data, { partyType: value }).party;
+        }
+        if (key === 'itemType') {
+          form.item = value === 'CROP_BATCH'
+            ? (this.data.batches[0] ? this.data.batches[0].id : '')
+            : (this.data.products[0] ? this.data.products[0].code : '');
+        }
+
+        // Clear a stale validation message as soon as the user edits.
+        return { modal: { ...s.modal, form, error: '' } };
+      });
+    };
+  }
+
+  /** Which repository method each form posts to. */
+  static FORM_METHOD = {
+    payment: 'createPayment',
+    expense: 'createExpense',
+    adjustment: 'createStockAdjustment',
+  };
+
+  submitForm() {
+    const state = this.state.modal;
+    if (!state || state.busy) return;
+
+    const problem = validateForm(state.kind, state.form);
+    if (problem) {
+      this.setState({ modal: { ...state, error: problem } });
+      return;
+    }
+
+    const payload = payloadFor(state.kind, state.form, this.data);
+    const method = BusinessApp.FORM_METHOD[state.kind];
+
+    this.setState({ modal: { ...state, busy: true, error: '' } });
+
+    this.persist(method, payload).then(
+      saved => {
+        this.setState({ modal: null });
+        const no = saved && saved.txnNo ? saved.txnNo : '';
+        const pending = saved && saved.status === 'PENDING_APPROVAL';
+        this.fire(
+          pending
+            ? no + ' submitted for approval'
+            : (no ? no + ' — ' : '') + this.formSuccessText(state.kind, state.form),
+          pending ? 'warn' : 'ok'
+        );
+        // A posted payment or adjustment changes balances and stock, so the
+        // workspace is refetched rather than patched in place.
+        this.reloadWorkspace();
+      },
+      err => {
+        if (err.silent) return;
+        this.setState(s => (s.modal ? { modal: { ...s.modal, busy: false, error: err.message } } : null));
+      }
+    );
+  }
+
+  formSuccessText(kind, form) {
+    const amount = money(Number(form.amount) || 0);
+    if (kind === 'payment') {
+      return form.direction === 'RECEIPT' ? amount + ' received' : amount + ' paid';
+    }
+    if (kind === 'expense') return amount + ' expense recorded';
+    return 'stock adjustment recorded';
+  }
+
+  /**
+   * Refresh the working set after a write that moves money or stock.
+   *
+   * Cheaper than patching every derived figure by hand, and it cannot drift
+   * from what the server actually holds.
+   */
+  reloadWorkspace() {
+    if (!this.repository || typeof this.repository.load !== 'function') return;
+    this.repository.load().then(
+      data => {
+        this.data = data;
+        this.scheduleRender();
+        this.loadDashboard();
+      },
+      () => {}
+    );
+  }
 
   /**
    * Send a write through the repository. Falls back to resolving the payload
@@ -513,8 +638,18 @@ export class BusinessApp extends Component {
       aging:aging.map(x => ({k:x.k, v:money(x.v), w:(x.v / agMax * 100).toFixed(1) + '%', c:x.c})),
       low:[{n:'Ispahani TSP Fertilizer 50kg', d:'74 of 120 bags minimum', p:'62%'}, {n:'ACI Zinc Sulphate 1kg', d:'210 of 250 pcs minimum', p:'84%'},
         {n:'Onion — batch BC-2606-001', d:'14 MT, 73 days old, dead stock risk', p:'35%'}],
-      actions:[{l:'New Crop Purchase', id:'crop-purchase'}, {l:'New Crop Sale', id:'crop-sales'}, {l:'New Dealer Sale', id:'dealer-sales'}, {l:'New Dealer Purchase', id:'dealer-purchase'},
-        {l:'Receive Payment', id:'accounts'}, {l:'Pay Supplier', id:'accounts'}, {l:'Stock Transfer', id:'inventory'}, {l:'Add Expense', id:'accounts'}].map(a => ({l:a.l, onClick:this.go(a.id)})),
+      // The four money and stock actions now open their form directly instead
+      // of only landing the user on the screen that hosts it.
+      actions:[
+        {l:'New Crop Purchase', onClick:this.go('crop-purchase')},
+        {l:'New Crop Sale', onClick:this.go('crop-sales')},
+        {l:'New Dealer Sale', onClick:this.go('dealer-sales')},
+        {l:'New Dealer Purchase', onClick:this.go('dealer-purchase')},
+        {l:'Receive Payment', onClick:() => this.openForm('payment', {direction:'RECEIPT', partyType:'CUSTOMER'})},
+        {l:'Pay Supplier', onClick:() => this.openForm('payment', {direction:'PAYMENT', partyType:'SUPPLIER'})},
+        {l:'Stock Transfer', onClick:this.go('inventory')},
+        {l:'Add Expense', onClick:() => this.openForm('expense')}
+      ],
       recent:table([column('Reference'), column('Date'), column('Type'), column('Party'), column('Business'), column('Amount', 'right'), column('Status', 'center')],
         [['SC-2608-051', '26 Aug', 'Crop sale', 'City Group (Rice Unit)', 'crop', 2952000, 'Posted'],
          ['DS-2608-221', '28 Aug', 'Dealer sale', 'Nabin Krishi Bitan', 'dealer', 1328000, 'Pending approval'],
@@ -537,7 +672,8 @@ export class BusinessApp extends Component {
     rows.sort((a, b) => sort === 'value' ? b.val - a.val : sort === 'age' ? (b.age || 0) - (a.age || 0) : sort === 'qty' ? b.qty - a.qty : a.name.localeCompare(b.name));
     const mark = k => sort === k ? '  ↓' : '';
     const total = rows.reduce((t2, r) => t2 + r.val, 0);
-    return {tabs:[{k:'all', l:'All stock'}, {k:'crop', l:'Bulk crops'}, {k:'dealer', l:'Dealer products'}].map(x => ({l:x.l, on:x.k === t,
+    return {actions:[{l:'Adjust stock', onClick:() => this.openForm('adjustment')}],
+      tabs:[{k:'all', l:'All stock'}, {k:'crop', l:'Bulk crops'}, {k:'dealer', l:'Dealer products'}].map(x => ({l:x.l, on:x.k === t,
         bg:x.k === t ? '#fff' : 'transparent', color:x.k === t ? C.ink : C.mut, onClick:this.hs('invTab', x.k)})),
       kpis:[{k:'Total stock value', v:money(24360000), s:'across 4 warehouses'}, {k:'Bulk crop stock', v:'365 MT', s:money(18740000)}, {k:'Dealer product stock', v:'3,842 units', s:money(5620000)}, {k:'Low stock / dead stock', v:'3 items', s:'needs action'}],
       table:table([column('Item', 'left', {onClick:this.hs('invSort', 'name'), sortMark:mark('name')}), column('Type'), column('Warehouse'),
@@ -636,6 +772,11 @@ export class BusinessApp extends Component {
         cell(money(r[5]), {align:'right', mono:true, weight:'600'})]})), {footNote:'August 2026 expenses', footTotal:'Total ' + money(384100)});
     const pl = PROFIT_AND_LOSS;
     return {tabs:this.tabify([{k:'receivable', l:'Receivable'}, {k:'payable', l:'Payable'}, {k:'cash', l:'Cash & Bank'}, {k:'expense', l:'Expense'}, {k:'pl', l:'Profit & Loss'}], t, 'acctTab'),
+      actions:[
+        {l:'Receive payment', onClick:() => this.openForm('payment', {direction:'RECEIPT', partyType:'CUSTOMER'})},
+        {l:'Pay supplier', onClick:() => this.openForm('payment', {direction:'PAYMENT', partyType:'SUPPLIER'})},
+        {l:'Add expense', onClick:() => this.openForm('expense')}
+      ],
       isRec:t === 'receivable', isPay:t === 'payable', isCash:t === 'cash', isExp:t === 'expense', isPl:t === 'pl',
       rec:rec, pay:pay, cash:cash, exp:exp,
       kpis:[{k:'Total receivable', v:money(3100000), s:'৳12.4 L overdue'}, {k:'Total payable', v:money(4030000), s:'৳6.7 L due this week'},
@@ -898,6 +1039,7 @@ export class BusinessApp extends Component {
     const pendCount = S.approvals.filter(a => a.status === 'pending').length;
     const empSet = EMPLOYEES;
     return {
+      modal:buildModal(this),
       co:this.data.company, role:role, biz:S.biz, screen:S.screen, titleMain:title[0], titleSub:title[1], is:is,
       bizTabs:[{k:'all', l:'All business'}, {k:'dealer', l:'Dealer'}, {k:'crop', l:'Bulk Crop'}].map(x => ({l:x.l, on:x.k === S.biz,
         bg:x.k === S.biz ? '#fff' : 'transparent', color:x.k === S.biz ? C.ink : C.mut, sh:x.k === S.biz ? '0 1px 2px rgba(0,0,0,.08)' : 'none',

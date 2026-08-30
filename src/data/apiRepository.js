@@ -79,6 +79,10 @@ export class ApiRepository {
       ...data,
       nav: NAV,
       titles: TITLES,
+      // Name-to-id maps the forms need when posting: the screens select a
+      // warehouse by name, the API wants its id.
+      warehouseIds: context?.data?.warehouseIds || {},
+      cropIds: context?.data?.cropIds || {},
     };
   }
 
@@ -194,6 +198,41 @@ export class ApiRepository {
       action: 'POST',
     });
     return payload.data;
+  }
+
+  /** Record a receipt or a payment, with its invoice allocations. */
+  async createPayment(payment) {
+    const data = (await this.client.post('/payments', payment)).data;
+    return data;
+  }
+
+  /** Record an expense voucher. */
+  async createExpense(expense) {
+    return (await this.client.post('/expenses', expense)).data;
+  }
+
+  /** Record a stock adjustment; the server routes it for approval. */
+  async createStockAdjustment(adjustment) {
+    return (await this.client.post('/inventory/adjustments', adjustment)).data;
+  }
+
+  /** Open invoices for a party, so a payment can be allocated against them. */
+  async openInvoices(direction, partyType, partyId) {
+    const path = direction === 'RECEIPT' ? '/receivables' : '/payables';
+    const payload = await this.client.get(path, { pageSize: 100 });
+    return payload.data.filter(
+      (r) => r.partyType === partyType || partyId === undefined
+    );
+  }
+
+  /** Cash, bank and MFS accounts a payment can move through. */
+  async accounts() {
+    return (await this.client.get('/accounts')).data;
+  }
+
+  /** Configured payment methods. */
+  async paymentMethods() {
+    return (await this.client.get('/payment-methods')).data;
   }
 
   async decideApproval(requestNo, approved, comment) {

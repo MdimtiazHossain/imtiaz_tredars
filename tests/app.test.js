@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import appTemplate from '../src/templates/app.html?raw';
 import dataTableTemplate from '../src/templates/dataTable.html?raw';
+import formModalTemplate from '../src/templates/formModal.html?raw';
 import { BusinessApp } from '../src/app/logic.js';
 import { Repository } from '../src/data/repository.js';
 
@@ -14,7 +15,10 @@ async function mountApp(props = {}) {
     { role: 'Admin', showProfit: true, approvalLimit: 500000, repository, ...props },
     data
   );
-  app.mount(root, appTemplate, { DataTable: dataTableTemplate });
+  app.mount(root, appTemplate, {
+    DataTable: dataTableTemplate,
+    FormModal: formModalTemplate,
+  });
   return { app, root };
 }
 
@@ -464,5 +468,180 @@ describe('trend chart', () => {
     const { app } = await mountApp();
     expect(app.serverChart([])).toEqual([]);
     expect(app.serverChart(null)).toEqual([]);
+  });
+});
+
+describe('transaction forms', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it('opens the payment form seeded from the action that raised it', async () => {
+    const { app } = await mountApp();
+    app.openForm('payment', { direction: 'PAYMENT', partyType: 'SUPPLIER' });
+    expect(app.state.modal.kind).toBe('payment');
+    expect(app.state.modal.form.direction).toBe('PAYMENT');
+    expect(app.state.modal.form.party).toMatch(/^SUP-/);
+  });
+
+  it('renders the modal into the page when open', async () => {
+    const { app, root } = await mountApp();
+    expect(root.textContent).not.toContain('Record a payment');
+    app.openForm('payment');
+    flush(app);
+    expect(root.textContent).toContain('Record a payment');
+  });
+
+  it('closes on cancel without saving', async () => {
+    const { app } = await mountApp();
+    let saved = false;
+    app.repository.createPayment = async () => { saved = true; return {}; };
+    app.openForm('payment');
+    app.renderVals().modal.onCancel();
+    expect(app.state.modal).toBeNull();
+    expect(saved).toBe(false);
+  });
+
+  it('refuses a payment with no amount', async () => {
+    const { app } = await mountApp();
+    let called = false;
+    app.repository.createPayment = async () => { called = true; return {}; };
+    app.openForm('payment');
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(called).toBe(false);
+    expect(app.state.modal.error).toMatch(/amount/i);
+  });
+
+  it('refuses a stock adjustment with no reason', async () => {
+    const { app } = await mountApp();
+    app.openForm('adjustment');
+    app.setState({ modal: { ...app.state.modal, form: { ...app.state.modal.form, quantityDelta: -4 } } });
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(app.state.modal.error).toMatch(/reason/i);
+  });
+
+  it('refuses a stock adjustment of zero', async () => {
+    const { app } = await mountApp();
+    app.openForm('adjustment');
+    app.setState({
+      modal: { ...app.state.modal, form: { ...app.state.modal.form, quantityDelta: 0, reason: 'Recount' } },
+    });
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(app.state.modal.error).toMatch(/zero/i);
+  });
+
+  it('resets the party when the party type changes', async () => {
+    const { app } = await mountApp();
+    app.openForm('payment');
+    expect(app.state.modal.form.party).toMatch(/^CUS-/);
+    app.onFormField('partyType')({ target: { value: 'SUPPLIER' } });
+    expect(app.state.modal.form.party).toMatch(/^SUP-/);
+  });
+
+  it('resets the item when the stock kind changes', async () => {
+    const { app } = await mountApp();
+    app.openForm('adjustment');
+    expect(app.state.modal.form.item).toMatch(/^BC-/);
+    app.onFormField('itemType')({ target: { value: 'PRODUCT' } });
+    expect(app.state.modal.form.item).toMatch(/^P-/);
+  });
+
+  it('sends the payment the server expects and closes on success', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.createPayment = async (p) => {
+      sent.push(p);
+      return { txnNo: 'RC-9999-001' };
+    };
+
+    app.openForm('payment');
+    app.onFormField('amount')({ target: { value: '25000' } });
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ direction: 'RECEIPT', partyType: 'CUSTOMER', amount: 25000 });
+    expect(typeof sent[0].accountId).toBe('number');
+    expect(app.state.modal).toBeNull();
+    expect(app.state.toast.msg).toContain('RC-9999-001');
+  });
+
+  it('sends a shared expense as a null business type', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.createExpense = async (e) => { sent.push(e); return { txnNo: 'EXP-1' }; };
+
+    app.openForm('expense');
+    app.onFormField('amount')({ target: { value: '5000' } });
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 40));
+
+    // 'Shared' is the absence of a business line, not a third value.
+    expect(sent[0].businessType).toBeNull();
+    expect(sent[0].amount).toBe(5000);
+  });
+
+  it('reports an approval-routed adjustment rather than claiming it posted', async () => {
+    const { app } = await mountApp();
+    app.repository.createStockAdjustment = async () => ({
+      txnNo: 'ADJ-9999-001',
+      status: 'PENDING_APPROVAL',
+    });
+
+    app.openForm('adjustment');
+    app.setState({
+      modal: { ...app.state.modal, form: { ...app.state.modal.form, quantityDelta: -4, reason: 'Weight loss' } },
+    });
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(app.state.toast.msg).toMatch(/submitted for approval/);
+    expect(app.state.toast.tone).toBe('warn');
+  });
+
+  it('keeps the form open and shows the reason when the server refuses', async () => {
+    const { app } = await mountApp();
+    app.repository.createPayment = async () => {
+      throw new Error('Cannot allocate more than the balance outstanding.');
+    };
+
+    app.openForm('payment');
+    app.onFormField('amount')({ target: { value: '999999' } });
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(app.state.modal).not.toBeNull();
+    expect(app.state.modal.busy).toBe(false);
+    expect(app.state.modal.error).toContain('Cannot allocate');
+  });
+
+  it('names an overpayment as money on account, not a negative balance', async () => {
+    const { app } = await mountApp();
+    app.openForm('payment');
+    // Pay more than the selected customer actually owes.
+    const owed = app.data.customers[0].out;
+    app.onFormField('amount')({ target: { value: String(owed + 50000) } });
+    const summary = app.renderVals().modal.summary.map((r) => r.k);
+    expect(summary).toContain('Settled, leaving on account');
+    expect(summary).not.toContain('Outstanding after');
+  });
+
+  it('offers the actions on the screens that host them', async () => {
+    const { app, root } = await mountApp();
+
+    app.setState({ screen: 'accounts' });
+    flush(app);
+    const accountsButtons = [...root.querySelectorAll('.app-main button')].map((b) => b.textContent.trim());
+    expect(accountsButtons).toContain('Receive payment');
+    expect(accountsButtons).toContain('Pay supplier');
+    expect(accountsButtons).toContain('Add expense');
+
+    app.setState({ screen: 'inventory' });
+    flush(app);
+    const inventoryButtons = [...root.querySelectorAll('.app-main button')].map((b) => b.textContent.trim());
+    expect(inventoryButtons).toContain('Adjust stock');
   });
 });

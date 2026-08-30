@@ -1,6 +1,7 @@
 import './styles/app.css';
 import appTemplate from './templates/app.html?raw';
 import dataTableTemplate from './templates/dataTable.html?raw';
+import formModalTemplate from './templates/formModal.html?raw';
 import { BusinessApp } from './app/logic.js';
 import { createRepository } from './data/repository.js';
 import { ApiRepository } from './data/apiRepository.js';
@@ -85,7 +86,10 @@ async function mountApp(root, user) {
   root.replaceChildren();
 
   const app = new BusinessApp(readProps(user), data);
-  app.mount(root, appTemplate, { DataTable: dataTableTemplate });
+  app.mount(root, appTemplate, {
+    DataTable: dataTableTemplate,
+    FormModal: formModalTemplate,
+  });
   // Dashboard totals are aggregated server-side where the repository supports
   // it; this is a no-op against the in-memory repository.
   app.loadDashboard();

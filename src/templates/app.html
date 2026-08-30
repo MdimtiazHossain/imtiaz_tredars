@@ -775,6 +775,9 @@
               </sc-for>
             </div>
             <div style="display:flex;align-items:center;gap:9px">
+              <sc-for list="{{ inv.actions }}" as="a" hint-placeholder-count="1">
+                <button onClick="{{ a.onClick }}" style="border:1px solid #E3E0DA;background:#FBFAF8;border-radius:7px;padding:7px 12px;font-size:12.5px;font-weight:500;cursor:pointer" style-hover="border-color:#8A2233;color:#8A2233;background:#FBEEF0">{{ a.l }}</button>
+              </sc-for>
               <span style="font-size:12px;color:#8C877F">Valuation</span>
               <sc-for list="{{ valTabs }}" as="v" hint-placeholder-count="2">
                 <button onClick="{{ v.onClick }}" style="padding:7px 12px;border:1px solid {{ v.bd }};background:{{ v.bg }};color:{{ v.color }};border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer">{{ v.l }}</button>
@@ -1078,10 +1081,17 @@
               </div>
             </sc-for>
           </div>
-          <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px;align-self:flex-start">
-            <sc-for list="{{ acct.tabs }}" as="t" hint-placeholder-count="5">
-              <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
-            </sc-for>
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+            <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px">
+              <sc-for list="{{ acct.tabs }}" as="t" hint-placeholder-count="5">
+                <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
+              </sc-for>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+              <sc-for list="{{ acct.actions }}" as="a" hint-placeholder-count="3">
+                <button onClick="{{ a.onClick }}" style="border:1px solid #E3E0DA;background:#FBFAF8;border-radius:7px;padding:7px 12px;font-size:12.5px;font-weight:500;cursor:pointer" style-hover="border-color:#8A2233;color:#8A2233;background:#FBEEF0">{{ a.l }}</button>
+              </sc-for>
+            </div>
           </div>
           <sc-if value="{{ acct.isRec }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ acct.rec }}" hint-size="100%,380px"></dc-import></sc-if>
           <sc-if value="{{ acct.isPay }}"><dc-import name="DataTable" t="{{ acct.pay }}" hint-size="100%,340px"></dc-import></sc-if>
@@ -1384,6 +1394,7 @@
     </main>
   </div>
 </div>
+<dc-import name="FormModal" t="{{ modal }}" hint-size="620px,420px"></dc-import>
 <sc-if value="{{ toast }}">
   <div onClick="{{ onCloseToast }}" style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:80;display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:9px;background:{{ toastBg }};color:#fff;box-shadow:0 12px 34px rgba(26,24,23,.28);cursor:pointer;max-width:min(680px,92vw)">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" style="flex:none"><path d="M3 8.4l3 3 7-7.4"></path></svg>
