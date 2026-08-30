@@ -1028,8 +1028,14 @@ export class BusinessApp extends Component {
     ];
 
     if (profit) {
+      // The figure is each sale's own recorded profit, which already carries
+      // the transport and other selling cost booked against it -- the same
+      // number the batch profit report shows. Saying "sales less cost of
+      // goods" made it look like it should equal the profit and loss gross
+      // profit line, which is Tk 40,000 higher because that deducts selling
+      // cost lower down.
       out.push(tile('Gross Profit', profit.amount, 'margin ' + profit.marginPct.toFixed(1) + '%',
-        'sales less cost of goods', profit.amount >= 0));
+        'after cost of goods and selling cost', profit.amount >= 0));
     }
 
     out.push(

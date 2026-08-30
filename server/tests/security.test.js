@@ -127,7 +127,7 @@ suite('role permissions', () => {
 
   it('strips profit figures from a role without report.profit', async () => {
     const res = await request(app)
-      .get('/api/dashboard/dashboard')
+      .get('/api/reports/dashboard')
       .set('authorization', `Bearer ${tokens.Sales}`);
     expect(res.status).toBe(200);
     expect(res.body.data.grossProfit).toBeUndefined();
@@ -135,7 +135,7 @@ suite('role permissions', () => {
 
   it('includes profit figures for Accounts', async () => {
     const res = await request(app)
-      .get('/api/dashboard/dashboard')
+      .get('/api/reports/dashboard')
       .set('authorization', `Bearer ${tokens.Accounts}`);
     expect(res.body.data.grossProfit).toBeDefined();
   });
@@ -752,6 +752,21 @@ suite('master data', () => {
     // total can differ from a rounded grand total by a paisa or two.
     const shown = held.reduce((t, p) => t + p.value, 0);
     expect(Math.round(shown)).toBe(Math.round(Number(rows[0].value)));
+  });
+
+  it('reconciles the dashboard profit with the profit and loss', async () => {
+    const dash = await asAdmin('get', '/api/reports/dashboard');
+    const pl = await asAdmin('get', '/api/reports/fin-pl');
+
+    const line = (match) =>
+      Number((pl.body.data.rows.find((r) => match.test(r.line)) || {}).amount || 0);
+
+    // The dashboard shows each sale's own recorded profit, which already
+    // carries the selling cost booked against it. The profit and loss deducts
+    // that lower down, so its gross profit is higher by exactly that much.
+    const gross = line(/^Gross profit/);
+    const selling = line(/^Selling expense/);
+    expect(Math.round(dash.body.data.grossProfit.amount)).toBe(Math.round(gross + selling));
   });
 
   it('lists crops with what each one is holding', async () => {

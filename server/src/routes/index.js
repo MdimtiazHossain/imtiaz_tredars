@@ -31,8 +31,6 @@ router.use('/inventory', inventoryRoutes);
 router.use('/', financeRoutes);
 router.use('/approvals', approvalRoutes);
 router.use('/reports', reportRoutes);
-// The dashboard is one of the report aggregates; expose it at its own path too.
-router.use('/dashboard', reportRoutes);
 router.use('/audit', auditRoutes);
 
 export default router;

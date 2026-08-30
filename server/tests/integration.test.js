@@ -263,6 +263,40 @@ suite('posting integrity', () => {
     expect(num(after.rows[0].qty)).toBeGreaterThanOrEqual(0);
   });
 
+  it('keeps numbering documents past 999 in a period', async () => {
+    // lpad truncates as well as pads, so a padding of 3 turned the 1000th
+    // document into the number the 100th already had, and the unique
+    // constraint refused the insert. Every purchase and sale line writes stock
+    // movements, so a month of ordinary trading reaches 999.
+    const period = '2612';
+    await query(
+      `INSERT INTO document_sequences (org_id, doc_type, prefix, period, next_value, padding)
+       VALUES ($1, 'probe', 'PRB', $2, 998, 3)
+       ON CONFLICT (org_id, doc_type, period)
+       DO UPDATE SET next_value = 998`,
+      [ctx.orgId, period]
+    );
+
+    const { rows } = await query(
+      `SELECT next_document_no($1, 'probe', 'PRB', $2, 3) AS no FROM generate_series(1, 4)`,
+      [ctx.orgId, period]
+    );
+
+    expect(rows.map((r) => r.no)).toEqual([
+      'PRB-2612-998',
+      'PRB-2612-999',
+      'PRB-2612-1000',
+      'PRB-2612-1001',
+    ]);
+    // Distinct is the point: the wrap produced repeats, which is what the
+    // unique constraint was catching.
+    expect(new Set(rows.map((r) => r.no)).size).toBe(4);
+
+    await query("DELETE FROM document_sequences WHERE doc_type = 'probe' AND org_id = $1", [
+      ctx.orgId,
+    ]);
+  });
+
   it('routes a purchase over the limit to approval instead of posting it', async () => {
     const result = await withTransaction((client) =>
       createCropPurchase(client, { ...ctx, input: purchaseInput(1000, 5000) })

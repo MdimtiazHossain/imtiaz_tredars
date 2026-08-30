@@ -331,7 +331,7 @@ export class ApiRepository {
    */
   async dashboard(businessType = 'ALL') {
     const today = new Date().toISOString().slice(0, 10);
-    const get = (params) => this.client.get('/dashboard/dashboard', params);
+    const get = (params) => this.client.get('/reports/dashboard', params);
 
     // Four small aggregates rather than one: the selected filter drives the
     // tiles, today drives the first tile, and the two business lines fill the
