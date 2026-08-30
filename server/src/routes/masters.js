@@ -298,7 +298,12 @@ router.get(
       `SELECT p.id, p.code, p.name, pc.name AS category, b.name AS brand, u.code AS unit,
               p.purchase_rate, p.sale_rate, p.min_stock,
               COALESCE((SELECT SUM(s.quantity) FROM stock s
-                         WHERE s.product_id = p.id AND s.item_type = 'PRODUCT'), 0) AS stock
+                         WHERE s.product_id = p.id AND s.item_type = 'PRODUCT'), 0) AS stock,
+              -- What the stock is actually carried at. The catalogue purchase
+              -- rate is what the next one should cost, not what these cost, so
+              -- valuing at it disagrees with every other stock figure.
+              COALESCE((SELECT ROUND(SUM(s.quantity * s.avg_cost), 2) FROM stock s
+                         WHERE s.product_id = p.id AND s.item_type = 'PRODUCT'), 0) AS value
          FROM products p
          LEFT JOIN product_categories pc ON pc.id = p.category_id
          LEFT JOIN brands b ON b.id = p.brand_id
@@ -319,6 +324,7 @@ router.get(
         brand: r.brand || '',
         unit: r.unit,
         stock: num(r.stock),
+        value: num(r.value),
         pur: num(r.purchase_rate),
         sale: num(r.sale_rate),
         min: num(r.min_stock),

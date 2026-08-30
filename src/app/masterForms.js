@@ -61,6 +61,11 @@ const TITLES = {
   method: ['payment method', 'How money is taken in and paid out'],
 };
 
+/** What one record of this kind is called, for a title or a message. */
+export function nounFor(kind) {
+  return (TITLES[kind] || [kind])[0];
+}
+
 /** The empty form for a new record, or the values of the one being edited. */
 export function defaultsFor(kind, data, row) {
   const districts = optionsFrom(

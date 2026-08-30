@@ -24,6 +24,7 @@ import {
   validate as validateMaster,
   payloadFor as masterPayload,
   buildMasterModal,
+  nounFor,
 } from './masterForms.js';
 import {
   DASHBOARD_KPIS,
@@ -217,6 +218,19 @@ export class BusinessApp extends Component {
   }
 
   /** Which repository method each form posts to. */
+  /**
+   * Master kinds whose permission code is not just the kind name.
+   *
+   * Expense categories and payment methods sit under the modules that own
+   * them rather than holding a top-level code, so the check has to say so --
+   * looking for `method.edit` when the code is `payment.method.edit` silently
+   * hides every control.
+   */
+  static PERMISSION_PREFIX = {
+    category: 'expense.category',
+    method: 'payment.method',
+  };
+
   static FORM_METHOD = {
     payment: 'createPayment',
     expense: 'createExpense',
@@ -419,10 +433,7 @@ export class BusinessApp extends Component {
    */
   mayMaster(kind, action) {
     const held = this.props.permissions;
-    // Expense categories sit under the expense module rather than owning a
-    // top-level code of their own.
-    const prefix = kind === 'category' ? 'expense.category' : kind;
-    return !held ? true : held.indexOf(`${prefix}.${action}`) > -1;
+    return !held ? true : held.indexOf(`${BusinessApp.PERMISSION_PREFIX[kind] || kind}.${action}`) > -1;
   }
 
   /** The add / edit / retire controls for one master screen. */
@@ -578,7 +589,11 @@ export class BusinessApp extends Component {
           emptyNote: 'Add the first product and it becomes available to buy and sell.',
           footNote: active.length + (active.length === 1 ? ' product' : ' products')
             + (low.length ? ' · ' + low.length + ' below minimum' : ''),
-          footTotal: 'Stock value ' + money(active.reduce((t, p) => t + p.stock * p.pur, 0)),
+          // The carrying value where the server reports it, so this agrees with
+          // the warehouses screen and the dashboard; the fixture has no
+          // average cost, so it falls back to the catalogue rate.
+          footTotal: 'Stock value '
+            + money(active.reduce((t, p) => t + (p.value ?? p.stock * p.pur), 0)),
         }
       ),
     };
@@ -635,7 +650,8 @@ export class BusinessApp extends Component {
   /** The open master modal: the add/edit form, or the retire confirmation. */
   masterModal() {
     const state = this.state.master;
-    const noun = state.kind;
+    // The noun, not the kind: "Retire payment method", not "Retire method".
+    const noun = nounFor(state.kind);
 
     if (state.confirm) {
       return formModalOf({
@@ -1248,13 +1264,20 @@ export class BusinessApp extends Component {
     // Everything the accounts screen states is derived from these three lists,
     // so a KPI cannot drift from the table underneath it.
     const owing = this.data.customers.filter(c => c.out > 0);
+    // A company balance is signed: negative is money owed to us. Crop sales go
+    // to buyer companies rather than customers, so leaving them out made the
+    // receivable read zero while the dashboard counted them.
+    const owingCompanies = this.data.companies.filter(c => c.bal < 0);
     const owedSuppliers = this.data.suppliers.filter(x => x.out > 0);
     const owedCompanies = this.data.companies.filter(c => c.bal > 0);
-    const receivableTotal = owing.reduce((x, c) => x + c.out, 0);
+    const receivableTotal =
+      owing.reduce((x, c) => x + c.out, 0) + owingCompanies.reduce((x, c) => x - c.bal, 0);
+    // Only customers carry aging buckets; a company balance has no age here.
     const overdue = owing.reduce((x, c) => x + (c.b60 || 0) + (c.b90 || 0) + (c.b90p || 0), 0);
     const payableTotal =
       owedSuppliers.reduce((x, y) => x + y.out, 0) + owedCompanies.reduce((x, y) => x + y.bal, 0);
     const owedParties = owedSuppliers.length + owedCompanies.length;
+    const owingParties = owing.length + owingCompanies.length;
     const pl = PROFIT_AND_LOSS;
     const netProfit = (pl.find(x => /net profit/i.test(x.k)) || {}).v || 0;
     // The total, not the first line that happens to say "Sales" -- margin
@@ -1268,9 +1291,19 @@ export class BusinessApp extends Component {
         cell(money(c.b90), {align:'right', mono:true, color:c.b90 ? '#C4720F' : C.mut}),
         cell(money(c.b90p), {align:'right', mono:true, color:c.b90p ? C.dngr : C.mut, weight:c.b90p ? '600' : '400'}),
         cell(money(c.out), {align:'right', mono:true, weight:'700'}),
-        cell('Collect', {align:'center', badge:true, badgeBg:C.accBg, badgeFg:C.acc})]})),
-      {footNote:owing.length + (owing.length === 1 ? ' customer' : ' customers') + ' with open balance',
-       footTotal:'Receivable ' + money(owing.reduce((x, c) => x + c.out, 0))});
+        cell('Collect', {align:'center', badge:true, badgeBg:C.accBg, badgeFg:C.acc})]}))
+        // Buyer companies owe against crop sales. They carry no aging buckets,
+        // so those columns read as dashes rather than as zeroes.
+        .concat(owingCompanies.map(c => ({cells:[
+          cell(c.name, {weight:'600', sub:c.district}),
+          cell('Buyer company', {badge:true, badgeBg:C.cropBg, badgeFg:C.crop}),
+          cell(c.limit ? money(c.limit) : '—', {align:'right', mono:true, color:C.mut}),
+          cell('—', {align:'right', color:C.mut}), cell('—', {align:'right', color:C.mut}),
+          cell('—', {align:'right', color:C.mut}), cell('—', {align:'right', color:C.mut}),
+          cell(money(-c.bal), {align:'right', mono:true, weight:'700'}),
+          cell('Collect', {align:'center', badge:true, badgeBg:C.accBg, badgeFg:C.acc})]}))),
+      {footNote:owingParties + (owingParties === 1 ? ' party' : ' parties') + ' with open balance',
+       footTotal:'Receivable ' + money(receivableTotal)});
     const pay = table([column('Party'), column('Kind'), column('Bill / reference'), column('Due date'), column('Outstanding', 'right'), column('', 'center')],
       owedSuppliers.map(s => ({cells:[cell(s.name, {weight:'600', sub:s.district}), cell('Farmer / supplier', {badge:true, badgeBg:C.cropBg, badgeFg:C.crop}),
         cell('PC balance', {color:C.mut}), cell('30 Aug 2026', {color:C.mut}), cell(money(s.out), {align:'right', mono:true, weight:'700'}),

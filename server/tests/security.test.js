@@ -736,6 +736,24 @@ suite('master data', () => {
     await query('DELETE FROM payment_methods WHERE id = $1', [id]);
   });
 
+  it('values product stock at what it is carried at, not the catalogue rate', async () => {
+    const res = await asAdmin('get', '/api/products?pageSize=50');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const held = res.body.data.filter((p) => p.stock > 0);
+    expect(held.length).toBeGreaterThan(0);
+
+    // Every stock figure in the app has to agree, so products are valued the
+    // same way the warehouse and dashboard totals are.
+    const { rows } = await query(
+      `SELECT ROUND(SUM(quantity * avg_cost), 2) AS value
+         FROM stock WHERE item_type = 'PRODUCT'`
+    );
+    // Each product's value is rounded to paisa before being summed, so the
+    // total can differ from a rounded grand total by a paisa or two.
+    const shown = held.reduce((t, p) => t + p.value, 0);
+    expect(Math.round(shown)).toBe(Math.round(Number(rows[0].value)));
+  });
+
   it('lists crops with what each one is holding', async () => {
     const res = await asAdmin('get', '/api/crops?pageSize=50');
     expect(res.status).toBe(200);

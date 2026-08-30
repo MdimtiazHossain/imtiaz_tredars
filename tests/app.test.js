@@ -4,6 +4,7 @@ import dataTableTemplate from '../src/templates/dataTable.html?raw';
 import formModalTemplate from '../src/templates/formModal.html?raw';
 import { BusinessApp } from '../src/app/logic.js';
 import { Repository } from '../src/data/repository.js';
+import { money } from '../src/domain/format.js';
 
 /** Mount the real design templates against the real screen logic. */
 async function mountApp(props = {}) {
@@ -1199,12 +1200,32 @@ describe('master data', () => {
     expect(app.state.toast.msg).toContain('EXP-01');
   });
 
-  it('reads the category permission from the expense module', async () => {
-    // The code is expense.category.create, not category.create.
-    const { app } = await mountApp({ permissions: ['expense.category.create'] });
+  it('reads permissions from the module that owns each master', async () => {
+    // Two kinds do not own a top-level code: expense.category.* and
+    // payment.method.*. Checking `category.create` or `method.edit` finds
+    // nothing and silently hides every control on those screens.
+    const { app } = await mountApp({
+      permissions: ['expense.category.create', 'payment.method.edit', 'crop.create'],
+    });
     expect(app.mayMaster('category', 'create')).toBe(true);
     expect(app.mayMaster('category', 'delete')).toBe(false);
+    expect(app.mayMaster('method', 'edit')).toBe(true);
+    expect(app.mayMaster('method', 'create')).toBe(false);
+    expect(app.mayMaster('crop', 'create')).toBe(true);
     expect(app.mayMaster('account', 'create')).toBe(false);
+  });
+
+  it('shows the payment method controls to a user who holds the codes', async () => {
+    const { app } = await mountApp({
+      permissions: ['payment.method.create', 'payment.method.edit', 'payment.method.delete'],
+    });
+    app.loadMasterList('method');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const vals = app.renderVals();
+    expect(vals.addMethod.canAdd).toBe(true);
+    expect(vals.setPay[0].canEdit).toBe(true);
+    expect(vals.setPay[0].canToggle).toBe(true);
   });
 
   it('renders payment methods from data, with a switch that does something', async () => {
@@ -1290,13 +1311,31 @@ describe('derived figures', () => {
     expect(vals.acct.rec.footTotal).toContain(kpi);
   });
 
-  it('counts the customers it actually lists', async () => {
+  it('counts the parties it actually lists', async () => {
     const { app } = await mountApp();
     const acct = app.renderVals().acct;
     const listed = acct.rec.rows.length;
     expect(acct.rec.footNote).toBe(
-      listed + (listed === 1 ? ' customer' : ' customers') + ' with open balance'
+      listed + (listed === 1 ? ' party' : ' parties') + ' with open balance'
     );
+  });
+
+  it('counts money owed by buyer companies as receivable, not only customers', async () => {
+    const { app } = await mountApp();
+    // Crop sales go to buyer companies rather than customers, so a receivable
+    // built from customers alone reads zero while the money is genuinely owed.
+    const owed = app.data.companies.filter((c) => c.bal < 0);
+    expect(owed.length).toBeGreaterThan(0);
+
+    const acct = app.renderVals().acct;
+    const expected = owed.reduce((t, c) => t - c.bal, 0)
+      + app.data.customers.filter((c) => c.out > 0).reduce((t, c) => t + c.out, 0);
+
+    expect(acct.rec.rows).toHaveLength(
+      app.data.customers.filter((c) => c.out > 0).length + owed.length
+    );
+    expect(acct.rec.footTotal).toContain(money(expected));
+    expect(acct.kpis.find((k) => k.k === 'Total receivable').v).toBe(money(expected));
   });
 
   it('totals the cash accounts it shows rather than repeating a number', async () => {
