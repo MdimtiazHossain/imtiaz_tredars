@@ -599,9 +599,126 @@ export class BusinessApp extends Component {
         color:x.good ? C.crop : x.v < 0 ? '#3D3A36' : C.ink, bg:x.bold ? '#FAF9F7' : '#fff'}))};
   }
 
+  /**
+   * Load the list of reports the server can serve.
+   *
+   * The bundled catalogue lists every report the design drew; a given backend
+   * may implement fewer. Listing only what can actually be produced is better
+   * than offering a menu item that answers with an empty table.
+   */
+  loadReportCatalogue() {
+    if (!this.repository || typeof this.repository.reportCatalogue !== 'function') return;
+    this.repository.reportCatalogue().then(
+      groups => this.setState({ reportCatalogue: groups }),
+      () => {}
+    );
+  }
+
+  /** Report page size; the server pages, this is only what we ask for. */
+  static REPORT_PAGE_SIZE = 25;
+
+  /**
+   * Select a report and load it.
+   *
+   * Against the API the rows are aggregated and paged in SQL, so the browser
+   * only ever holds one page. With the in-memory repository there is no
+   * `report` method, so the bundled definitions are used and the original
+   * simulated delay is kept -- which is what the existing tests exercise.
+   */
+  selectReport(reportId, page = 0) {
+    this.setState({ repSel: reportId, repPage: page, repLoading: true });
+
+    if (!this.repository || typeof this.repository.report !== 'function') {
+      clearTimeout(this._r);
+      this._r = setTimeout(() => this.setState({ repLoading: false }), 550);
+      return;
+    }
+
+    const biz = this.state.biz;
+    this.repository
+      .report(reportId, {
+        businessType: biz === 'dealer' ? 'DEALER' : biz === 'crop' ? 'BULK_CROP' : 'ALL',
+        page: page + 1,
+        pageSize: BusinessApp.REPORT_PAGE_SIZE,
+      })
+      .then(
+        result => {
+          // Ignore a response for a report the user has since navigated away from.
+          if (this.state.repSel !== reportId) return;
+          this.setState({ serverReport: { id: reportId, ...result }, repLoading: false });
+        },
+        err => {
+          if (this.state.repSel !== reportId) return;
+          this.setState({ serverReport: null, repLoading: false, repError: err.message });
+        }
+      );
+  }
+
+  /**
+   * Build a DataTable from a server report.
+   *
+   * The server describes each column's type, so money is right-aligned and
+   * monospaced, counts are formatted as integers and codes keep the mono face
+   * -- without the client guessing from the value, which would read a rate of
+   * 30500 the same way it reads a quantity.
+   */
+  serverReportTable(report) {
+    const numeric = t => t === 'money' || t === 'number' || t === 'percent';
+    const lastIndex = report.columns.length - 1;
+
+    const cols = report.columns.map(c => column(c.label, numeric(c.type) ? 'right' : 'left'));
+
+    const rows = report.rows.map(r => ({
+      cells: report.columns.map((c, i) => {
+        const v = r[c.key];
+        const emphasis = i === lastIndex;
+
+        if (c.type === 'money') {
+          const n = Number(v) || 0;
+          return cell(money(n), {align:'right', mono:true,
+            weight:emphasis ? '700' : '400',
+            color:n < 0 ? C.dngr : emphasis ? C.crop : C.ink});
+        }
+        if (c.type === 'number') return cell(int(v), {align:'right', mono:true});
+        if (c.type === 'percent') return cell((Number(v) || 0).toFixed(1) + '%', {align:'right', mono:true});
+        if (c.type === 'code') return cell(v == null ? '—' : String(v), {mono:true, weight:'600'});
+        return cell(v == null || v === '' ? '—' : String(v),
+          i === 0 ? {weight:'600'} : {color:C.mut});
+      })
+    }));
+
+    // The server returns one totals figure per report; show it in the footer.
+    const totalKey = report.totals ? Object.keys(report.totals)[0] : null;
+    const meta = report.meta || {};
+    const size = BusinessApp.REPORT_PAGE_SIZE;
+
+    return table(cols, rows, {
+      footNote:(meta.total ?? rows.length) + ' rows',
+      footTotal:totalKey
+        ? totalKey.charAt(0).toUpperCase() + totalKey.slice(1) + ' ' + money(report.totals[totalKey])
+        : '',
+      maxH:'420px',
+      emptyTitle:'No rows for this report',
+      emptyNote:'Nothing matches the current period and business type.',
+      page:meta.totalPages > 1 ? {
+        index:this.state.repPage || 0,
+        size:size,
+        total:meta.total,
+        server:true,
+        onPrev:() => this.selectReport(report.id, (this.state.repPage || 0) - 1),
+        onNext:() => this.selectReport(report.id, (this.state.repPage || 0) + 1)
+      } : null
+    });
+  }
+
   rep() {
     const S = this.state;
-    const groups = REPORT_GROUPS;
+    // The server's catalogue wins when there is one, so the sidebar lists only
+    // reports that can actually be produced.
+    const groups = (S.reportCatalogue || REPORT_GROUPS).map(g => ({
+      g: g.g || g.group,
+      items: (g.items || []).map(i => (Array.isArray(i) ? i : [i.id, i.label]))
+    }));
     const defs = {
       'crop-batch-profit':{title:'Batch-wise crop profit', note:'August 2026 · all warehouses · bulk crop only',
         t:table([column('Batch'), column('Crop'), column('Supplier'), column('Purchased', 'right'), column('Sold', 'right'), column('Landed cost', 'right'), column('Avg sale rate', 'right'), column('Profit / MT', 'right'), column('Total profit', 'right')],
@@ -628,14 +745,20 @@ export class BusinessApp extends Component {
             cell(money(s.paid), {align:'right', mono:true, color:C.crop}), cell(money(s.out), {align:'right', mono:true, weight:'600', color:s.out ? C.dngr : C.mut})]})),
           {footNote:'5 suppliers', footTotal:'Purchase ' + money(33510000)})}
     };
-    const cur = defs[S.repSel];
+    const server = S.serverReport && S.serverReport.id === S.repSel ? S.serverReport : null;
+    const cur = server
+      ? {title:null, note:null, t:this.serverReportTable(server)}
+      : defs[S.repSel];
     const flat = []; groups.forEach(g => g.items.forEach(i => flat.push({id:i[0], l:i[1]})));
     const curLabel = (flat.filter(f => f.id === S.repSel)[0] || {l:''}).l;
     return {groups:groups.map(g => ({g:g.g, items:g.items.map(i => ({l:i[1], on:i[0] === S.repSel, bg:i[0] === S.repSel ? C.accBg : 'transparent',
       color:i[0] === S.repSel ? C.acc : '#3D3A36', weight:i[0] === S.repSel ? '600' : '400',
-      onClick:() => { this.setState({repSel:i[0], repLoading:true}); clearTimeout(this._r); this._r = setTimeout(() => this.setState({repLoading:false}), 550); }}))})),
+      onClick:() => this.selectReport(i[0])}))})),
       loading:S.repLoading, has:!!cur && !S.repLoading, none:!cur && !S.repLoading,
-      title:cur ? cur.title : curLabel, note:cur ? cur.note : 'This report is wired to the same filter engine but has no seeded rows in the prototype.',
+      title:cur && cur.title ? cur.title : curLabel,
+      note:cur
+        ? cur.note || (server ? 'Aggregated by the server for the selected period and business type.' : '')
+        : 'This report is wired to the same filter engine but has no seeded rows in the prototype.',
       t:cur ? cur.t : table([], []), curLabel:curLabel,
       onExport:() => this.fire(curLabel + ' exported to Excel (.xlsx)', 'ok'), onPdf:() => this.fire(curLabel + ' exported to PDF', 'ok')};
   }

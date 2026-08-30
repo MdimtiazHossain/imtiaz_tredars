@@ -17,6 +17,20 @@ import { forbidden, notFound } from '../lib/errors.js';
  */
 const router = Router();
 
+/**
+ * Column descriptor.
+ *
+ * A report says what each column *is* — money, a count, a percentage — and the
+ * client renders accordingly. Without this the browser would have to guess
+ * from the value, which gets a quantity of 30500 wrong as often as it gets it
+ * right.
+ *
+ * @param {string} key    property on each row
+ * @param {string} label  header text
+ * @param {'text'|'code'|'money'|'number'|'percent'} [type='text']
+ */
+const col = (key, label, type = 'text') => ({ key, label, type });
+
 /** Shared filter shape across every report. */
 const reportQuery = listQuerySchema.extend({
   warehouseId: z.coerce.number().int().positive().optional(),
@@ -211,26 +225,11 @@ router.get(
 
 /* ------------------------------------------------------------------ reports */
 
-/** Catalogue the Reports Centre lists in its sidebar. */
-const CATALOGUE = [
-  { group: 'Sales', items: [['sales-daily', 'Daily sales'], ['sales-monthly', 'Monthly sales'], ['sales-customer', 'Customer-wise sales'], ['sales-product', 'Product-wise sales']] },
-  { group: 'Purchase', items: [['pur-supplier', 'Supplier-wise purchase'], ['pur-company', 'Company-wise purchase']] },
-  { group: 'Inventory', items: [['inv-current', 'Current stock'], ['inv-dead', 'Dead stock']] },
-  { group: 'Profit', items: [['crop-batch-profit', 'Batch-wise crop profit'], ['profit-product', 'Product-wise profit'], ['profit-monthly', 'Monthly profit']] },
-  { group: 'Finance', items: [['fin-aging', 'Customer outstanding & aging'], ['fin-cashbook', 'Cash book'], ['fin-expense', 'Expense register']] },
-];
-
-router.get(
-  '/catalogue',
-  requirePermission('report.view'),
-  handler(async (_req, res) => {
-    ok(res, CATALOGUE.map((g) => ({ group: g.group, items: g.items.map(([id, label]) => ({ id, label })) })));
-  })
-);
-
 /** Report definitions: each returns { columns, rows, totals }. */
 const REPORTS = {
   'sales-customer': {
+    group: 'Sales',
+    label: 'Customer-wise sales',
     permission: 'report.view',
     async run(req, q) {
       const params = [req.orgId];
@@ -246,7 +245,13 @@ const REPORTS = {
         params
       );
       return {
-        columns: ['Customer', 'District', 'Invoices', 'Sales', 'Profit'],
+        columns: [
+          col('customer', 'Customer'),
+          col('district', 'District'),
+          col('invoices', 'Invoices', 'number'),
+          col('sales', 'Sales', 'money'),
+          col('profit', 'Profit', 'money'),
+        ],
         rows: rows.map((r) => ({
           customer: r.customer,
           district: r.district,
@@ -260,6 +265,8 @@ const REPORTS = {
   },
 
   'sales-product': {
+    group: 'Sales',
+    label: 'Product-wise sales',
     permission: 'report.view',
     async run(req, q) {
       const params = [req.orgId];
@@ -279,7 +286,15 @@ const REPORTS = {
         params
       );
       return {
-        columns: ['Product', 'Category', 'Qty sold', 'Sales', 'Cost', 'Profit', 'Margin'],
+        columns: [
+          col('product', 'Product'),
+          col('category', 'Category'),
+          col('qty', 'Qty sold', 'number'),
+          col('sales', 'Sales', 'money'),
+          col('cost', 'Cost', 'money'),
+          col('profit', 'Profit', 'money'),
+          col('marginPct', 'Margin', 'percent'),
+        ],
         rows: rows.map((r) => {
           const sales = num(r.sales);
           const cost = num(r.cost);
@@ -299,6 +314,8 @@ const REPORTS = {
   },
 
   'pur-supplier': {
+    group: 'Purchase',
+    label: 'Supplier-wise purchase',
     permission: 'report.view',
     async run(req, q) {
       const params = [req.orgId];
@@ -317,7 +334,14 @@ const REPORTS = {
         params
       );
       return {
-        columns: ['Supplier', 'Type', 'District', 'Purchase value', 'Paid', 'Outstanding'],
+        columns: [
+          col('supplier', 'Supplier'),
+          col('type', 'Type'),
+          col('district', 'District'),
+          col('purchase', 'Purchase value', 'money'),
+          col('paid', 'Paid', 'money'),
+          col('outstanding', 'Outstanding', 'money'),
+        ],
         rows: rows.map((r) => ({
           supplier: r.supplier,
           type: r.supplier_type,
@@ -332,6 +356,8 @@ const REPORTS = {
   },
 
   'crop-batch-profit': {
+    group: 'Profit',
+    label: 'Batch-wise crop profit',
     permission: 'report.profit',
     async run(req) {
       const { rows } = await query(
@@ -351,7 +377,16 @@ const REPORTS = {
         [req.orgId]
       );
       return {
-        columns: ['Batch', 'Crop', 'Supplier', 'Purchased', 'Sold', 'Landed cost', 'Revenue', 'Profit'],
+        columns: [
+          col('batch', 'Batch', 'code'),
+          col('crop', 'Crop'),
+          col('supplier', 'Supplier'),
+          col('purchased', 'Purchased', 'number'),
+          col('sold', 'Sold', 'number'),
+          col('landedCost', 'Landed cost', 'money'),
+          col('revenue', 'Revenue', 'money'),
+          col('profit', 'Profit', 'money'),
+        ],
         rows: rows.map((r) => {
           const revenue = num(r.revenue);
           const cogs = num(r.cogs);
@@ -375,6 +410,8 @@ const REPORTS = {
   },
 
   'fin-aging': {
+    group: 'Finance',
+    label: 'Customer outstanding & aging',
     permission: 'report.view',
     async run(req, q) {
       const bt = q.businessType === 'ALL' ? null : q.businessType;
@@ -397,7 +434,17 @@ const REPORTS = {
         [req.orgId, bt]
       );
       return {
-        columns: ['Party', 'Type', 'Credit limit', '0–30', '31–60', '61–90', '91–120', '120+', 'Total due'],
+        columns: [
+          col('party', 'Party'),
+          col('type', 'Type'),
+          col('creditLimit', 'Credit limit', 'money'),
+          col('b0', '0–30', 'money'),
+          col('b31', '31–60', 'money'),
+          col('b61', '61–90', 'money'),
+          col('b91', '91–120', 'money'),
+          col('b120', '120+', 'money'),
+          col('total', 'Total due', 'money'),
+        ],
         rows: rows.map((r) => ({
           party: r.party,
           type: r.type,
@@ -415,6 +462,8 @@ const REPORTS = {
   },
 
   'inv-dead': {
+    group: 'Inventory',
+    label: 'Dead stock',
     permission: 'report.view',
     async run(req) {
       const { rows } = await query(
@@ -429,7 +478,15 @@ const REPORTS = {
         [req.orgId]
       );
       return {
-        columns: ['Batch', 'Crop', 'Warehouse', 'Remaining', 'Cost/unit', 'Age (days)', 'Value'],
+        columns: [
+          col('batch', 'Batch', 'code'),
+          col('crop', 'Crop'),
+          col('warehouse', 'Warehouse'),
+          col('remaining', 'Remaining', 'number'),
+          col('costPerUnit', 'Cost/unit', 'money'),
+          col('ageDays', 'Age (days)', 'number'),
+          col('value', 'Value', 'money'),
+        ],
         rows: rows.map((r) => ({
           batch: r.batch_no,
           crop: r.crop,
@@ -450,6 +507,8 @@ const REPORTS = {
   },
 
   'fin-expense': {
+    group: 'Finance',
+    label: 'Expense register',
     permission: 'expense.view',
     async run(req, q) {
       const params = [req.orgId];
@@ -464,7 +523,12 @@ const REPORTS = {
         params
       );
       return {
-        columns: ['Category', 'Business', 'Vouchers', 'Amount'],
+        columns: [
+          col('category', 'Category'),
+          col('businessType', 'Business'),
+          col('vouchers', 'Vouchers', 'number'),
+          col('amount', 'Amount', 'money'),
+        ],
         rows: rows.map((r) => ({
           category: r.category,
           businessType: r.business_type || 'Shared',
@@ -476,6 +540,32 @@ const REPORTS = {
     },
   },
 };
+
+/**
+ * The catalogue is derived from the definitions rather than maintained
+ * alongside them: a hand-written list drifts, and advertising a report the
+ * server cannot produce is worse than not listing it.
+ */
+function buildCatalogue(user) {
+  const groups = new Map();
+
+  for (const [id, def] of Object.entries(REPORTS)) {
+    // Do not offer a report this user would be refused.
+    if (def.permission && !user.permissions.includes(def.permission)) continue;
+    if (!groups.has(def.group)) groups.set(def.group, []);
+    groups.get(def.group).push({ id, label: def.label });
+  }
+
+  return [...groups.entries()].map(([group, items]) => ({ group, items }));
+}
+
+router.get(
+  '/catalogue',
+  requirePermission('report.view'),
+  handler(async (req, res) => {
+    ok(res, buildCatalogue(req.user));
+  })
+);
 
 router.get(
   '/:reportId',

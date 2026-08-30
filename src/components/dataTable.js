@@ -98,7 +98,10 @@ function normaliseRow(row, index, options) {
  * @param {Set}     [o.selected]     currently selected row ids
  * @param {Function}[o.onSelect]     called with a row id when toggled
  * @param {Function}[o.onSelectAll]
- * @param {object}  [o.page]         `{index, size, total, onPrev, onNext}`
+ * @param {object}  [o.page]         `{index, size, onPrev, onNext}`; add
+ *                                   `total` and `server: true` when the rows
+ *                                   passed in are already one page from a
+ *                                   server, so they are not sliced again
  * @param {'comfortable'|'compact'} [o.density='comfortable']
  */
 export function table(cols, rows, o) {
@@ -110,9 +113,13 @@ export function table(cols, rows, o) {
   );
 
   const page = o.page || null;
-  const visible = page
-    ? all.slice(page.index * page.size, page.index * page.size + page.size)
-    : all;
+  // Server-paged rows are already the page; slicing them again would show a
+  // page of a page.
+  const visible =
+    page && !page.server
+      ? all.slice(page.index * page.size, page.index * page.size + page.size)
+      : all;
+  const pageTotal = page ? (page.total ?? all.length) : all.length;
 
   const everySelected = selectable && all.length > 0 && all.every((r) => r.selected);
 
@@ -135,15 +142,15 @@ export function table(cols, rows, o) {
       ? {
           label:
             'Showing ' +
-            (all.length === 0 ? 0 : page.index * page.size + 1) +
+            (pageTotal === 0 ? 0 : page.index * page.size + 1) +
             '–' +
-            Math.min(all.length, (page.index + 1) * page.size) +
+            Math.min(pageTotal, (page.index + 1) * page.size) +
             ' of ' +
-            all.length,
+            pageTotal,
           onPrev: page.index > 0 ? page.onPrev : null,
-          onNext: (page.index + 1) * page.size < all.length ? page.onNext : null,
+          onNext: (page.index + 1) * page.size < pageTotal ? page.onNext : null,
           prevColor: page.index > 0 ? C.ink : SURFACE.faint,
-          nextColor: (page.index + 1) * page.size < all.length ? C.ink : SURFACE.faint,
+          nextColor: (page.index + 1) * page.size < pageTotal ? C.ink : SURFACE.faint,
         }
       : null,
   };

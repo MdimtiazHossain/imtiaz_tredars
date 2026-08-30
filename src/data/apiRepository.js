@@ -238,6 +238,12 @@ export class ApiRepository {
     };
   }
 
+  /** Which reports the server can actually serve, grouped for the sidebar. */
+  async reportCatalogue() {
+    const payload = await this.client.get('/reports/catalogue');
+    return payload.data;
+  }
+
   async report(reportId, filters = {}) {
     const payload = await this.client.get(`/reports/${reportId}`, filters);
     return { ...payload.data, meta: payload.meta };

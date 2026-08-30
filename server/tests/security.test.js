@@ -204,6 +204,35 @@ suite('input validation and error shape', () => {
   });
 });
 
+suite('report catalogue', () => {
+  it('lists only reports the server can actually produce', async () => {
+    const res = await request(app)
+      .get('/api/reports/catalogue')
+      .set('authorization', `Bearer ${tokens.Admin}`);
+    expect(res.status).toBe(200);
+
+    const ids = res.body.data.flatMap((g) => g.items.map((i) => i.id));
+    expect(ids.length).toBeGreaterThan(0);
+
+    // Every advertised report must answer, not 404.
+    for (const id of ids) {
+      const r = await request(app)
+        .get(`/api/reports/${id}`)
+        .set('authorization', `Bearer ${tokens.Admin}`);
+      expect(r.status, `report ${id} is listed but does not respond`).toBe(200);
+    }
+  });
+
+  it('hides a report the signed-in role may not view', async () => {
+    const res = await request(app)
+      .get('/api/reports/catalogue')
+      .set('authorization', `Bearer ${tokens.Sales}`);
+    const ids = res.body.data.flatMap((g) => g.items.map((i) => i.id));
+    // Sales lacks report.profit, so the batch profit report is not offered.
+    expect(ids).not.toContain('crop-batch-profit');
+  });
+});
+
 suite('cross-user access', () => {
   it('scopes reads to the signed-in user organisation', async () => {
     const res = await request(app)

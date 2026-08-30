@@ -106,6 +106,24 @@ describe('table', () => {
       expect(last.pager.onPrev).not.toBeNull();
     });
 
+    it('does not re-slice rows that are already one server page', () => {
+      const t = table(cols, rows, {
+        page: { index: 1, size: 5, total: 42, server: true, onPrev: () => {}, onNext: () => {} },
+      });
+      // All five rows given are shown, and the label reflects the server total.
+      expect(t.rows).toHaveLength(5);
+      expect(t.pager.label).toBe('Showing 6–10 of 42');
+      expect(t.pager.onNext).not.toBeNull();
+    });
+
+    it('disables next on the last server page', () => {
+      const t = table(cols, rows, {
+        page: { index: 8, size: 5, total: 42, server: true, onPrev: () => {}, onNext: () => {} },
+      });
+      expect(t.pager.onNext).toBeNull();
+      expect(t.pager.onPrev).not.toBeNull();
+    });
+
     it('reports the empty state for a page past the end', () => {
       const t = table(cols, [], { page: { index: 0, size: 2, onPrev: () => {}, onNext: () => {} } });
       expect(t.isEmpty).toBe(true);
