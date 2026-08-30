@@ -10,9 +10,29 @@ import { unprocessable, notFound } from '../lib/errors.js';
  * re-derived from `ledger_entries` independently of the maintained totals.
  */
 
-/** Add `days` to an ISO date and return an ISO date. */
-export function addDays(isoDate, days) {
-  const d = new Date(`${isoDate}T00:00:00Z`);
+/**
+ * Normalise a date to `YYYY-MM-DD`.
+ *
+ * `pg` hands back a `DATE` column as a JavaScript `Date` at local midnight, so
+ * stringifying one gives `Wed Aug 20 2026 ...` rather than an ISO date. Both
+ * shapes reach these services — a Date read back from a query, a string from
+ * request input — so every date is put through this on the way in.
+ *
+ * The local parts are read rather than the UTC ones on purpose: at a positive
+ * UTC offset local midnight is the previous day in UTC, so `toISOString` would
+ * silently move every date back by one.
+ */
+export function toIsoDate(value) {
+  if (value instanceof Date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+/** Add `days` to a date and return an ISO date. */
+export function addDays(date, days) {
+  const d = new Date(`${toIsoDate(date)}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + Number(days || 0));
   return d.toISOString().slice(0, 10);
 }

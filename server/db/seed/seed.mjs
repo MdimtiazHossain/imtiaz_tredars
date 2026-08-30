@@ -629,7 +629,10 @@ try {
   }
   console.log('\nEvery account is flagged must_change_pw; change them before real use.\n');
 } catch (err) {
+  // The stack matters here: a seed failure is nearly always a bug in this file
+  // or in a service it posts through, and the message alone rarely locates it.
   console.error('\nSeed failed:', err.message);
+  console.error(err.stack);
   process.exitCode = 1;
 } finally {
   await closePool();

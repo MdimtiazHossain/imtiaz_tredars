@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
-import { query, closePool } from '../src/lib/db.js';
+import { pool, query, closePool } from '../src/lib/db.js';
 import { HAS_DB } from './helpers/database.js';
 
 /**
@@ -43,10 +43,6 @@ suite('authentication', () => {
     for (const role of ['Admin', 'Sales', 'Warehouse', 'Accounts']) {
       tokens[role] = await signIn(role);
     }
-  });
-
-  afterAll(async () => {
-    await closePool();
   });
 
   it('refuses an unauthenticated request', async () => {
@@ -218,4 +214,11 @@ suite('cross-user access', () => {
     const { rows } = await query('SELECT COUNT(*)::int AS n FROM customers WHERE org_id = 1');
     expect(res.body.meta.total).toBeLessThanOrEqual(rows[0].n);
   });
+});
+
+// The pool is shared by every suite in this file, so it is closed once here
+// rather than in the first suite's afterAll — closing it there left every
+// later suite talking to a pool that had already ended.
+afterAll(async () => {
+  if (!pool.ended) await closePool().catch(() => {});
 });

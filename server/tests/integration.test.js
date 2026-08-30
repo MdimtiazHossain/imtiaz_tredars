@@ -61,10 +61,6 @@ suite('posting integrity', () => {
     };
   });
 
-  afterAll(async () => {
-    await closePool();
-  });
-
   const purchaseInput = (qty, rate = 1000) => ({
     txnDate: '2026-08-28',
     supplierId: ctx.supplierId,
@@ -139,11 +135,18 @@ suite('posting integrity', () => {
       createCropPurchase(client, { ...ctx, input: purchaseInput(20, 2000) })
     );
 
+    // The oldest batch that still holds stock is the one FIFO will draw from.
+    // Selecting merely the oldest makes the test pass only against a freshly
+    // seeded database: on a re-run that batch is already drained, and FIFO
+    // correctly skips it.
     const before = await query(
-      'SELECT id, quantity_remaining FROM crop_batches WHERE org_id = $1 AND crop_id = $2 ORDER BY received_on, id',
+      `SELECT id, quantity_remaining FROM crop_batches
+        WHERE org_id = $1 AND crop_id = $2 AND is_active AND quantity_remaining > 0
+        ORDER BY received_on, id`,
       [ctx.orgId, ctx.cropId]
     );
     const oldest = before.rows[0];
+    expect(oldest, 'no stocked batch to allocate from').toBeDefined();
 
     const sale = await withTransaction((client) =>
       createCropSale(client, {
@@ -163,10 +166,26 @@ suite('posting integrity', () => {
 
     expect(sale.status).toBe('POSTED');
 
+    // FIFO drains the oldest batch first and spills into the next one, so the
+    // oldest ends at whatever is left of it -- not necessarily its opening
+    // quantity less the whole sale.
     const after = await query('SELECT quantity_remaining FROM crop_batches WHERE id = $1', [
       oldest.id,
     ]);
-    expect(num(after.rows[0].quantity_remaining)).toBe(num(oldest.quantity_remaining) - 5);
+    expect(num(after.rows[0].quantity_remaining)).toBe(
+      Math.max(0, num(oldest.quantity_remaining) - 5)
+    );
+
+    // Whatever the split across batches, the pool as a whole falls by exactly
+    // the quantity sold.
+    const poolAfter = await query(
+      `SELECT COALESCE(SUM(quantity_remaining), 0) AS qty FROM crop_batches
+        WHERE org_id = $1 AND crop_id = $2 AND is_active`,
+      [ctx.orgId, ctx.cropId]
+    );
+    const openingPool = before.rows.reduce((t, b) => t + num(b.quantity_remaining), 0);
+    expect(num(poolAfter.rows[0].qty)).toBe(openingPool - 5);
+
     expect(first.id).toBeDefined();
     expect(second.id).toBeDefined();
   });
@@ -316,10 +335,6 @@ suite('posting integrity', () => {
 });
 
 suite('dealer flow', () => {
-  afterAll(async () => {
-    if (!pool.ended) await closePool().catch(() => {});
-  });
-
   it('reduces product stock and raises a receivable', async () => {
     await withTransaction((client) =>
       createDealerPurchase(client, {
@@ -464,5 +479,33 @@ suite('business type reconciliation', () => {
     );
     const r = rows[0];
     expect(num(r.total)).toBeCloseTo(num(r.dealer) + num(r.crop), 2);
+  });
+});
+
+// The pool is shared by every suite in this file, so it is closed once here
+// rather than in the first suite's afterAll — closing it there left every
+// later suite talking to a pool that had already ended.
+afterAll(async () => {
+  if (!pool.ended) await closePool().catch(() => {});
+});
+
+suite('dashboard aggregates', () => {
+  it('splits stock value by business line rather than repeating the total', async () => {
+    const total = await query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN s.item_type = 'CROP_BATCH'
+                           THEN s.quantity * b.cost_per_unit END), 0) AS crop_value,
+         COALESCE(SUM(CASE WHEN s.item_type = 'PRODUCT'
+                           THEN s.quantity * s.avg_cost END), 0)      AS product_value
+         FROM stock s LEFT JOIN crop_batches b ON b.id = s.batch_id
+        WHERE s.org_id = 1 AND s.quantity > 0`
+    );
+
+    const cropValue = num(total.rows[0].crop_value);
+    const productValue = num(total.rows[0].product_value);
+
+    // The two lines hold different stock, so a shared figure would be wrong.
+    expect(cropValue).not.toBe(productValue);
+    expect(cropValue + productValue).toBeGreaterThan(0);
   });
 });

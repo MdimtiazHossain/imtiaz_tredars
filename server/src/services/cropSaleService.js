@@ -74,6 +74,34 @@ export async function previewAllocation(client, { orgId, cropId, warehouseId, qu
 }
 
 /**
+ * Refuse a sale the godown cannot fulfil, before it is accepted at all.
+ *
+ * `postCropSale` checks this too, but a sale routed for approval does not reach
+ * it until an approver has already signed off — by which point the shortfall is
+ * somebody else's problem. Quantities are summed per crop first: two lines for
+ * the same crop draw on one pool, and planning them separately would each see
+ * the full quantity and miss a combined shortfall.
+ */
+async function assertStockAvailable(client, { orgId, warehouseId, valuationMethod, lines }) {
+  const wanted = new Map();
+  for (const line of lines) {
+    const cropId = Number(line.cropId);
+    wanted.set(cropId, (wanted.get(cropId) || 0) + num(line.quantity));
+  }
+
+  for (const [cropId, quantity] of wanted) {
+    const pool = await lockBatchPool(client, { orgId, cropId, warehouseId });
+    const plan = planAllocation(pool, quantity, valuationMethod);
+    if (plan.shortfall > 0) {
+      throw unprocessable(
+        'INSUFFICIENT_STOCK',
+        `Only ${plan.allocated} available for this crop, but ${quantity} was requested.`
+      );
+    }
+  }
+}
+
+/**
  * Create a bulk crop sale, optionally posting it.
  *
  * Posting performs, atomically: validate the buyer, lock and allocate batches
@@ -122,7 +150,7 @@ export async function createCropSale(client, { orgId, user, actor, input }) {
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
       [saleId, lineNo, line.cropId, line.unitId, num(line.quantity), num(line.rate), lineValue]
     );
-    items.push({ id: Number(item.rows[0].id), line, lineValue });
+    items.push({ id: Number(item[0].id), line, lineValue });
   }
 
   await writeAudit(client, {
@@ -137,6 +165,13 @@ export async function createCropSale(client, { orgId, user, actor, input }) {
   if (input.action !== 'POST') {
     return { id: saleId, txnNo, status: 'DRAFT' };
   }
+
+  await assertStockAvailable(client, {
+    orgId,
+    warehouseId: input.warehouseId ?? undefined,
+    valuationMethod: valuation,
+    lines: input.lines,
+  });
 
   const rule = await evaluateRules(client, {
     orgId,
@@ -264,7 +299,7 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
       invoiceId: saleId,
       invoiceNo: header.txn_no,
       invoiceDate: header.txn_date,
-      dueDate: addDays(String(header.txn_date).slice(0, 10), 14),
+      dueDate: addDays(header.txn_date, 14),
       invoiceAmount: netAmount,
       paidAmount: paid,
     });

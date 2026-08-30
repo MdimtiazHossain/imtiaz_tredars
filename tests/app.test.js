@@ -224,3 +224,175 @@ describe('customer creation', () => {
     expect(app.state.ds.cust).toBe(app.state.extraCusts[0].code);
   });
 });
+
+describe('dealer posting', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it('posts a dealer sale through the repository', async () => {
+    const { app } = await mountApp();
+    const calls = [];
+    app.repository.postDealerSale = async (payload) => {
+      calls.push(payload);
+      return { txnNo: 'DS-9999-001', status: 'POSTED' };
+    };
+
+    app.calcDS().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].intent.customerCode).toBe(app.state.ds.cust);
+    expect(calls[0].intent.lines).toHaveLength(app.state.ds.lines.length);
+    expect(app.state.toast.msg).toContain('DS-9999-001');
+    expect(app.state.toast.tone).toBe('ok');
+  });
+
+  it('refuses to post a dealer sale beyond the credit limit', async () => {
+    const { app } = await mountApp();
+    let called = false;
+    app.repository.postDealerSale = async () => { called = true; return {}; };
+
+    // Push the invoice far past the customer's limit.
+    app.setState({ ds: { ...app.state.ds, lines: [{ pid: 'P-1001', qty: 100000, rate: 295, disc: 0, bonus: 0 }] } });
+    app.calcDS().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(called).toBe(false);
+    expect(app.state.toast.tone).toBe('danger');
+    expect(app.state.toast.msg).toMatch(/credit limit/i);
+  });
+
+  it('reports an approval-routed dealer sale as pending', async () => {
+    const { app } = await mountApp();
+    app.repository.postDealerSale = async () => ({ txnNo: 'DS-9999-002', status: 'PENDING_APPROVAL' });
+
+    app.calcDS().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(app.state.toast.msg).toMatch(/sent for approval/i);
+    expect(app.state.toast.tone).toBe('warn');
+  });
+
+  it('posts a dealer purchase through the repository', async () => {
+    const { app } = await mountApp();
+    const calls = [];
+    app.repository.postDealerPurchase = async (payload) => {
+      calls.push(payload);
+      return { txnNo: 'DP-9999-001', status: 'POSTED' };
+    };
+
+    app.calcDP().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].intent.companyCode).toBe(app.state.dp.co);
+    expect(app.state.toast.msg).toContain('DP-9999-001');
+  });
+
+  it('does not claim a negative receivable when the customer overpays', async () => {
+    const { app } = await mountApp();
+    app.repository.postDealerSale = async () => ({ txnNo: 'DS-9999-003', status: 'POSTED' });
+
+    // The invoice defaults carry a payment larger than the invoice total.
+    app.calcDS().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(app.state.toast.msg).not.toMatch(/receivable ৳-/);
+    expect(app.state.toast.msg).toMatch(/settled in full/);
+  });
+
+  it('reports the receivable when there is a genuine balance', async () => {
+    const { app } = await mountApp();
+    app.repository.postDealerSale = async () => ({ txnNo: 'DS-9999-004', status: 'POSTED' });
+
+    app.setState({ ds: { ...app.state.ds, paid: 0 } });
+    app.calcDS().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(app.state.toast.msg).toMatch(/receivable ৳[\d,]+ created/);
+  });
+
+  it('surfaces a server error as a danger toast', async () => {
+    const { app } = await mountApp();
+    app.repository.postDealerSale = async () => {
+      throw new Error('Only 3 available in Bogura Depot.');
+    };
+
+    app.calcDS().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(app.state.toast.tone).toBe('danger');
+    expect(app.state.toast.msg).toContain('Only 3 available');
+  });
+});
+
+describe('duplicate submission', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it('sends only one request when Post is clicked twice', async () => {
+    const { app } = await mountApp();
+    let calls = 0;
+    app.repository.postCropPurchase = async (payload) => {
+      calls += 1;
+      await new Promise((r) => setTimeout(r, 30));
+      return payload;
+    };
+
+    app.postCP();
+    app.postCP();
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(calls).toBe(1);
+  });
+
+  it('does not show an error toast for the ignored second click', async () => {
+    const { app } = await mountApp();
+    app.repository.postCropPurchase = async (payload) => {
+      await new Promise((r) => setTimeout(r, 30));
+      return payload;
+    };
+
+    app.postCP();
+    app.postCP();
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(app.state.toast.tone).not.toBe('danger');
+  });
+
+  it('allows a second post once the first has settled', async () => {
+    const { app } = await mountApp();
+    let calls = 0;
+    app.repository.postCropPurchase = async (payload) => {
+      calls += 1;
+      return payload;
+    };
+
+    app.postCP();
+    await new Promise((r) => setTimeout(r, 20));
+    app.postCP();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(calls).toBe(2);
+  });
+
+  it('shows saving feedback while a write is in flight', async () => {
+    const { app } = await mountApp();
+    app.repository.createCustomer = async (record) => {
+      await new Promise((r) => setTimeout(r, 40));
+      return record;
+    };
+
+    app.setState({ newCust: { ...app.state.newCust, name: 'Feedback Co', mobile: '01700-111222' } });
+    app.saveCustomer();
+
+    // Mid-flight the user sees progress, and the write is marked busy.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(app.state.toast.msg).toBe('Saving…');
+    expect(app.state.busy).toBe('createCustomer');
+
+    await new Promise((r) => setTimeout(r, 80));
+    expect(app.state.busy).toBeNull();
+    expect(app.state.toast.msg).toContain('created and selected');
+  });
+});

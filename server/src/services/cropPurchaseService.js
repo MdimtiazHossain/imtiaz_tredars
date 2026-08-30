@@ -154,7 +154,7 @@ export async function createCropPurchase(client, { orgId, user, actor, input }) 
         line.costPerUnit,
       ]
     );
-    itemIds.push({ id: Number(item.rows[0].id), line });
+    itemIds.push({ id: Number(item[0].id), line });
   }
 
   await writeAudit(client, {
@@ -309,7 +309,7 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
       invoiceId: purchaseId,
       invoiceNo: header.txn_no,
       invoiceDate: header.txn_date,
-      dueDate: addDays(String(header.txn_date).slice(0, 10), 30),
+      dueDate: addDays(header.txn_date, 30),
       invoiceAmount: netAmount,
       paidAmount: advance,
     });

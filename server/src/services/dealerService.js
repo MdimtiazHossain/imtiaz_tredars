@@ -220,10 +220,7 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
     invoiceId: purchaseId,
     invoiceNo: header.txn_no,
     invoiceDate: header.txn_date,
-    dueDate: addDays(
-      String(header.txn_date).slice(0, 10),
-      num(companyRows[0]?.credit_days) || 30
-    ),
+    dueDate: addDays(header.txn_date, num(companyRows[0]?.credit_days) || 30),
     invoiceAmount: netAmount,
     paidAmount: 0,
   });
@@ -508,10 +505,7 @@ export async function postDealerSale(client, { orgId, user, actor, saleId }) {
       invoiceId: saleId,
       invoiceNo: header.txn_no,
       invoiceDate: header.txn_date,
-      dueDate: addDays(
-        String(header.txn_date).slice(0, 10),
-        num(customerRows[0]?.credit_days) || 15
-      ),
+      dueDate: addDays(header.txn_date, num(customerRows[0]?.credit_days) || 15),
       invoiceAmount: netAmount,
       paidAmount: paid,
     });

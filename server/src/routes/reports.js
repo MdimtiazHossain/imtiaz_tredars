@@ -171,11 +171,19 @@ router.get(
         documents: receivable.rows[0].documents,
       },
       payable: { amount: num(payable.rows[0].amount), documents: payable.rows[0].documents },
+      // Stock is held per business line: dealer products against BULK_CROP
+      // batches. `totalValue` therefore follows the filter, so the Dealer and
+      // Bulk Crop panels do not both report the same figure.
       stock: {
         cropValue: num(stock.rows[0].crop_value),
         productValue: num(stock.rows[0].product_value),
-        totalValue: num(stock.rows[0].crop_value) + num(stock.rows[0].product_value),
-        batches: stock.rows[0].batches,
+        totalValue:
+          bt === 'DEALER'
+            ? num(stock.rows[0].product_value)
+            : bt === 'BULK_CROP'
+              ? num(stock.rows[0].crop_value)
+              : num(stock.rows[0].crop_value) + num(stock.rows[0].product_value),
+        batches: bt === 'DEALER' ? 0 : stock.rows[0].batches,
       },
       cash: { balance: num(cash.rows[0].balance), accounts: cash.rows[0].accounts },
       aging: agingBuckets,

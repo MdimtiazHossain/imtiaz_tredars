@@ -210,9 +210,32 @@ export class ApiRepository {
 
   /* ------------------------------------------------------------------ reads */
 
+  /**
+   * Dashboard aggregates, computed in SQL.
+   *
+   * Two calls: the running position, and the same figures narrowed to today,
+   * because the design's first tile is "Today's Sales". Both are aggregates,
+   * so this stays two small responses rather than a table of transactions.
+   */
   async dashboard(businessType = 'ALL') {
-    const payload = await this.client.get('/dashboard/dashboard', { businessType });
-    return payload.data;
+    const today = new Date().toISOString().slice(0, 10);
+    const get = (params) => this.client.get('/dashboard/dashboard', params);
+
+    // Four small aggregates rather than one: the selected filter drives the
+    // tiles, today drives the first tile, and the two business lines fill the
+    // side-by-side panels, which always show both regardless of the filter.
+    const [overall, todayOnly, dealer, crop] = await Promise.all([
+      get({ businessType }),
+      get({ businessType, from: today, to: today }),
+      get({ businessType: 'DEALER' }),
+      get({ businessType: 'BULK_CROP' }),
+    ]);
+
+    return {
+      ...overall.data,
+      today: todayOnly.data,
+      byBusiness: { DEALER: dealer.data, BULK_CROP: crop.data },
+    };
   }
 
   async report(reportId, filters = {}) {

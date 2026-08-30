@@ -87,10 +87,16 @@ export class BusinessApp extends Component {
     if (!this._inFlight) this._inFlight = new Set();
 
     if (this._inFlight.has(method)) {
-      return Promise.reject(new Error('This is already being saved. Please wait.'));
+      // A second click while the first is still saving is ignored rather than
+      // reported: the user did nothing wrong, and an error toast would be noise.
+      const ignored = /** @type {Error & {silent?: boolean}} */ (new Error('Already saving.'));
+      ignored.silent = true;
+      return Promise.reject(ignored);
     }
     this._inFlight.add(method);
     this.setState({ busy: method });
+    // Immediate feedback, replaced by the outcome when the write settles.
+    this.fire('Saving…', 'ok');
 
     const done = () => {
       this._inFlight.delete(method);
@@ -119,7 +125,7 @@ export class BusinessApp extends Component {
         ds:Object.assign({}, s.ds, {cust:code}),
         newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'', district:'Bogura', upazila:'', limit:500000, days:15, opening:0}}));
       this.fire(code + ' — ' + f.name + ' created and selected on this invoice', 'ok');
-    }).catch(err => this.fire('Could not save customer — ' + err.message, 'danger'));
+    }).catch(err => { if (!err.silent) this.fire('Could not save customer — ' + err.message, 'danger'); });
   }
 
   calcCP() {
@@ -162,7 +168,7 @@ export class BusinessApp extends Component {
         cropLog:[saved.logRow].concat(s.cropLog)
       }));
       this.fire(c.needAppr ? no + ' saved and sent for approval — ' + money(c.total) : no + ' posted · batch ' + c.batchId + ' added to stock', c.needAppr ? 'warn' : 'ok');
-    }).catch(err => this.fire('Could not post purchase — ' + err.message, 'danger'));
+    }).catch(err => { if (!err.silent) this.fire('Could not post purchase — ' + err.message, 'danger'); });
   }
 
   calcCS() {
@@ -209,7 +215,7 @@ export class BusinessApp extends Component {
         cs:Object.assign({}, s.cs, {alloc:{}})
       }));
       this.fire(c.salesNo + ' posted · ' + c.allocText + ' issued, stock and buyer receivable updated', 'ok');
-    }).catch(err => this.fire('Could not post sale — ' + err.message, 'danger'));
+    }).catch(err => { if (!err.silent) this.fire('Could not post sale — ' + err.message, 'danger'); });
   }
 
   autoAlloc() {
@@ -219,6 +225,63 @@ export class BusinessApp extends Component {
     pool.forEach(b => { const take = Math.min(left, b.rem); if (take > 0) al[b.id] = take; left -= take; });
     this.setState(s => ({cs:Object.assign({}, s.cs, {alloc:al})}));
     this.fire(left > 0 ? 'Only ' + dec2(target - left) + ' MT available — allocated oldest batches first' : 'Allocated ' + dec2(target) + ' MT, oldest batch first (FIFO)', left > 0 ? 'warn' : 'ok');
+  }
+
+  /**
+   * Post a dealer sales invoice.
+   *
+   * The design's button only raised a toast; posting now goes through the
+   * repository, so against the API it moves stock, raises the receivable and
+   * writes the ledger, and the toast reports what the server actually did.
+   */
+  postDS(available, due) {
+    if (available < 0) {
+      this.fire('Credit limit exceeded — approval required before posting.', 'danger');
+      return;
+    }
+
+    const f = this.state.ds;
+    const cust = this.custList().filter(c => c.code === f.cust)[0];
+    const intent = {date:'2026-08-28', customerCode:f.cust, warehouse:f.wh, terms:f.terms,
+      paid:+f.paid || 0,
+      lines:f.lines.map(l => { const p = this.data.products.filter(x => x.code === l.pid)[0] || {};
+        return {productCode:l.pid, quantity:+l.qty || 0, bonus:+l.bonus || 0,
+          rate:+l.rate || 0, discount:+l.disc || 0, unit:p.unit}; })};
+
+    this.persist('postDealerSale', {intent:intent, customer:cust, due:due}).then(saved => {
+      const no = saved && saved.txnNo ? saved.txnNo : 'DS-2608-222';
+      if (saved && saved.status === 'PENDING_APPROVAL') {
+        this.fire(no + ' saved and sent for approval', 'warn');
+      } else if (due > 0) {
+        this.fire(no + ' posted · stock reduced, receivable ' + money(due) + ' created', 'ok');
+      } else if (due < 0) {
+        // Paid more than the invoice: the surplus sits on account, and no
+        // receivable is raised. Saying "receivable −৳84,708 created" would be
+        // nonsense, and the server does not create one either.
+        this.fire(no + ' posted · settled in full, ' + money(-due) + ' left on account', 'ok');
+      } else {
+        this.fire(no + ' posted · stock reduced, settled in full', 'ok');
+      }
+    }).catch(err => { if (!err.silent) this.fire(err.message, 'danger'); });
+  }
+
+  /** Post a dealer purchase bill. */
+  postDP(net) {
+    const f = this.state.dp;
+    const co = this.data.companies.filter(c => c.code === f.co)[0];
+    const intent = {date:'2026-08-28', companyCode:f.co, warehouse:f.wh, invoiceNo:f.inv,
+      terms:f.terms, transport:+f.transport || 0, other:+f.other || 0,
+      lines:f.lines.map(l => ({productCode:l.pid, quantity:+l.qty || 0, free:+l.free || 0,
+        rate:+l.rate || 0, discount:+l.disc || 0}))};
+
+    this.persist('postDealerPurchase', {intent:intent, company:co, net:net}).then(saved => {
+      const no = saved && saved.txnNo ? saved.txnNo : 'DP-2608-072';
+      if (saved && saved.status === 'PENDING_APPROVAL') {
+        this.fire(no + ' saved, approval requested above ' + money(this.limit()), 'warn');
+      } else {
+        this.fire(no + ' posted · stock and company payable updated', 'ok');
+      }
+    }).catch(err => { if (!err.silent) this.fire(err.message, 'danger'); });
   }
 
   calcDS() {
@@ -250,7 +313,7 @@ export class BusinessApp extends Component {
       availText:money(avail), availColor:avail < 0 ? C.dngr : C.crop, overLimit:avail < 0,
       showProfit:this.canProfit(), lineCount:lines.length + ' line items',
       onAdd:() => this.setState(s => ({ds:Object.assign({}, s.ds, {lines:s.ds.lines.concat([{pid:'P-1002', qty:10, rate:385, disc:0, bonus:0}])})})),
-      onPost:() => { if (avail < 0) { this.fire('Credit limit exceeded — approval required before posting.', 'danger'); return; } this.fire('Invoice DS-2608-222 posted · stock reduced, receivable ' + money(due) + ' created', 'ok'); }};
+      onPost:() => this.postDS(avail, due)};
   }
 
   setLine(g, i, k, raw) {
@@ -279,12 +342,101 @@ export class BusinessApp extends Component {
       freeText:int(freeQty) + ' pcs free', payableText:money(co.bal + net), coBalText:money(co.bal),
       needAppr:net > this.limit(), limitText:money(this.limit()),
       onAdd:() => this.setState(s => ({dp:Object.assign({}, s.dp, {lines:s.dp.lines.concat([{pid:'P-1002', qty:100, free:0, rate:318, disc:0}])})})),
-      onPost:() => this.fire(net > this.limit() ? 'DP-2608-072 saved, approval requested above ' + money(this.limit()) : 'DP-2608-072 posted · stock and company payable updated', net > this.limit() ? 'warn' : 'ok')};
+      onPost:() => this.postDP(net)};
+  }
+
+  /**
+   * Pull dashboard aggregates from the repository when it can compute them.
+   *
+   * The in-memory repository has no `dashboard` method, so nothing changes
+   * there and the bundled figures are used. Against the API the totals are
+   * aggregated in SQL, which is what makes the business-type filter reconcile:
+   * All is the sum of Dealer and Bulk Crop because the database says so.
+   */
+  loadDashboard() {
+    if (!this.repository || typeof this.repository.dashboard !== 'function') return;
+
+    const biz = this.state.biz;
+    const businessType = biz === 'dealer' ? 'DEALER' : biz === 'crop' ? 'BULK_CROP' : 'ALL';
+
+    this.setState({ dashLoading: true });
+    this.repository.dashboard(businessType).then(
+      data => {
+        // A stale response from a filter the user has since changed is dropped.
+        if (this.state.biz === biz) this.setState({ serverDash: data, dashLoading: false });
+      },
+      () => this.setState({ dashLoading: false })
+    );
+  }
+
+  /**
+   * Map server aggregates onto the eight tiles the design shows.
+   *
+   * The supporting line states a fact the server actually returned -- a
+   * document count, an account count -- rather than a period-on-period
+   * percentage, because the API does not compute comparisons and inventing
+   * one would put a number on screen that nothing backs.
+   */
+  serverKpis(d) {
+    const tile = (k, value, note, detail, good) => ({
+      k: k,
+      v: money(value),
+      sub: lakh(value),
+      note: note,
+      up: detail,
+      upColor: good ? C.crop : C.warn,
+    });
+
+    const today = d.today || {sales:{amount:0, documents:0}};
+    const profit = d.grossProfit;
+
+    const out = [
+      tile("Today's Sales", today.sales.amount, today.sales.documents + ' invoices', 'posted today', true),
+      tile('This Month Sales', d.sales.amount, d.sales.documents + ' invoices', 'posted to date', true),
+      tile('This Month Purchase', d.purchases.amount, d.purchases.documents + ' bills', 'posted to date', true),
+    ];
+
+    if (profit) {
+      out.push(tile('Gross Profit', profit.amount, 'margin ' + profit.marginPct.toFixed(1) + '%',
+        'sales less cost of goods', profit.amount >= 0));
+    }
+
+    out.push(
+      tile('Outstanding Receivable', d.receivable.amount, d.receivable.documents + ' open invoices',
+        'awaiting collection', false),
+      tile('Outstanding Payable', d.payable.amount, d.payable.documents + ' bills', 'due to suppliers', false),
+      tile('Current Stock Value', d.stock.totalValue, d.stock.batches + ' crop batches',
+        'across all warehouses', true),
+      tile('Cash & Bank Balance', d.cash.balance, d.cash.accounts + ' accounts', 'cash, bank and MFS', true)
+    );
+
+    return out;
+  }
+
+  /** Rows for one business-line panel, from that line's server aggregate. */
+  businessPanelRows(d) {
+    if (!d) return [];
+    const rows = [
+      {k:'Sales', v:money(d.sales.amount)},
+      {k:'Purchase', v:money(d.purchases.amount)},
+    ];
+    if (d.grossProfit) {
+      rows.push({k:'Gross profit', v:money(d.grossProfit.amount)});
+    }
+    rows.push(
+      {k:'Outstanding', v:money(d.receivable.amount)},
+      {k:'Stock value', v:money(d.stock.totalValue)}
+    );
+    if (d.grossProfit) {
+      rows.push({k:'Margin', v:d.grossProfit.marginPct.toFixed(1) + '%'});
+    }
+    return rows;
   }
 
   dash() {
     const K = DASHBOARD_KPIS;
-    const kpis = K.map(x => {
+    const sd = this.state.serverDash;
+    const kpis = sd ? this.serverKpis(sd) : K.map(x => {
       const v = x.fix !== undefined ? x.fix : this.bizOf(x);
       return {k:x.k, v:money(v), sub:lakh(v), note:x.note, up:x.up, upColor:x.good ? C.crop : C.warn};
     });
@@ -294,7 +446,13 @@ export class BusinessApp extends Component {
     const max = Math.max.apply(null, series.map(x => x.s)) * 1.12;
     const chart = series.map(x => ({l:x.l, sH:(x.s / max * 150).toFixed(1) + 'px', pH:(x.p / max * 150).toFixed(1) + 'px',
       sText:'৳' + x.s.toFixed(1) + ' L', tip:x.l + ' — sales ৳' + x.s.toFixed(1) + ' L · purchase ৳' + x.p.toFixed(1) + ' L · profit ৳' + x.pr.toFixed(1) + ' L'}));
-    const panels = [
+    const byBiz = sd && sd.byBusiness;
+    const panels = byBiz ? [
+      {name:'Dealer Business', color:C.deal, bg:C.dealBg, tag:'Company → Dealer → Customer', screen:'dealer-sales',
+        rows:this.businessPanelRows(byBiz.DEALER)},
+      {name:'Bulk Crop Business', color:C.crop, bg:C.cropBg, tag:'Farmer → Us → Buyer company', screen:'crop-sales',
+        rows:this.businessPanelRows(byBiz.BULK_CROP)}
+    ] : [
       {name:'Dealer Business', color:C.deal, bg:C.dealBg, tag:'Company → Dealer → Customer', screen:'dealer-sales',
         rows:[{k:'Sales', v:money(9840000)}, {k:'Purchase', v:money(7210000)}, {k:'Gross profit', v:money(1486000)}, {k:'Outstanding', v:money(1580000)}, {k:'Stock value', v:money(5620000)}, {k:'Margin', v:'15.1%'}]},
       {name:'Bulk Crop Business', color:C.crop, bg:C.cropBg, tag:'Farmer → Us → Buyer company', screen:'crop-sales',
@@ -489,7 +647,7 @@ export class BusinessApp extends Component {
       this.persist('decideApproval', id, ok, history).then(() => {
         this.setState(s => ({approvals:s.approvals.map(a => a.id === id ? Object.assign({}, a, {status:ok ? 'approved' : 'rejected', hist:history}) : a)}));
         this.fire('Request ' + id + ' ' + (ok ? 'approved' : 'rejected'), ok ? 'ok' : 'warn');
-      }).catch(err => this.fire('Could not record decision — ' + err.message, 'danger'));
+      }).catch(err => { if (!err.silent) this.fire('Could not record decision — ' + err.message, 'danger'); });
     };
     const cards = S.approvals.filter(a => a.status === 'pending').map(a => ({id:a.id, kind:a.kind, ref:a.ref, party:a.party, amt:money(a.amt), by:a.by, when:a.when, why:a.why,
       tone:a.kind.indexOf('Crop') > -1 ? C.crop : a.kind === 'Sales Discount' ? C.deal : C.warn,
@@ -534,7 +692,8 @@ export class BusinessApp extends Component {
     return {
       co:this.data.company, role:role, biz:S.biz, screen:S.screen, titleMain:title[0], titleSub:title[1], is:is,
       bizTabs:[{k:'all', l:'All business'}, {k:'dealer', l:'Dealer'}, {k:'crop', l:'Bulk Crop'}].map(x => ({l:x.l, on:x.k === S.biz,
-        bg:x.k === S.biz ? '#fff' : 'transparent', color:x.k === S.biz ? C.ink : C.mut, sh:x.k === S.biz ? '0 1px 2px rgba(0,0,0,.08)' : 'none', onClick:this.hs('biz', x.k)})),
+        bg:x.k === S.biz ? '#fff' : 'transparent', color:x.k === S.biz ? C.ink : C.mut, sh:x.k === S.biz ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+        onClick:() => { this.setState({biz:x.k}); this.loadDashboard(); }})),
       nav:nav, dash:this.dash(), cp:this.calcCP(), cs:this.calcCS(), ds:this.calcDS(), dp:this.calcDP(),
       inv:this.inv(), cust:this.cust(), sup:this.sup(), acct:this.acct(), rep:this.rep(), appr:this.appr(),
       sr:this.search(), q:S.q, onQ:e => this.setState({q:e.target.value, qOpen:true}), onQClear:() => this.setState({q:'', qOpen:false}),

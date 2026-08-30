@@ -40,13 +40,18 @@ const TEST_DB = 'business_suite_test';
 /** Read a line from stdin without echoing it. */
 function promptHidden(question) {
   return new Promise((resolve, reject) => {
+    // Without a terminal there is no echo to turn off, so read the password
+    // from piped stdin rather than failing. This is what lets the script run
+    // from a wrapper or a non-interactive shell.
     if (!process.stdin.isTTY) {
-      reject(
-        new Error(
-          'This needs an interactive terminal. Run it directly:\n' +
-            '  cd server && node db/bootstrap.mjs'
-        )
-      );
+      let piped = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (chunk) => {
+        piped += chunk;
+      });
+      process.stdin.on('end', () => resolve(piped.split('\n')[0].replace(/\r$/, '')));
+      process.stdin.on('error', reject);
+      process.stdin.resume();
       return;
     }
 
@@ -98,7 +103,12 @@ const lit = (value) => "'" + String(value).replaceAll("'", "''") + "'";
 async function main() {
   console.log(`\nBootstrapping ${APP_DB} on ${HOST}:${PORT} as ${SUPERUSER}.\n`);
 
-  const superPassword = await promptHidden(`Password for the "${SUPERUSER}" superuser: `);
+  // PGSUPERPASS supplies the password without a prompt, for callers that have
+  // no terminal. Prefer the prompt when there is one: an environment variable
+  // is readable by every process this user owns for as long as it is set.
+  const superPassword =
+    process.env.PGSUPERPASS ||
+    (await promptHidden(`Password for the "${SUPERUSER}" superuser: `));
   if (!superPassword) {
     console.error('\nNo password entered. Nothing was changed.');
     process.exit(1);

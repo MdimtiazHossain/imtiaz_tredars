@@ -86,6 +86,9 @@ async function mountApp(root, user) {
 
   const app = new BusinessApp(readProps(user), data);
   app.mount(root, appTemplate, { DataTable: dataTableTemplate });
+  // Dashboard totals are aggregated server-side where the repository supports
+  // it; this is a no-op against the in-memory repository.
+  app.loadDashboard();
 
   // Debug handle for manual inspection in the browser console.
   /** @type {any} */ (window).__app = app;

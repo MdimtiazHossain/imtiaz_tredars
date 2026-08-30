@@ -18,6 +18,11 @@ This is also the fix if the `business_suite` password is ever lost — it resets
 it. The script is idempotent, so re-running it is safe. `.env` is gitignored and
 must never be committed.
 
+Run it from a real terminal, so the prompt can hide what you type. Where there is
+no terminal — a wrapper script, CI — it reads the password from stdin instead, or
+from `PGSUPERPASS` when that is set. Neither of those hides the password from the
+shell, so prefer the prompt whenever you have one.
+
 <details>
 <summary>Manual alternative</summary>
 
