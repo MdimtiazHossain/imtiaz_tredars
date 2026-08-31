@@ -379,9 +379,10 @@ export function fieldsFor(kind, form, data, on, row) {
         wide: true,
       }),
       field('district', 'District', {
-        options: districts,
+        suggestions: districts,
         value: form.district,
         onChange: on('district'),
+        placeholder: 'Bogura',
       }),
     ];
   }
@@ -477,9 +478,10 @@ export function fieldsFor(kind, form, data, on, row) {
       field('person', 'Contact person', { value: form.person, onChange: on('person') }),
       field('mobile', 'Mobile', { value: form.mobile, onChange: on('mobile'), mono: true }),
       field('district', 'District', {
-        options: districts,
+        suggestions: districts,
         value: form.district,
         onChange: on('district'),
+        placeholder: 'Bogura',
       }),
       field('limit', 'Credit limit', {
         type: 'number',
@@ -532,9 +534,10 @@ export function fieldsFor(kind, form, data, on, row) {
       placeholder: '017XXXXXXXX',
     }),
     field('district', 'District', {
-      options: districts,
+      suggestions: districts,
       value: form.district,
       onChange: on('district'),
+      placeholder: 'Bogura',
     }),
     field('upazila', 'Upazila', { value: form.upazila, onChange: on('upazila') }),
   ];

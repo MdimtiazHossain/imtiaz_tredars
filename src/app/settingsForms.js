@@ -133,9 +133,10 @@ export function fieldsFor(kind, form, row, on, districts) {
       // The districts the business already trades in, so the default is one of
       // them rather than a name nobody else uses.
       field('defaultDistrict', 'Default district', {
-        options: districts,
+        suggestions: districts,
         value: form.defaultDistrict,
         onChange: on('defaultDistrict'),
+        placeholder: 'Bogura',
       }),
     ];
   }

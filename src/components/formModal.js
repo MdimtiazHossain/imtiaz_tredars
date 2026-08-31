@@ -26,15 +26,26 @@ import { C, MONO } from '../styles/tokens.js';
  * @param {string} [o.hint]     small note under the control
  * @param {boolean}[o.mono]     monospace, for figures and codes
  * @param {boolean}[o.wide]     span the whole grid rather than one column
+ * @param {Array}  [o.suggestions] known values offered beside a text field
+ *   rather than instead of one. A select is right when the list is the whole
+ *   truth -- a unit, a role -- and wrong when it merely reflects what has been
+ *   entered before: a district nobody has typed yet cannot be chosen from a
+ *   list built out of the districts people have typed.
  */
 export function field(key, label, o = {}) {
   const isSelect = Array.isArray(o.options);
+  const suggestions = Array.isArray(o.suggestions) ? o.suggestions.filter(Boolean) : [];
   return {
     key,
     label,
     isSelect,
     // The template picks exactly one branch; a select is not also a text input.
     isText: !isSelect,
+    suggestions: suggestions.map((value) => ({ value })),
+    hasSuggestions: suggestions.length > 0,
+    // Ties the input to its datalist; unique per field so two on one form do
+    // not offer each other's values.
+    listId: `${key}-suggestions`,
     inputType: o.type || 'text',
     value: o.value === undefined || o.value === null ? '' : o.value,
     options: isSelect

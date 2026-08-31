@@ -1349,20 +1349,37 @@ describe('master data', () => {
     expect(app.state.toast.msg).toContain('PM-01');
   });
 
-  it('offers districts the data already uses rather than a fixed list', async () => {
+  it('suggests districts the data already uses rather than restricting to them', async () => {
     const { app } = await mountApp();
     app.openMaster('customer');
-    const districts = app
-      .renderVals()
-      .modal.fields.find((f) => f.key === 'district')
-      .options.map((o) => o.value);
+    const district = app.renderVals().modal.fields.find((f) => f.key === 'district');
 
+    // Typed, not chosen: a district nobody has entered yet could never be
+    // picked from a list built out of the ones people have entered.
+    expect(district.isSelect).toBe(false);
+    expect(district.isText).toBe(true);
+
+    const suggested = district.suggestions.map((o) => o.value);
     const known = app.data.customers
       .concat(app.data.suppliers)
       .concat(app.data.companies)
       .map((p) => p.district);
-    expect(districts.length).toBeGreaterThan(0);
-    districts.forEach((d) => expect(known).toContain(d));
+    expect(suggested.length).toBeGreaterThan(0);
+    suggested.forEach((d) => expect(known).toContain(d));
+  });
+
+  it('still lets a district be entered when no party has one yet', async () => {
+    const { app } = await mountApp();
+    app.data.customers = [];
+    app.data.suppliers = [];
+    app.data.companies = [];
+
+    app.openMaster('warehouse');
+    const district = app.renderVals().modal.fields.find((f) => f.key === 'district');
+
+    expect(district.isText).toBe(true);
+    expect(district.hasSuggestions).toBe(false);
+    expect(district.placeholder).toBeTruthy();
   });
 });
 
@@ -1497,19 +1514,18 @@ describe('settings', () => {
     expect(app.state.settingsForm.error).toBe('The currency is a three-letter code, like BDT.');
   });
 
-  it('offers only districts the business already deals in', async () => {
+  it('suggests the districts the business already deals in', async () => {
     const { app } = await openSettings('company');
     app.openSettings('company', app.settingsData().organization);
-    const districts = app
-      .settingsModal()
-      .fields.find((f) => f.key === 'defaultDistrict')
-      .options.map((o) => o.value);
+    const field = app.settingsModal().fields.find((f) => f.key === 'defaultDistrict');
 
+    expect(field.isText).toBe(true);
     const known = new Set(
       app.data.customers.concat(app.data.suppliers, app.data.companies).map((p) => p.district)
     );
-    expect(districts.length).toBeGreaterThan(0);
-    for (const d of districts) expect(known.has(d)).toBe(true);
+    const suggested = field.suggestions.map((o) => o.value);
+    expect(suggested.length).toBeGreaterThan(0);
+    for (const d of suggested) expect(known.has(d)).toBe(true);
   });
 
   it('lists the financial years on file and what can be done to each', async () => {

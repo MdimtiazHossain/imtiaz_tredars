@@ -28,7 +28,14 @@
             </sc-if>
 
             <sc-if value="{{ f.isText }}" hint-placeholder-val="{{ true }}">
-              <input type="{{ f.inputType }}" value="{{ f.value }}" onChange="{{ f.onChange }}" placeholder="{{ f.placeholder }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:{{ f.font }}" />
+              <input type="{{ f.inputType }}" value="{{ f.value }}" onChange="{{ f.onChange }}" placeholder="{{ f.placeholder }}" list="{{ f.listId }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;font-family:{{ f.font }}" />
+              <sc-if value="{{ f.hasSuggestions }}">
+                <datalist id="{{ f.listId }}">
+                  <sc-for list="{{ f.suggestions }}" as="s" hint-placeholder-count="4">
+                    <option value="{{ s.value }}"></option>
+                  </sc-for>
+                </datalist>
+              </sc-if>
             </sc-if>
 
             <sc-if value="{{ f.hint }}">
