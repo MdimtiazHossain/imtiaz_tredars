@@ -94,7 +94,7 @@ export const PRODUCTS = [
 
 export const CROPS = ['Maize', 'Paddy (BRRI-28)', 'Rice (Miniket)', 'Wheat', 'Potato', 'Onion'];
 
-export const WAREHOUSES = ['Naogaon Central Godown', 'Bogura Depot', 'Rangpur Store', 'Dinajpur Godown'];
+export const WAREHOUSES = ['Naogaon Central Godown', 'Bogura Depot', 'Rangpur Store', 'Dinajpur Godown', 'Jashore Cold Store'];
 
 export const UNITS = ['MT', 'Maund', 'Kg', 'Bag'];
 

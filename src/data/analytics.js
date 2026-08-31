@@ -16,7 +16,7 @@ export const DASHBOARD_KPIS = [
       {k:'Gross Profit', d:1486000, c:2385000, note:'margin 11.2%', up:'+1.4 pts', good:true},
       {k:'Outstanding Receivable', d:1580000, c:4270000, note:'42 open invoices', up:'৳12.4 L overdue', good:false},
       {k:'Outstanding Payable', d:2140000, c:1890000, note:'18 bills', up:'৳6.7 L due this week', good:false},
-      {k:'Current Stock Value', d:5620000, c:18740000, note:'4 warehouses', up:'6 crop batches', good:true},
+      {k:'Current Stock Value', d:5620000, c:18740000, note:'5 warehouses', up:'6 crop batches', good:true},
       {k:'Cash & Bank Balance', d:0, c:0, fix:4285000, note:'Cash, 2 banks, bKash', up:'+৳3.2 L today', good:true}
     ];
 
