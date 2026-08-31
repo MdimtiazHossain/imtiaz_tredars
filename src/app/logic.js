@@ -186,6 +186,7 @@ export class BusinessApp extends Component {
       invTab:'all', invSort:'value', acctTab:'receivable', setSec:'company', repSel:'crop-batch-profit', repLoading:false,
       retTab:'returns', returns:[], creditNotes:[], returnableDocs:[], returnsLoading:false, returnsError:'',
       partyStatements:{}, partyStatementLoading:'', partyStatementError:'',
+      repFilter:{},
       custSel:opening(data.customers, 'CUS-003', 'code'), custTab:'purchases',
       supSel:opening(data.suppliers, 'SUP-001', 'code'), supTab:'purchases',
       // The configured costing method, not a default the screen decides on.
@@ -256,6 +257,17 @@ export class BusinessApp extends Component {
       if (id === 'employees') this.loadAccessControl();
       if (id === 'audit') this.loadAudit();
       if (id === 'dealer-sales') this.loadInvoices();
+      if (id === 'reports') {
+        // The catalogue says which reports exist and what each can be narrowed
+        // by, so it belongs with the screen that needs it rather than being
+        // fetched on every sign-in whether or not anybody opens Reports.
+        this.loadReportCatalogue();
+        // The filter pickers offer the business's own records, so the master
+        // lists they read are fetched when the screen opens.
+        this.loadMasterList('warehouse'); this.loadMasterList('crop');
+        this.loadMasterList('product'); this.loadMasterList('category');
+        this.loadMasterList('employee');
+      }
       if (id === 'returns') this.loadReturns();
       if (id === 'customers') this.loadPartyStatement('CUSTOMER', this.selectedCustomer());
       if (id === 'suppliers') this.loadPartyStatement('SUPPLIER', this.selectedSupplier());
@@ -2877,6 +2889,7 @@ export class BusinessApp extends Component {
    */
   loadReportCatalogue() {
     if (!this.repository || typeof this.repository.reportCatalogue !== 'function') return;
+    if (this.state.reportCatalogue) return;
     this.repository.reportCatalogue().then(
       groups => {
         this.setState({ reportCatalogue: groups });
@@ -2904,13 +2917,11 @@ export class BusinessApp extends Component {
       return;
     }
 
-    const biz = this.state.biz;
     this.fire('Preparing ' + (format === 'pdf' ? 'PDF' : 'Excel') + ' file…', 'ok');
 
+    // The same narrowing the table on screen has, so the file matches it.
     this.repository
-      .exportReport(this.state.repSel, format, {
-        businessType: biz === 'dealer' ? 'DEALER' : biz === 'crop' ? 'BULK_CROP' : 'ALL',
-      })
+      .exportReport(this.state.repSel, format, this.reportQuery())
       .then(
         filename => this.fire(label + ' downloaded as ' + filename, 'ok'),
         err => this.fire('Could not export — ' + err.message, 'danger')
@@ -2928,6 +2939,131 @@ export class BusinessApp extends Component {
    * `report` method, so the bundled definitions are used and the original
    * simulated delay is kept -- which is what the existing tests exercise.
    */
+  /* ------------------------------------------------------- report filters */
+
+  /**
+   * The pickers the selected report can actually be narrowed by.
+   *
+   * The Reports Centre drew a row of chips — Warehouse, Customer, Supplier,
+   * Crop / product — that all read "All" and could not be changed, because
+   * nothing behind them did anything. A filter that cannot filter is worse
+   * than no filter: it tells the reader the report has been narrowed when it
+   * has not.
+   *
+   * The server says which filters each report supports, so a report is never
+   * offered one it would ignore.
+   */
+  reportFilters() {
+    const S = this.state;
+    const flat = (S.reportCatalogue || []).flatMap(g => g.items || []);
+    const current = flat.filter(r => r.id === S.repSel)[0];
+    const supported = (current && current.filters) || [];
+
+    const chosen = S.repFilter || {};
+    const dates = [
+      { key: 'from', label: 'From', value: chosen.from || '' },
+      { key: 'to', label: 'To', value: chosen.to || '' },
+    ].map(f => ({
+      ...f,
+      isDate: true,
+      isSelect: false,
+      options: [],
+      onChange: e => this.setReportFilter(f.key, e.target.value),
+    }));
+
+    const pickers = supported.map(f => ({
+      key: f.key,
+      label: f.label,
+      isDate: false,
+      isSelect: true,
+      value: chosen[f.key] ? String(chosen[f.key]) : '',
+      options: [{ value: '', label: 'All' }].concat(this.filterOptions(f.source)),
+      onChange: e => this.setReportFilter(f.key, e.target.value),
+    }));
+
+    const applied = pickers.filter(p => p.value).length + dates.filter(d => d.value).length;
+
+    return {
+      fields: dates.concat(pickers),
+      // The business-type toggle at the top of the app already narrows every
+      // report, so it is stated here rather than offered a second time.
+      businessType:
+        S.biz === 'all' ? 'All business' : S.biz === 'crop' ? 'Bulk Crop' : 'Dealer',
+      applied,
+      canClear: applied > 0,
+      clearLabel: 'Clear filters',
+      onClear: () => this.clearReportFilters(),
+      // A report with nothing to narrow it by says so, rather than showing an
+      // empty bar that looks broken.
+      note: supported.length
+        ? ''
+        : 'This report covers the whole business; it has nothing to narrow by.',
+    };
+  }
+
+  /**
+   * The records one picker offers.
+   *
+   * Drawn from the master lists already loaded, so the options are the
+   * business's own records rather than a fixed list that goes stale.
+   */
+  filterOptions(source) {
+    const rows =
+      source === 'warehouses'
+        ? this.state.masterRows.warehouse || []
+        : source === 'crops'
+          ? this.state.masterRows.crop || []
+          : source === 'products'
+            ? this.state.masterRows.product || this.data.products || []
+            : source === 'expenseCategories'
+              ? this.state.masterRows.category || this.data.expenseCategories || []
+              : source === 'employees'
+                ? this.state.masterRows.employee || this.data.employees || []
+                : this.data[source] || [];
+
+    return rows
+      .filter(r => r && r.id && r.name)
+      .map(r => ({ value: String(r.id), label: r.name }));
+  }
+
+  /** Narrow the report, and fetch it again. */
+  setReportFilter(key, value) {
+    this.setState(s => {
+      const next = { ...(s.repFilter || {}) };
+      if (value === '' || value === null) delete next[key];
+      else next[key] = value;
+      return { repFilter: next };
+    });
+    // `setState` applies the patch at once and only batches the repaint, so
+    // the report is refetched against the filter just chosen.
+    this.selectReport(this.state.repSel);
+  }
+
+  /** Put the report back to the whole business. */
+  clearReportFilters() {
+    this.setState({ repFilter: {} });
+    this.selectReport(this.state.repSel);
+  }
+
+  /**
+   * What the current filters mean as a query.
+   *
+   * One place, so the table on screen and the file that gets downloaded are
+   * narrowed to exactly the same thing.
+   */
+  reportQuery() {
+    const biz = this.state.biz;
+    const chosen = this.state.repFilter || {};
+    const query = {
+      businessType: biz === 'dealer' ? 'DEALER' : biz === 'crop' ? 'BULK_CROP' : 'ALL',
+    };
+    for (const [key, value] of Object.entries(chosen)) {
+      if (value === '' || value === undefined || value === null) continue;
+      query[key] = key === 'from' || key === 'to' ? value : Number(value);
+    }
+    return query;
+  }
+
   selectReport(reportId, page = 0) {
     this.setState({ repSel: reportId, repPage: page, repLoading: true });
 
@@ -2937,10 +3073,9 @@ export class BusinessApp extends Component {
       return;
     }
 
-    const biz = this.state.biz;
     this.repository
       .report(reportId, {
-        businessType: biz === 'dealer' ? 'DEALER' : biz === 'crop' ? 'BULK_CROP' : 'ALL',
+        ...this.reportQuery(),
         page: page + 1,
         pageSize: BusinessApp.REPORT_PAGE_SIZE,
       })
@@ -3435,8 +3570,7 @@ export class BusinessApp extends Component {
 
       audit:this.auditTable(),
       invoices:this.invoiceList(),
-      repFilters:[{k:'Period', v:'01–28 Aug 2026'}, {k:'Business type', v:S.biz === 'all' ? 'All' : S.biz === 'crop' ? 'Bulk Crop' : 'Dealer'},
-        {k:'Warehouse', v:'All'}, {k:'Customer', v:'All'}, {k:'Supplier', v:'All'}, {k:'Crop / product', v:'All'}, {k:'Currency', v:'BDT ৳'}],
+      repFilters:this.reportFilters(),
       skeleton:[{w:'92%'}, {w:'78%'}, {w:'85%'}, {w:'64%'}, {w:'88%'}, {w:'71%'}],
       // Read from the organisation record rather than restated here: the
       // trade licence and BIN go on invoices and cannot be a second copy.

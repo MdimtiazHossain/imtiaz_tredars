@@ -3555,3 +3555,207 @@ describe('the party statement', () => {
     expect(statementDocument(STATEMENT, {})).toContain('Over 90 days');
   });
 });
+
+describe('the report filter bar', () => {
+  /** The catalogue, saying which filters each report supports. */
+  const CATALOGUE = [
+    {
+      group: 'Sales',
+      items: [
+        {
+          id: 'sales-customer',
+          label: 'Customer-wise sales',
+          filters: [
+            { key: 'customerId', label: 'Customer', source: 'customers' },
+            { key: 'warehouseId', label: 'Warehouse', source: 'warehouses' },
+          ],
+        },
+        { id: 'sales-daily', label: 'Daily sales', filters: [] },
+      ],
+    },
+    {
+      group: 'Finance',
+      items: [{ id: 'fin-pl', label: 'Profit & loss', filters: [] }],
+    },
+  ];
+
+  const RESULT = {
+    columns: [
+      { key: 'customer', label: 'Customer', type: 'text' },
+      { key: 'sales', label: 'Sales', type: 'money' },
+    ],
+    rows: [{ customer: 'Messrs. Rahman Traders', sales: 482000 }],
+    totals: { sales: 482000 },
+    meta: { total: 1 },
+  };
+
+  /** A repository that serves the catalogue and records what was asked for. */
+  function serving() {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    const asked = [];
+    repository.reportCatalogue = async () => CATALOGUE;
+    repository.report = async (id, filters) => {
+      asked.push({ id, filters });
+      return RESULT;
+    };
+    repository.exportReport = async (id, format, filters) => {
+      asked.push({ id, format, filters });
+      return 'report.xlsx';
+    };
+    repository.listMaster = async (kind) => {
+      if (kind === 'warehouse') {
+        return [
+          { id: 3, code: 'WH-01', name: 'Bogura Central Godown' },
+          { id: 4, code: 'WH-02', name: 'Naogaon Depot' },
+        ];
+      }
+      return [];
+    };
+    return { repository, asked };
+  }
+
+  async function openReports() {
+    const { repository, asked } = serving();
+    const { app, root } = await mountApp({ repository });
+    app.go('reports')();
+    await new Promise((r) => setTimeout(r, 40));
+    app.renderNow();
+    return { app, root, asked };
+  }
+
+  /* --------------------------------------------------------------- the bar */
+
+  it('offers only the filters the selected report applies', async () => {
+    const { app } = await openReports();
+    app.selectReport('sales-customer');
+    await new Promise((r) => setTimeout(r, 30));
+
+    const fields = app.renderVals().repFilters.fields;
+    // Two dates, plus the two this report declared.
+    expect(fields.map((f) => f.label)).toEqual(['From', 'To', 'Customer', 'Warehouse']);
+    expect(fields.find((f) => f.label === 'Customer').isSelect).toBe(true);
+    expect(fields.find((f) => f.label === 'From').isDate).toBe(true);
+  });
+
+  it('says so when a report has nothing to narrow by', async () => {
+    const { app } = await openReports();
+    app.selectReport('fin-pl');
+    await new Promise((r) => setTimeout(r, 30));
+
+    const bar = app.renderVals().repFilters;
+    // Two date fields and no pickers, with a sentence rather than an empty bar
+    // that looks broken.
+    expect(bar.fields.filter((f) => f.isSelect)).toHaveLength(0);
+    expect(bar.note).toContain('nothing to narrow by');
+  });
+
+  it('offers the business own records, not a fixed list', async () => {
+    const { app } = await openReports();
+    app.selectReport('sales-customer');
+    await new Promise((r) => setTimeout(r, 30));
+
+    const warehouse = app.renderVals().repFilters.fields.find((f) => f.label === 'Warehouse');
+    expect(warehouse.options[0]).toEqual({ value: '', label: 'All' });
+    expect(warehouse.options.map((o) => o.label)).toContain('Bogura Central Godown');
+
+    const customer = app.renderVals().repFilters.fields.find((f) => f.label === 'Customer');
+    expect(customer.options.map((o) => o.label)).toContain(app.data.customers[0].name);
+  });
+
+  /* ------------------------------------------------------------- the effect */
+
+  it('asks the server again, narrowed, when a filter is chosen', async () => {
+    const { app, asked } = await openReports();
+    app.selectReport('sales-customer');
+    await new Promise((r) => setTimeout(r, 30));
+    const before = asked.length;
+
+    const customer = app.renderVals().repFilters.fields.find((f) => f.label === 'Customer');
+    customer.onChange({ target: { value: String(app.data.customers[0].id) } });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(asked.length).toBe(before + 1);
+    expect(asked[asked.length - 1].filters.customerId).toBe(app.data.customers[0].id);
+  });
+
+  it('sends a number, not the string a select hands over', async () => {
+    const { app, asked } = await openReports();
+    app.selectReport('sales-customer');
+    await new Promise((r) => setTimeout(r, 30));
+
+    app.setReportFilter('warehouseId', '3');
+    await new Promise((r) => setTimeout(r, 30));
+
+    // The API takes an id; a string would be coerced, but sending what is
+    // meant is what keeps the two ends agreeing.
+    expect(asked[asked.length - 1].filters.warehouseId).toBe(3);
+  });
+
+  it('keeps a date range as the date the picker gave', async () => {
+    const { app, asked } = await openReports();
+    app.selectReport('sales-customer');
+    await new Promise((r) => setTimeout(r, 30));
+
+    app.setReportFilter('from', '2026-08-01');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(asked[asked.length - 1].filters.from).toBe('2026-08-01');
+  });
+
+  it('drops a filter that has been cleared rather than sending nothing', async () => {
+    const { app, asked } = await openReports();
+    app.selectReport('sales-customer');
+    await new Promise((r) => setTimeout(r, 30));
+
+    app.setReportFilter('customerId', '1');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(asked[asked.length - 1].filters.customerId).toBe(1);
+
+    app.setReportFilter('customerId', '');
+    await new Promise((r) => setTimeout(r, 30));
+    // Absent, not an empty value the server would have to interpret.
+    expect(asked[asked.length - 1].filters).not.toHaveProperty('customerId');
+  });
+
+  it('counts what has been applied, and puts it all back', async () => {
+    const { app } = await openReports();
+    app.selectReport('sales-customer');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(app.renderVals().repFilters.canClear).toBe(false);
+
+    app.setReportFilter('customerId', '1');
+    app.setReportFilter('from', '2026-08-01');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(app.renderVals().repFilters.applied).toBe(2);
+    expect(app.renderVals().repFilters.canClear).toBe(true);
+
+    app.renderVals().repFilters.onClear();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(app.renderVals().repFilters.applied).toBe(0);
+  });
+
+  it('downloads the same report that is on screen', async () => {
+    const { app, asked } = await openReports();
+    app.selectReport('sales-customer');
+    await new Promise((r) => setTimeout(r, 30));
+    app.setReportFilter('customerId', '2');
+    await new Promise((r) => setTimeout(r, 30));
+
+    app.exportReport('xlsx', 'Customer-wise sales');
+    await new Promise((r) => setTimeout(r, 30));
+
+    // A file narrowed differently from the table it came from would be a
+    // download that quietly answers another question.
+    const download = asked[asked.length - 1];
+    expect(download.format).toBe('xlsx');
+    expect(download.filters.customerId).toBe(2);
+  });
+
+  it('still says which business line the whole app is showing', async () => {
+    const { app } = await openReports();
+    expect(app.renderVals().repFilters.businessType).toBe('All business');
+
+    app.setState({ biz: 'crop' });
+    app.renderNow();
+    expect(app.renderVals().repFilters.businessType).toBe('Bulk Crop');
+  });
+});

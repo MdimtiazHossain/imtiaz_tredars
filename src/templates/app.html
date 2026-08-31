@@ -1307,11 +1307,30 @@
                 </div>
               </div>
               <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:13px;border-top:1px solid #F0EEE9">
-                <sc-for list="{{ repFilters }}" as="f" hint-placeholder-count="6">
-                  <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid #E3E0DA;border-radius:20px;font-size:12px;background:#FBFAF8">
-                    <span style="color:#8C877F">{{ f.k }}</span><strong style="font-weight:600">{{ f.v }}</strong>
+                <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid #E3E0DA;border-radius:20px;font-size:12px;background:#FBFAF8">
+                  <span style="color:#8C877F">Business</span><strong style="font-weight:600">{{ repFilters.businessType }}</strong>
+                </span>
+                <sc-for list="{{ repFilters.fields }}" as="f" hint-placeholder-count="4">
+                  <span style="display:inline-flex;align-items:center;gap:7px;padding:4px 6px 4px 11px;border:1px solid #E3E0DA;border-radius:20px;font-size:12px;background:#FBFAF8">
+                    <span style="color:#8C877F;flex:none">{{ f.label }}</span>
+                    <sc-if value="{{ f.isDate }}">
+                      <input type="date" value="{{ f.value }}" onChange="{{ f.onChange }}" style="border:0;background:transparent;font:inherit;font-size:12px;color:#1A1817;padding:2px 4px;max-width:132px" />
+                    </sc-if>
+                    <sc-if value="{{ f.isSelect }}">
+                      <select value="{{ f.value }}" onChange="{{ f.onChange }}" style="border:0;background:transparent;font:inherit;font-size:12px;font-weight:600;color:#1A1817;padding:2px 4px;max-width:170px;cursor:pointer">
+                        <sc-for list="{{ f.options }}" as="o" hint-placeholder-count="3">
+                          <option value="{{ o.value }}">{{ o.label }}</option>
+                        </sc-for>
+                      </select>
+                    </sc-if>
                   </span>
                 </sc-for>
+                <sc-if value="{{ repFilters.canClear }}">
+                  <button onClick="{{ repFilters.onClear }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBEEF0">{{ repFilters.clearLabel }}</button>
+                </sc-if>
+                <sc-if value="{{ repFilters.note }}">
+                  <span style="font-size:12px;color:#8C877F;align-self:center">{{ repFilters.note }}</span>
+                </sc-if>
               </div>
             </div>
             <sc-if value="{{ rep.loading }}">

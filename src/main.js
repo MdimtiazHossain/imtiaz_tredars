@@ -114,7 +114,6 @@ async function mountApp(root, user) {
   // Dashboard totals are aggregated server-side where the repository supports
   // it; this is a no-op against the in-memory repository.
   app.loadDashboard();
-  app.loadReportCatalogue();
 
   // Debug handle for manual inspection in the browser console.
   /** @type {any} */ (window).__app = app;

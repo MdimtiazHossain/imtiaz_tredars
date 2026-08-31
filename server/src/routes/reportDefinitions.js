@@ -1,5 +1,5 @@
 import { query, num } from '../lib/db.js';
-import { col, dateAndBusiness } from './reportHelpers.js';
+import { col, dateAndBusiness, entityFilters } from './reportHelpers.js';
 import { profitAndLoss } from '../services/statementService.js';
 
 /**
@@ -16,6 +16,22 @@ import { profitAndLoss } from '../services/statementService.js';
  *   permission  what the caller must hold; the catalogue hides the rest
  *   run(req, q) returns { columns, rows, totals }
  */
+/**
+ * Which entity each report can be narrowed to, and the column each filter
+ * means. The definition advertises these to the catalogue and its own query
+ * applies them, so the two cannot drift apart.
+ */
+const FILTERS = {
+  'sales-person': { employeeId: 's.salesperson_id', customerId: 's.customer_id',
+    warehouseId: 's.warehouse_id' },
+  'pur-company': { companyId: 'p.company_id', warehouseId: 'p.warehouse_id' },
+  'pur-batch': { cropId: 'b.crop_id', warehouseId: 'b.warehouse_id', supplierId: 'b.supplier_id' },
+  'inv-current': { warehouseId: 's.warehouse_id', cropId: 'b.crop_id', productId: 's.product_id' },
+  'inv-valuation': { warehouseId: 's.warehouse_id' },
+  'profit-product': { productId: 'i.product_id', customerId: 's.customer_id' },
+  'profit-customer': { customerId: 's.customer_id', warehouseId: 's.warehouse_id' },
+};
+
 export const MORE_REPORTS = {
   /* ------------------------------------------------------------------ sales */
 
@@ -99,13 +115,15 @@ export const MORE_REPORTS = {
   },
 
   'sales-person': {
+    filters: FILTERS['sales-person'],
     order: 5,
     group: 'Sales',
     label: 'Salesperson-wise sales',
     permission: 'report.view',
     async run(req, q) {
       const params = [req.orgId];
-      const where = dateAndBusiness(q, params, 's');
+      const where =
+        dateAndBusiness(q, params, 's') + entityFilters(q, params, FILTERS['sales-person']);
       const { rows } = await query(
         `SELECT COALESCE(e.name, 'Unassigned') AS salesperson,
                 COALESCE(e.designation, '')    AS designation,
@@ -139,13 +157,15 @@ export const MORE_REPORTS = {
   /* --------------------------------------------------------------- purchase */
 
   'pur-company': {
+    filters: FILTERS['pur-company'],
     order: 7,
     group: 'Purchase',
     label: 'Company-wise purchase',
     permission: 'report.view',
     async run(req, q) {
       const params = [req.orgId];
-      const where = dateAndBusiness(q, params, 'p');
+      const where =
+        dateAndBusiness(q, params, 'p') + entityFilters(q, params, FILTERS['pur-company']);
       const { rows } = await query(
         `SELECT c.name AS company, c.district, COUNT(*)::int AS bills,
                 COALESCE(SUM(p.net_amount), 0) AS purchase,
@@ -180,11 +200,14 @@ export const MORE_REPORTS = {
   },
 
   'pur-batch': {
+    filters: FILTERS['pur-batch'],
     order: 8,
     group: 'Purchase',
     label: 'Batch-wise purchase',
     permission: 'report.view',
-    async run(req) {
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = entityFilters(q, params, FILTERS['pur-batch']);
       const { rows } = await query(
         `SELECT b.batch_no, c.name AS crop, COALESCE(s.name, '') AS supplier,
                 w.name AS warehouse, b.received_on, b.quantity_received,
@@ -195,9 +218,9 @@ export const MORE_REPORTS = {
            JOIN warehouses w ON w.id = b.warehouse_id
            LEFT JOIN suppliers s ON s.id = b.supplier_id
            LEFT JOIN crop_purchase_items i ON i.id = b.purchase_item_id
-          WHERE b.org_id = $1
+          WHERE b.org_id = $1 ${where}
           ORDER BY b.received_on DESC, b.id DESC`,
-        [req.orgId]
+        params
       );
       return {
         columns: [
@@ -228,12 +251,23 @@ export const MORE_REPORTS = {
   /* -------------------------------------------------------------- inventory */
 
   'inv-current': {
+    filters: FILTERS['inv-current'],
     order: 9,
     group: 'Inventory',
     label: 'Current stock',
     permission: 'report.view',
-    async run(req) {
-      // Both stock kinds in one shape, so they can be read as one list.
+    async run(req, q) {
+      // Two kinds of stock in one shape, so they read as one list -- which
+      // means two sets of columns to narrow against. Asking for one crop is
+      // asking not to see products at all, so the other branch is closed
+      // rather than left returning everything.
+      const params = [req.orgId];
+      const cropWhere = q.productId
+        ? ' AND false'
+        : entityFilters(q, params, { warehouseId: 's.warehouse_id', cropId: 'b.crop_id' });
+      const productWhere = q.cropId
+        ? ' AND false'
+        : entityFilters(q, params, { warehouseId: 's.warehouse_id', productId: 's.product_id' });
       const { rows } = await query(
         `SELECT 'Bulk Crop' AS kind, c.name AS item, w.name AS warehouse,
                 s.quantity, u.code AS unit, b.cost_per_unit AS unit_cost,
@@ -243,7 +277,7 @@ export const MORE_REPORTS = {
            JOIN crops c        ON c.id = b.crop_id
            JOIN warehouses w   ON w.id = s.warehouse_id
            JOIN units u        ON u.id = b.unit_id
-          WHERE s.org_id = $1 AND s.item_type = 'CROP_BATCH' AND s.quantity > 0
+          WHERE s.org_id = $1 AND s.item_type = 'CROP_BATCH' AND s.quantity > 0 ${cropWhere}
           UNION ALL
          SELECT 'Dealer', p.name, w.name, s.quantity, u.code, s.avg_cost,
                 s.quantity * s.avg_cost
@@ -251,9 +285,9 @@ export const MORE_REPORTS = {
            JOIN products p   ON p.id = s.product_id
            JOIN warehouses w ON w.id = s.warehouse_id
            JOIN units u      ON u.id = p.unit_id
-          WHERE s.org_id = $1 AND s.item_type = 'PRODUCT' AND s.quantity > 0
+          WHERE s.org_id = $1 AND s.item_type = 'PRODUCT' AND s.quantity > 0 ${productWhere}
           ORDER BY 7 DESC`,
-        [req.orgId]
+        params
       );
       return {
         columns: [
@@ -280,6 +314,7 @@ export const MORE_REPORTS = {
   },
 
   'inv-valuation': {
+    filters: FILTERS['inv-valuation'],
     order: 10,
     group: 'Inventory',
     label: 'Stock valuation',
@@ -328,13 +363,15 @@ export const MORE_REPORTS = {
   /* ----------------------------------------------------------------- profit */
 
   'profit-product': {
+    filters: FILTERS['profit-product'],
     order: 13,
     group: 'Profit',
     label: 'Product-wise profit',
     permission: 'report.profit',
     async run(req, q) {
       const params = [req.orgId];
-      const where = dateAndBusiness(q, params, 's');
+      const where =
+        dateAndBusiness(q, params, 's') + entityFilters(q, params, FILTERS['profit-product']);
       const { rows } = await query(
         `SELECT p.name AS product,
                 COALESCE(SUM(i.quantity), 0)  AS qty,
@@ -375,13 +412,15 @@ export const MORE_REPORTS = {
   },
 
   'profit-customer': {
+    filters: FILTERS['profit-customer'],
     order: 14,
     group: 'Profit',
     label: 'Customer-wise profit',
     permission: 'report.profit',
     async run(req, q) {
       const params = [req.orgId];
-      const where = dateAndBusiness(q, params, 's');
+      const where =
+        dateAndBusiness(q, params, 's') + entityFilters(q, params, FILTERS['profit-customer']);
       const { rows } = await query(
         `SELECT c.name AS customer, c.customer_type, COUNT(*)::int AS invoices,
                 COALESCE(SUM(s.net_amount), 0)    AS sales,

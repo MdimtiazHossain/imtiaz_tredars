@@ -4,7 +4,13 @@ import { query, num } from '../lib/db.js';
 import { handler, ok, parseQuery, listQuerySchema, paginate, pageMeta } from '../lib/http.js';
 import { requirePermission, canSeeProfit } from '../middleware/auth.js';
 import { forbidden, notFound } from '../lib/errors.js';
-import { col, dateAndBusiness } from './reportHelpers.js';
+import {
+  col,
+  dateAndBusiness,
+  entityFilters,
+  describeEntityFilters,
+  FILTER_LABELS,
+} from './reportHelpers.js';
 import { buildWorkbook, buildPdf, exportFilename, describeFilters } from '../lib/export.js';
 import { MORE_REPORTS } from './reportDefinitions.js';
 
@@ -20,16 +26,46 @@ import { MORE_REPORTS } from './reportDefinitions.js';
  */
 const router = Router();
 
+/**
+ * Which entity each report can be narrowed to, and the column each filter
+ * means. The definition advertises these to the catalogue and its own query
+ * applies them, so the two cannot drift apart.
+ */
+const FILTERS = {
+  'sales-customer': { customerId: 's.customer_id', warehouseId: 's.warehouse_id',
+    employeeId: 's.salesperson_id' },
+  'sales-product': { productId: 'i.product_id', customerId: 's.customer_id',
+    warehouseId: 's.warehouse_id' },
+  'pur-supplier': { supplierId: 'p.supplier_id', warehouseId: 'p.warehouse_id' },
+  'crop-batch-profit': { cropId: 'b.crop_id', warehouseId: 'b.warehouse_id',
+    supplierId: 'b.supplier_id' },
+  // Aging is one row per party whatever the party's kind, so all three point
+  // at the same column; only one of them is ever sent.
+  'fin-aging': { customerId: 'a.party_id', supplierId: 'a.party_id', companyId: 'a.party_id' },
+  'inv-dead': { cropId: 'b.crop_id', warehouseId: 'b.warehouse_id' },
+  'fin-expense': { categoryId: 'e.category_id' },
+};
 
-/** Shared filter shape across every report. */
+/**
+ * A cleared picker sends an empty value, which means "no filter" rather than
+ * "filter by nothing". Coercing that to a number would make it zero and fail
+ * the positive check, so a report would refuse to load the moment somebody
+ * cleared a filter they had set.
+ */
+const entityId = z.preprocess(
+  (v) => (v === '' || v === null ? undefined : v),
+  z.coerce.number().int().positive().optional()
+);
+
 const reportQuery = listQuerySchema.extend({
-  warehouseId: z.coerce.number().int().positive().optional(),
-  customerId: z.coerce.number().int().positive().optional(),
-  supplierId: z.coerce.number().int().positive().optional(),
-  companyId: z.coerce.number().int().positive().optional(),
-  productId: z.coerce.number().int().positive().optional(),
-  cropId: z.coerce.number().int().positive().optional(),
-  employeeId: z.coerce.number().int().positive().optional(),
+  warehouseId: entityId,
+  customerId: entityId,
+  supplierId: entityId,
+  companyId: entityId,
+  productId: entityId,
+  cropId: entityId,
+  employeeId: entityId,
+  categoryId: entityId,
 });
 
 
@@ -212,13 +248,15 @@ router.get(
 /** Report definitions: each returns { columns, rows, totals }. */
 const REPORTS = {
   'sales-customer': {
+    filters: FILTERS['sales-customer'],
     order: 3,
     group: 'Sales',
     label: 'Customer-wise sales',
     permission: 'report.view',
     async run(req, q) {
       const params = [req.orgId];
-      const where = dateAndBusiness(q, params, 's');
+      const where =
+        dateAndBusiness(q, params, 's') + entityFilters(q, params, FILTERS['sales-customer']);
       const { rows } = await query(
         `SELECT c.name AS customer, c.district, COUNT(*)::int AS invoices,
                 COALESCE(SUM(s.net_amount), 0) AS sales,
@@ -250,13 +288,15 @@ const REPORTS = {
   },
 
   'sales-product': {
+    filters: FILTERS['sales-product'],
     order: 4,
     group: 'Sales',
     label: 'Product-wise sales',
     permission: 'report.view',
     async run(req, q) {
       const params = [req.orgId];
-      const where = dateAndBusiness(q, params, 's');
+      const where =
+        dateAndBusiness(q, params, 's') + entityFilters(q, params, FILTERS['sales-product']);
       const { rows } = await query(
         `SELECT p.name AS product, pc.name AS category,
                 COALESCE(SUM(i.quantity), 0) AS qty,
@@ -300,13 +340,15 @@ const REPORTS = {
   },
 
   'pur-supplier': {
+    filters: FILTERS['pur-supplier'],
     order: 6,
     group: 'Purchase',
     label: 'Supplier-wise purchase',
     permission: 'report.view',
     async run(req, q) {
       const params = [req.orgId];
-      const where = dateAndBusiness(q, params, 'p');
+      const where =
+        dateAndBusiness(q, params, 'p') + entityFilters(q, params, FILTERS['pur-supplier']);
       const { rows } = await query(
         `SELECT s.name AS supplier, s.supplier_type, s.district,
                 COALESCE(SUM(p.net_amount), 0) AS purchase,
@@ -343,11 +385,14 @@ const REPORTS = {
   },
 
   'crop-batch-profit': {
+    filters: FILTERS['crop-batch-profit'],
     order: 12,
     group: 'Profit',
     label: 'Batch-wise crop profit',
     permission: 'report.profit',
-    async run(req) {
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = entityFilters(q, params, FILTERS['crop-batch-profit']);
       const { rows } = await query(
         `SELECT b.batch_no, c.name AS crop, s.name AS supplier,
                 b.quantity_received, b.cost_per_unit,
@@ -359,10 +404,10 @@ const REPORTS = {
            LEFT JOIN suppliers s ON s.id = b.supplier_id
            LEFT JOIN crop_batch_allocations a ON a.batch_id = b.id
            LEFT JOIN crop_sale_items i ON i.id = a.sale_item_id
-          WHERE b.org_id = $1
+          WHERE b.org_id = $1 ${where}
           GROUP BY b.id, b.batch_no, c.name, s.name, b.quantity_received, b.cost_per_unit
           ORDER BY b.received_on DESC`,
-        [req.orgId]
+        params
       );
       return {
         columns: [
@@ -398,12 +443,18 @@ const REPORTS = {
   },
 
   'fin-aging': {
+    filters: FILTERS['fin-aging'],
     order: 16,
     group: 'Finance',
     label: 'Customer outstanding & aging',
     permission: 'report.view',
     async run(req, q) {
       const bt = q.businessType === 'ALL' ? null : q.businessType;
+      // Aging is one row per party whatever kind of party it is, so narrowing
+      // to a customer and narrowing to a company are the same condition on the
+      // same column; only one of them is ever sent.
+      const params = [req.orgId, bt];
+      const where = entityFilters(q, params, FILTERS['fin-aging']);
       const { rows } = await query(
         `SELECT COALESCE(c.name, co.name) AS party,
                 COALESCE(c.customer_type, 'Company') AS type,
@@ -417,10 +468,10 @@ const REPORTS = {
            FROM v_receivable_aging a
            LEFT JOIN customers c ON a.party_type = 'CUSTOMER' AND c.id = a.party_id
            LEFT JOIN companies co ON a.party_type = 'COMPANY' AND co.id = a.party_id
-          WHERE a.org_id = $1 AND ($2::business_type IS NULL OR a.business_type = $2)
+          WHERE a.org_id = $1 AND ($2::business_type IS NULL OR a.business_type = $2) ${where}
           GROUP BY COALESCE(c.name, co.name), COALESCE(c.customer_type, 'Company')
           ORDER BY total DESC`,
-        [req.orgId, bt]
+        params
       );
       return {
         columns: [
@@ -451,11 +502,14 @@ const REPORTS = {
   },
 
   'inv-dead': {
+    filters: FILTERS['inv-dead'],
     order: 11,
     group: 'Inventory',
     label: 'Dead stock',
     permission: 'report.view',
-    async run(req) {
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = entityFilters(q, params, FILTERS['inv-dead']);
       const { rows } = await query(
         `SELECT b.batch_no, c.name AS crop, w.name AS warehouse, b.quantity_remaining,
                 b.cost_per_unit, (CURRENT_DATE - b.received_on)::int AS age_days
@@ -463,9 +517,9 @@ const REPORTS = {
            JOIN crops c ON c.id = b.crop_id
            JOIN warehouses w ON w.id = b.warehouse_id
           WHERE b.org_id = $1 AND b.is_active AND b.quantity_remaining > 0
-            AND b.received_on < CURRENT_DATE - 60
+            AND b.received_on < CURRENT_DATE - 60 ${where}
           ORDER BY b.received_on ASC`,
-        [req.orgId]
+        params
       );
       return {
         columns: [
@@ -497,13 +551,15 @@ const REPORTS = {
   },
 
   'fin-expense': {
+    filters: FILTERS['fin-expense'],
     order: 19,
     group: 'Finance',
     label: 'Expense register',
     permission: 'expense.view',
     async run(req, q) {
       const params = [req.orgId];
-      const where = dateAndBusiness(q, params, 'e');
+      const where =
+        dateAndBusiness(q, params, 'e') + entityFilters(q, params, FILTERS['fin-expense']);
       const { rows } = await query(
         `SELECT ec.name AS category, e.business_type, COUNT(*)::int AS vouchers,
                 COALESCE(SUM(e.amount), 0) AS amount
@@ -549,7 +605,18 @@ function buildCatalogue(user) {
     // Do not offer a report this user would be refused.
     if (def.permission && !user.permissions.includes(def.permission)) continue;
     if (!groups.has(def.group)) groups.set(def.group, []);
-    groups.get(def.group).push({ id, label: def.label, order: def.order ?? 999 });
+    groups.get(def.group).push({
+      id,
+      label: def.label,
+      order: def.order ?? 999,
+      // Which pickers the filter bar should draw for this report. A report
+      // that cannot be narrowed by warehouse should not offer a warehouse
+      // picker that does nothing, which is what every report used to do.
+      filters: Object.keys(def.filters || {}).map((key) => ({
+        key,
+        ...FILTER_LABELS[key],
+      })),
+    });
   }
 
   // Present them in the order the design lays out rather than insertion order.
@@ -558,7 +625,7 @@ function buildCatalogue(user) {
     items: groups
       .get(group)
       .sort((a, b) => a.order - b.order)
-      .map(({ id, label }) => ({ id, label })),
+      .map(({ id, label, filters }) => ({ id, label, filters })),
   }));
 }
 
@@ -596,7 +663,11 @@ router.get(
     const result = await definition.run(req, q);
     const report = {
       title: definition.label,
-      subtitle: describeFilters(q),
+      // The period, the business line, and whatever the report was narrowed
+      // to. A filed report has to say what it covers.
+      subtitle: [describeFilters(q)]
+        .concat(await describeEntityFilters(query, req.orgId, q, definition.filters))
+        .join(' · '),
       columns: result.columns,
       rows: result.rows,
       totals: result.totals,
