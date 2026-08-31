@@ -15,6 +15,7 @@ import {
 } from '../lib/http.js';
 import { requirePermission, canSeeProfit } from '../middleware/auth.js';
 import { notFound } from '../lib/errors.js';
+import { taxDocument } from '../services/taxService.js';
 import {
   createDealerPurchase,
   postDealerPurchase,
@@ -58,7 +59,19 @@ router.post(
   requirePermission('dealer.purchase.view'),
   handler(async (req, res) => {
     const body = parseBody(purchaseSchema.partial({ companyId: true, warehouseId: true }), req);
-    ok(res, computePurchaseTotals(body));
+    // Taxed the same way posting would tax it. A preview exists to say what a
+    // document will come to, and one that leaves the VAT off says a number
+    // nobody will ever be invoiced.
+    const totals = await withTransaction((client) =>
+      taxDocument(client, {
+        orgId: req.orgId,
+        input: body,
+        priced: computePurchaseTotals(body),
+        table: 'products',
+        itemIdOf: (l) => l.productId,
+      })
+    );
+    ok(res, previewShape(totals));
   })
 );
 
@@ -200,7 +213,20 @@ router.post(
       [body.warehouseId, body.lines.map((l) => l.productId)]
     );
     const costMap = new Map(rows.map((r) => [Number(r.product_id), num(r.avg_cost)]));
-    const totals = computeSaleTotals(body, (pid) => costMap.get(Number(pid)) || 0);
+    const priced = computeSaleTotals(body, (pid) => costMap.get(Number(pid)) || 0);
+    const totals = await withTransaction((client) =>
+      taxDocument(client, {
+        orgId: req.orgId,
+        input: body,
+        priced,
+        table: 'products',
+        itemIdOf: (l) => l.productId,
+      })
+    );
+    // Profit is on the goods; the tax was never the business's to earn.
+    totals.profit = totals.net - totals.cost;
+    totals.margin = totals.net ? (totals.profit / totals.net) * 100 : 0;
+    totals.due = totals.total - num(body.paidAmount);
 
     if (!canSeeProfit(req.user)) {
       delete totals.cost;
@@ -208,7 +234,7 @@ router.post(
       delete totals.margin;
       totals.lines = totals.lines.map(({ unitCost: _u, lineCost: _c, ...rest }) => rest);
     }
-    ok(res, totals);
+    ok(res, previewShape(totals));
   })
 );
 
@@ -444,6 +470,17 @@ router.get(
 function taxLabelFor(lines) {
   const rates = new Set(lines.map((l) => num(l.tax_rate)).filter((r) => r > 0));
   return rates.size === 1 ? `VAT ${[...rates][0]}%` : 'VAT';
+}
+
+/**
+ * What a preview hands back.
+ *
+ * The tax context is loaded to work the figures out and has no business
+ * leaving the server -- it carries every rate the organisation holds, which is
+ * master data the caller can ask for directly if it wants it.
+ */
+function previewShape({ context: _context, ...totals }) {
+  return totals;
 }
 
 export default router;

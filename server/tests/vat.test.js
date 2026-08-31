@@ -241,6 +241,63 @@ suite('vat', () => {
     expect(await balanceOf(LEDGER.OUTPUT_VAT)).toBe(before);
   });
 
+  it('previews what posting would actually charge', async () => {
+    await chargeProductAt(context.productId, 'VAT15');
+
+    const preview = await request(app)
+      .post('/api/dealer/sales/preview')
+      .set(auth())
+      .send({
+        txnDate: today(),
+        customerId: context.customerId,
+        warehouseId: context.warehouseId,
+        lines: [{ productId: context.productId, quantity: 10, rate: 1000, discountPct: 0 }],
+      });
+    expect(preview.status, JSON.stringify(preview.body.error)).toBe(200);
+
+    await buy({ quantity: 10, rate: 800 });
+    const posted = await sell({ quantity: 10, rate: 1000 });
+
+    // A preview exists to say what a document will come to. One that leaves
+    // the VAT off says a number nobody will ever be invoiced.
+    expect(money(preview.body.data.net)).toBe(money(posted.totals.net));
+    expect(money(preview.body.data.tax)).toBe(money(posted.totals.tax));
+    expect(money(preview.body.data.total)).toBe(money(posted.totals.total));
+  });
+
+  it('previews a purchase the same way', async () => {
+    await chargeProductAt(context.productId, 'VAT15');
+
+    const preview = await request(app)
+      .post('/api/dealer/purchases/preview')
+      .set(auth())
+      .send({
+        txnDate: today(),
+        companyId: context.companyId,
+        warehouseId: context.warehouseId,
+        lines: [{ productId: context.productId, quantity: 10, rate: 900, discountPct: 0 }],
+      });
+    const posted = await buy({ quantity: 10, rate: 900 });
+
+    expect(money(preview.body.data.tax)).toBe(money(posted.totals.tax));
+    expect(money(preview.body.data.total)).toBe(money(posted.totals.total));
+  });
+
+  it('does not hand the rate table back with a preview', async () => {
+    const preview = await request(app)
+      .post('/api/dealer/sales/preview')
+      .set(auth())
+      .send({
+        txnDate: today(),
+        customerId: context.customerId,
+        warehouseId: context.warehouseId,
+        lines: [{ productId: context.productId, quantity: 1, rate: 100, discountPct: 0 }],
+      });
+    // The tax context is loaded to work the figures out; it carries every rate
+    // the organisation holds and has no business riding along in the answer.
+    expect(preview.body.data).not.toHaveProperty('context');
+  });
+
   /* ------------------------------------------------------- inclusive pricing */
 
   it('takes the tax out of a price that already contains it', async () => {
