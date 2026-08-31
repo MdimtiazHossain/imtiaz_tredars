@@ -3974,11 +3974,41 @@ describe('vat on the crop screens', () => {
     const cp = app.renderVals().cp;
     expect(cp.showVat).toBe(true);
     expect(cp.vatText).toBe(money(1500));
-    // The transport is this business's own cost and carries no supplier VAT,
-    // so the landed cost is goods plus transport and the supplier is owed the
-    // goods plus their tax.
+    // The transport is this business's own cost, paid to somebody else, so it
+    // belongs to the landed cost and to no part of the farmer's bill. The
+    // farmer is owed their goods and their tax, and nothing else.
     expect(cp.totalText).toBe(money(10500));
-    expect(cp.owedText).toBe(money(12000));
+    expect(cp.owedText).toBe(money(11500));
+  });
+
+  it('does not put this business own costs on the farmer bill', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 6 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 500,
+        loading: 0, unloading: 0, other: 0, advance: 2000 },
+    });
+    app.renderNow();
+
+    const cp = app.renderVals().cp;
+    // 10,000 of crop less a 2,000 advance. The 500 of transport is arranged
+    // and paid by this business, and a farmer asked to carry it would be
+    // underpaid by exactly that.
+    expect(cp.balText).toBe(money(8000));
+    expect(cp.totalText).toBe(money(10500));
+  });
+
+  it('weighs the whole outlay against the approval limit', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 1 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 45000, transport: 0,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    app.renderNow();
+
+    // 450,000 of crop sits inside a 500,000 limit; with the supplier's VAT the
+    // purchase commits 517,500 and does not. What leaves the business is what
+    // the limit is there to catch.
+    expect(app.renderVals().cp.needAppr).toBe(true);
   });
 
   it('keeps reclaimable tax out of what the crop cost per unit', async () => {
@@ -4004,7 +4034,10 @@ describe('vat on the crop screens', () => {
 
     const text = panelText(app);
     expect(text).toContain(`VAT 15%${money(1500)}`);
-    expect(text).toContain(`Payable to supplier${money(12000)}`);
+    expect(text).toContain(`Payable to supplier${money(11500)}`);
+    // The landed cost keeps its own chain, and the reclaimable tax stays out
+    // of it, so the two totals are readable side by side.
+    expect(text).toContain(`Total landed cost${money(10500)}`);
   });
 
   it('charges nothing when buying exempt produce from a farmer', async () => {

@@ -2204,10 +2204,16 @@ export class BusinessApp extends Component {
       { side:'PURCHASE', rateIdOf:l => cropRate(l.crop) });
     const pv = quotedValue - tax.inclusiveAdjustment;
     const add = (+f.transport || 0) + (+f.loading || 0) + (+f.unloading || 0) + (+f.other || 0);
-    // What the crop cost to get into the godown, and what the supplier is
-    // owed. Reclaimable tax is not a cost, so it stays out of the unit cost.
+    // What the crop cost to get into the godown. Reclaimable tax is not a
+    // cost, so it stays out of the unit cost.
     const total = pv + add, cpu = net ? total / net : 0;
-    const owed = total + tax.amount;
+    // What the farmer is owed is their goods and their VAT. The transport and
+    // loading are arranged and paid by this business, to other people, so they
+    // are part of the landed cost and no part of the farmer's bill.
+    const owed = pv + tax.amount;
+    // The approval limit is about the size of the commitment, which is every
+    // taka going out on this purchase.
+    const outlay = total + tax.amount;
     const last = this.data.lastRate[f.crop] || 0, diff = (+f.rate || 0) - last;
     const sup = this.data.suppliers.filter(s => s.code === f.sup)[0] || this.data.suppliers[0] || BLANK_PARTY;
     const adv = +f.advance || 0;
@@ -2216,7 +2222,7 @@ export class BusinessApp extends Component {
       showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), owedText:money(owed),
       cpuText:money(cpu), cpuNum:cpu, perUnitLabel:'per ' + f.unit, lastText:money(last),
       diffText:(diff >= 0 ? '+' : '−') + money(Math.abs(diff)).slice(1) + ' vs last purchase', diffColor:diff > 0 ? C.dngr : C.crop,
-      advText:money(adv), balText:money(owed - adv), needAppr:owed > this.limit(), limitText:money(this.limit()),
+      advText:money(adv), balText:money(owed - adv), needAppr:outlay > this.limit(), limitText:money(this.limit()),
       batchId:'BC-2608-0' + (12 + S.cropLog.length - 4), purNo:'PC-2608-014',
       crops:this.data.crops, grades:this.data.grades, whs:this.data.warehouses, units:this.data.units, sups:this.data.suppliers,
       log:table([column('Purchase No'), column('Date'), column('Supplier'), column('Crop'), column('Qty', 'right'), column('Rate', 'right'), column('Landed cost / unit', 'right'), column('Total', 'right'), column('Status', 'center')],
