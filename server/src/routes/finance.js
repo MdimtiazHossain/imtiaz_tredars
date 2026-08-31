@@ -7,6 +7,7 @@ import {
   created,
   parseBody,
   parseQuery,
+  parseParams,
   listQuerySchema,
   paginate,
   pageMeta,
@@ -25,7 +26,8 @@ import {
   LEDGER,
 } from '../services/financeService.js';
 import { evaluateRules, requestApproval } from '../services/approvalService.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { partyStatement } from '../services/partyService.js';
+import { badRequest, notFound, forbidden } from '../lib/errors.js';
 import { registerMasterCrud } from './masterCrud.js';
 
 /** Payments, expenses, cash/bank accounts, receivables and payables. */
@@ -813,5 +815,59 @@ router.get(
     ok(res, await balanceSheet(req.orgId));
   })
 );
+
+/* -------------------------------------------------------- party statement */
+
+/**
+ * One party's account, as a statement.
+ *
+ * The permission is the one that governs seeing what a party owes -- the same
+ * check the customer and supplier screens already sit behind -- because that
+ * is exactly what this returns, in more detail.
+ */
+const statementSchema = z.object({
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+});
+
+const PARTY_PERMISSION = {
+  CUSTOMER: 'customer.view',
+  SUPPLIER: 'supplier.view',
+  COMPANY: 'company.view',
+};
+
+router.get(
+  '/parties/:partyType/:id/statement',
+  handler(async (req, res) => {
+    const { partyType, id } = parseParams(
+      z.object({
+        partyType: z.enum(['CUSTOMER', 'SUPPLIER', 'COMPANY']),
+        id: z.coerce.number().int().positive(),
+      }),
+      req
+    );
+    // Checked here rather than by middleware because which permission applies
+    // depends on which kind of party is being asked for.
+    requirePartyPermission(req, partyType);
+
+    const q = parseQuery(statementSchema, req);
+    const statement = await partyStatement(req.orgId, {
+      partyType,
+      partyId: id,
+      from: q.from,
+      to: q.to,
+    });
+    ok(res, statement);
+  })
+);
+
+/** Refuse a statement for a party this session may not see at all. */
+function requirePartyPermission(req, partyType) {
+  const code = PARTY_PERMISSION[partyType];
+  const held = (req.user && req.user.permissions) || [];
+  if (!held.includes(code)) {
+    throw forbidden(`You do not have permission to view ${partyType.toLowerCase()} records.`);
+  }
+}
 
 export default router;

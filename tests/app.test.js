@@ -5,6 +5,7 @@ import formModalTemplate from '../src/templates/formModal.html?raw';
 import { BusinessApp } from '../src/app/logic.js';
 import { Repository } from '../src/data/repository.js';
 import { money } from '../src/domain/format.js';
+import { statementDocument } from '../src/app/statementPrint.js';
 
 /** Mount the real design templates against the real screen logic. */
 async function mountApp(props = {}) {
@@ -3272,5 +3273,285 @@ describe('vat', () => {
     // Null, not undefined: clearing it really does put the product back on the
     // organisation's default.
     expect(sent.taxRateId).toBeNull();
+  });
+});
+
+describe('the party statement', () => {
+  /** One customer's account, as the API reports it. */
+  const STATEMENT = {
+    party: {
+      id: 1, partyType: 'CUSTOMER', code: 'CUS-001', name: 'Messrs. Rahman Traders',
+      nameBn: 'মেসার্স রহমান ট্রেডার্স', type: 'Dealer', mobile: '01712-335566',
+      address: 'Badarganj, Rangpur', binNo: '004601573-0101', vatRegistered: true,
+      creditLimit: 1500000, creditDays: 21,
+    },
+    period: { from: '2026-08-01', to: null },
+    opening: 282000,
+    lines: [
+      {
+        date: '2026-08-14', documentNo: 'DS-2608-188', documentType: 'dealer_sales',
+        documentLabel: 'Dealer sale', particulars: 'Dealer sale DS-2608-188 to Messrs. Rahman Traders',
+        debit: 445000, credit: 0, balance: 727000,
+      },
+      {
+        date: '2026-08-14', documentNo: 'RC-2608-266', documentType: 'payments',
+        documentLabel: 'Payment', particulars: 'Received from party for RC-2608-266',
+        debit: 0, credit: 245000, balance: 482000,
+      },
+      {
+        date: '2026-08-21', documentNo: 'CN-2608-004', documentType: 'credit_notes',
+        documentLabel: 'Credit note', particulars: 'Credit note CN-2608-004: short delivery',
+        debit: 0, credit: 12000, balance: 470000,
+      },
+    ],
+    closing: 470000,
+    totals: { debit: 445000, credit: 257000, balance: 470000, direction: 'RECEIVABLE', outstanding: 470000 },
+    aging: { current: 300000, b30: 120000, b60: 50000, b90: 0, b90plus: 0, total: 470000 },
+    documents: [
+      {
+        id: 9, no: 'DS-2608-188', date: '2026-08-14', documentType: 'dealer_sales',
+        label: 'Dealer sale', side: 'SALE', items: 3, net: 445000, tax: 0,
+        amount: 445000, paid: 245000, due: 200000, status: 'POSTED',
+      },
+    ],
+    payments: [
+      {
+        id: 4, no: 'RC-2608-266', date: '2026-08-14', direction: 'RECEIPT', amount: 245000,
+        onAccount: 0, against: 'DS-2608-188', method: 'Cash', account: 'Office cash — Bogura',
+        reference: '', status: 'POSTED',
+      },
+      {
+        id: 5, no: 'RC-2608-270', date: '2026-08-18', direction: 'RECEIPT', amount: 10000,
+        onAccount: 10000, against: 'On account', method: 'bKash', account: 'bKash Merchant',
+        reference: '', status: 'POSTED',
+      },
+    ],
+    isEmpty: false,
+  };
+
+  /** A supplier's account, which runs the other way. */
+  const SUPPLIER_STATEMENT = {
+    ...STATEMENT,
+    party: { ...STATEMENT.party, partyType: 'SUPPLIER', code: 'SUP-001', name: 'Abdul Karim Mondol' },
+    opening: 0,
+    lines: [
+      {
+        date: '2026-08-12', documentNo: 'PC-2608-013', documentType: 'crop_purchases',
+        documentLabel: 'Crop purchase', particulars: 'Payable to Abdul Karim Mondol for PC-2608-013',
+        debit: 0, credit: 520000, balance: -520000,
+      },
+    ],
+    closing: -520000,
+    totals: { debit: 0, credit: 520000, balance: -520000, direction: 'PAYABLE', outstanding: 520000 },
+    documents: [],
+    payments: [],
+  };
+
+  function serving(statement = STATEMENT) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.partyStatement = async (partyType) => {
+      if (statement instanceof Error) throw statement;
+      return partyType === 'SUPPLIER' ? SUPPLIER_STATEMENT : statement;
+    };
+    return repository;
+  }
+
+  async function openParties(screen, repository = serving()) {
+    const { app, root } = await mountApp({ repository });
+    app.go(screen)();
+    await new Promise((r) => setTimeout(r, 40));
+    app.renderNow();
+    return { app, root };
+  }
+
+  /* -------------------------------------------------------------- the ledger */
+
+  it('opens the ledger on the balance the period started at', async () => {
+    const { app } = await openParties('customers');
+    app.setState({ custTab: 'ledger' });
+    app.renderNow();
+
+    const rows = app.renderVals().cust.ledger.rows;
+    // The opening balance is a line of the statement, not a caption above it:
+    // a reader adds the column down and arrives at the closing figure.
+    expect(rows[0].cells[2].text).toBe('Opening balance');
+    expect(rows[0].cells[5].text).toBe(money(282000));
+    expect(rows).toHaveLength(STATEMENT.lines.length + 1);
+  });
+
+  it('runs the balance down to what the party owes', async () => {
+    const { app, root } = await openParties('customers');
+    app.setState({ custTab: 'ledger' });
+    app.renderNow();
+
+    const rows = app.renderVals().cust.ledger.rows;
+    expect(rows[rows.length - 1].cells[5].text).toBe(money(470000));
+    // Every line names the document it came from, which is what settles a
+    // dispute; "Dealer sale" alone does not.
+    expect(root.textContent).toContain('DS-2608-188');
+    expect(root.textContent).toContain('CN-2608-004');
+  });
+
+  it('says which way the balance points rather than showing a sign', async () => {
+    const owed = await openParties('customers');
+    expect(owed.app.renderVals().cust.balanceText).toBe(money(470000) + ' owed to us');
+
+    const owing = await openParties('suppliers');
+    // A farmer handed a page reading "−5,20,000" has been handed a puzzle.
+    expect(owing.app.renderVals().sup.balanceText).toBe(money(520000) + ' we owe');
+  });
+
+  /* ------------------------------------------------------------- the history */
+
+  it('lists the documents raised for this party, with what is left on each', async () => {
+    const { app, root } = await openParties('customers');
+    const rows = app.renderVals().cust.purchases.rows;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells[0].text).toBe('DS-2608-188');
+    expect(rows[0].cells[5].text).toBe(money(200000));
+    expect(root.textContent).toContain('DS-2608-188');
+  });
+
+  it('names what each receipt settled, or says it sits on account', async () => {
+    const { app } = await openParties('customers');
+    app.setState({ custTab: 'payments' });
+    app.renderNow();
+
+    const rows = app.renderVals().cust.payments.rows;
+    expect(rows[0].cells[3].text).toBe('DS-2608-188');
+    // Money not tied to an invoice is what makes the receipts and the balance
+    // fail to reconcile if it is left blank.
+    expect(rows[1].cells[3].text).toBe('On account');
+  });
+
+  it('gives suppliers the ledger customers already had', async () => {
+    const { app } = await openParties('suppliers');
+    const tabs = app.renderVals().sup.tabs.map((t) => t.l);
+
+    expect(tabs).toContain('Ledger');
+    app.setState({ supTab: 'ledger' });
+    app.renderNow();
+    expect(app.renderVals().sup.ledger.rows.length).toBeGreaterThan(0);
+  });
+
+  /* -------------------------------------------------------------- behaviour */
+
+  it('asks for an account only when a party is selected', async () => {
+    const asked = [];
+    const repository = serving();
+    repository.partyStatement = async (partyType, partyId) => {
+      asked.push(`${partyType}:${partyId}`);
+      return STATEMENT;
+    };
+    const { app } = await openParties('customers', repository);
+
+    // One party's account, not a hundred.
+    expect(asked).toHaveLength(1);
+
+    const second = app.renderVals().cust.list[1];
+    if (second) {
+      second.onClick();
+      await new Promise((r) => setTimeout(r, 40));
+      expect(asked).toHaveLength(2);
+    }
+  });
+
+  it('does not ask twice for an account it already has', async () => {
+    let calls = 0;
+    const repository = serving();
+    repository.partyStatement = async () => {
+      calls += 1;
+      return STATEMENT;
+    };
+    const { app } = await openParties('customers', repository);
+    const first = app.renderVals().cust.list[0];
+
+    first.onClick();
+    await new Promise((r) => setTimeout(r, 40));
+    const afterFirst = calls;
+
+    // The same party again is already in hand; going back to somebody looked
+    // at a moment ago should not fetch their whole account a second time.
+    first.onClick();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(calls).toBe(afterFirst);
+  });
+
+  it('says a statement failed to load rather than showing an empty ledger', async () => {
+    const { app } = await openParties(
+      'customers',
+      serving(/** @type {any} */ (new Error('the ledger is unavailable')))
+    );
+    app.setState({ custTab: 'ledger' });
+    app.renderNow();
+
+    const ledger = app.renderVals().cust.ledger;
+    expect(ledger.rows).toHaveLength(0);
+    expect(ledger.emptyTitle).toBe('Statement could not be loaded');
+    expect(ledger.emptyNote).toBe('the ledger is unavailable');
+  });
+
+  it('says plainly that a statement needs a server', async () => {
+    const { app } = await mountApp();
+    app.go('customers')();
+    await new Promise((r) => setTimeout(r, 40));
+    app.renderNow();
+    app.setState({ custTab: 'ledger' });
+    app.renderNow();
+
+    const ledger = app.renderVals().cust.ledger;
+    expect(ledger.rows).toHaveLength(0);
+    // A statement is the journal filtered to one party, and the bundled data
+    // has no journal. The screen says which rather than drawing a balance
+    // nothing stands behind.
+    expect(ledger.emptyNote).toContain('server behind the app');
+  });
+
+  /* ------------------------------------------------------------------ print */
+
+  it('offers the statement on paper once there is one', async () => {
+    const { app } = await openParties('customers');
+    expect(app.renderVals().cust.statement.canPrint).toBe(true);
+
+    const noBackend = await mountApp();
+    noBackend.app.go('customers')();
+    await new Promise((r) => setTimeout(r, 40));
+    noBackend.app.renderNow();
+    expect(noBackend.app.renderVals().cust.statement.canPrint).toBe(false);
+  });
+
+  it('prints a statement a reader can add up', () => {
+    const html = statementDocument(STATEMENT, { name: 'Meghna Agro Enterprise', currency: 'BDT' });
+
+    expect(html).toContain('Statement of account');
+    expect(html).toContain('CUS-001');
+    expect(html).toContain('Opening balance');
+    // Every line, and a closing figure that says which way it points.
+    for (const line of STATEMENT.lines) expect(html).toContain(line.documentNo);
+    expect(html).toContain(money(470000) + ' receivable from this party');
+  });
+
+  it('names the direction on a supplier statement too', () => {
+    const html = statementDocument(SUPPLIER_STATEMENT, { name: 'Meghna Agro Enterprise' });
+    expect(html).toContain(money(520000) + ' payable to this party');
+  });
+
+  it('escapes a party name that contains markup', () => {
+    const html = statementDocument(
+      { ...STATEMENT, party: { ...STATEMENT.party, name: '<script>alert(1)</script>' } },
+      { name: 'Meghna Agro Enterprise' }
+    );
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('leaves the aging out when there is nothing outstanding', () => {
+    const settled = {
+      ...STATEMENT,
+      aging: { current: 0, b30: 0, b60: 0, b90: 0, b90plus: 0, total: 0 },
+    };
+    expect(statementDocument(settled, {})).not.toContain('Over 90 days');
+    expect(statementDocument(STATEMENT, {})).toContain('Over 90 days');
   });
 });

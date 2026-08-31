@@ -463,6 +463,19 @@ export class ApiRepository {
     return (await this.client.get('/profit-and-loss', filters)).data;
   }
 
+  /* ------------------------------------------------------ party statement */
+
+  /**
+   * One party's account: opening balance, every line that moved it, closing.
+   *
+   * The three tabs on the customer and supplier screens are all in here,
+   * because they are three views of one account and fetching them separately
+   * would let them disagree about what the party owes.
+   */
+  async partyStatement(partyType, partyId, filters = {}) {
+    return (await this.client.get(`/parties/${partyType}/${partyId}/statement`, filters)).data;
+  }
+
   /* -------------------------------------------------- returns and notes */
 
   /** Returns posted or drafted, newest first. */

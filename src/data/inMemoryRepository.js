@@ -31,6 +31,9 @@ function settle(value, latency) {
   return new Promise((res) => setTimeout(() => res(value), latency));
 }
 
+/** A cloned list whose records carry the identity the API gives them. */
+const identified = (rows) => clone(rows).map((row, i) => ({ id: i + 1, ...row }));
+
 export class InMemoryRepository {
   /**
    * @param {object} [options]
@@ -47,9 +50,12 @@ export class InMemoryRepository {
       company: clone(seed.COMPANY),
       nav: clone(seed.NAV),
       titles: clone(seed.TITLES),
-      customers: clone(seed.CUSTOMERS),
-      suppliers: clone(seed.SUPPLIERS),
-      companies: clone(seed.COMPANIES),
+      // Identified, as the API's are. A record added through the app gets an
+      // id from `createMaster`, so a bundled one without would be the only
+      // party in the system that could not be asked about by id.
+      customers: identified(seed.CUSTOMERS),
+      suppliers: identified(seed.SUPPLIERS),
+      companies: identified(seed.COMPANIES),
       products: clone(seed.PRODUCTS),
       crops: clone(seed.CROPS),
       warehouses: clone(seed.WAREHOUSES),
@@ -429,6 +435,20 @@ export class InMemoryRepository {
 
   async invoice() {
     throw new Error('Invoices can only be opened with a server behind the app.');
+  }
+
+  /* ------------------------------------------------------ party statement */
+
+  /**
+   * A statement, without a server.
+   *
+   * A statement is the journal filtered to one party, and the bundled dataset
+   * has no journal -- the same reason `invoices()` answers with an empty page.
+   * The screen shows its empty state and says what is missing rather than
+   * drawing a running balance nothing stands behind.
+   */
+  async partyStatement() {
+    throw new Error('A statement can only be read with a server behind the app.');
   }
 
   /* -------------------------------------------------- returns and notes */

@@ -1036,10 +1036,18 @@
                 </div>
               </div>
             </div>
-            <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px;align-self:flex-start">
-              <sc-for list="{{ cust.tabs }}" as="t" hint-placeholder-count="3">
-                <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
-              </sc-for>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+              <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px;align-self:flex-start">
+                <sc-for list="{{ cust.tabs }}" as="t" hint-placeholder-count="3">
+                  <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
+                </sc-for>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600;color:#6E6A64">{{ cust.balanceText }}</span>
+                <sc-if value="{{ cust.statement.canPrint }}">
+                  <button onClick="{{ cust.statement.onPrint }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">{{ cust.statement.label }}</button>
+                </sc-if>
+              </div>
             </div>
             <sc-if value="{{ cust.isPur }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ cust.purchases }}" hint-size="100%,280px"></dc-import></sc-if>
             <sc-if value="{{ cust.isPay }}"><dc-import name="DataTable" t="{{ cust.payments }}" hint-size="100%,280px"></dc-import></sc-if>
@@ -1116,13 +1124,22 @@
                 </div>
               </div>
             </div>
-            <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px;align-self:flex-start">
-              <sc-for list="{{ sup.tabs }}" as="t" hint-placeholder-count="2">
-                <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
-              </sc-for>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+              <div style="display:flex;gap:3px;padding:3px;background:#F1EFEA;border-radius:8px;align-self:flex-start">
+                <sc-for list="{{ sup.tabs }}" as="t" hint-placeholder-count="3">
+                  <button onClick="{{ t.onClick }}" style="border:0;cursor:pointer;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;background:{{ t.bg }};color:{{ t.color }}">{{ t.l }}</button>
+                </sc-for>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600;color:#6E6A64">{{ sup.balanceText }}</span>
+                <sc-if value="{{ sup.statement.canPrint }}">
+                  <button onClick="{{ sup.statement.onPrint }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">{{ sup.statement.label }}</button>
+                </sc-if>
+              </div>
             </div>
             <sc-if value="{{ sup.isPur }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ sup.purchases }}" hint-size="100%,260px"></dc-import></sc-if>
             <sc-if value="{{ sup.isPay }}"><dc-import name="DataTable" t="{{ sup.payments }}" hint-size="100%,240px"></dc-import></sc-if>
+            <sc-if value="{{ sup.isLed }}"><dc-import name="DataTable" t="{{ sup.ledger }}" hint-size="100%,340px"></dc-import></sc-if>
           </div>
         </div>
       </sc-if>
