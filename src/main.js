@@ -115,8 +115,14 @@ export async function start(root) {
     let user = await repository.restore().catch(() => null);
 
     if (!user) {
-      user = await renderSignIn(root, (username, password) =>
-        repository.login(username, password)
+      // Ask who this installation belongs to before drawing the card that
+      // names them. It is fetched alongside nothing else, so a slow answer
+      // delays only the card and never the session that follows it.
+      const context = await repository.context();
+      user = await renderSignIn(
+        root,
+        (username, password) => repository.login(username, password),
+        context
       );
     }
 

@@ -61,6 +61,22 @@ export class ApiRepository {
     return this.client.login(username, password);
   }
 
+  /**
+   * Who this installation belongs to, before anyone has signed in.
+   *
+   * The sign-in card names the business, and it cannot read the workspace to
+   * find out -- that needs a token. `GET /auth/context` is the one endpoint
+   * answering without one, and it carries nothing that is not already on the
+   * company's own invoices. A failure resolves to null rather than rejecting:
+   * not knowing the name is no reason to refuse to draw the form.
+   */
+  context() {
+    return this.client.get('/auth/context').then(
+      (payload) => payload.data,
+      () => null
+    );
+  }
+
   restore() {
     return this.client.restore();
   }

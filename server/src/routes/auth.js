@@ -5,6 +5,7 @@ import { config } from '../lib/config.js';
 import { handler, ok, parseBody } from '../lib/http.js';
 import { authenticate } from '../middleware/auth.js';
 import { login, refresh, logout, changePassword } from '../services/authService.js';
+import { loadSignInContext } from '../services/settingsService.js';
 
 const router = Router();
 
@@ -24,6 +25,21 @@ const loginLimiter = rateLimit({
     },
   },
 });
+
+/**
+ * Who this installation belongs to, before anyone has signed in.
+ *
+ * The sign-in card names the business, and it cannot read the workspace to
+ * find out -- that needs a token. This is the only endpoint answering without
+ * one, and it carries nothing that is not already on the company's own
+ * invoices: the name, and what the system is called.
+ */
+router.get(
+  '/context',
+  handler(async (_req, res) => {
+    ok(res, await loadSignInContext(config.orgId));
+  })
+);
 
 const loginSchema = z.object({
   username: z.string().min(1, 'Enter your username').max(64),

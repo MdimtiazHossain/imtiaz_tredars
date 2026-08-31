@@ -13,6 +13,7 @@ import { ApiRepository } from './apiRepository.js';
  * | Method                     | Purpose                                       |
  * | -------------------------- | --------------------------------------------- |
  * | `load()`                   | the whole working set the app boots from      |
+ * | `context()`                | who the installation belongs to, before login |
  * | `createCustomer(record)`   | add a customer, returns the stored record     |
  * | `listMaster(kind, query)`  | one page of a master list                     |
  * | `createMaster(kind, body)` | add a crop, customer, supplier or company     |

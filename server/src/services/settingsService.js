@@ -45,6 +45,24 @@ export async function loadOrganization(orgId) {
 }
 
 /**
+ * The two facts the sign-in card needs, and nothing else.
+ *
+ * This is the one organisation read that answers before anyone has signed in,
+ * so it returns only what is already printed on the company's own invoices --
+ * who this installation belongs to and what the system is called. The trade
+ * licence, the BIN, the head office and the contact details stay behind the
+ * token, where `loadOrganization` keeps them.
+ */
+export async function loadSignInContext(orgId) {
+  const { rows } = await query(
+    'SELECT name, system_name FROM organizations WHERE id = $1',
+    [orgId]
+  );
+  const r = rows[0];
+  return r ? { name: r.name, systemName: r.system_name } : null;
+}
+
+/**
  * The costing method configured for the organisation.
  *
  * Read on its own rather than through `loadOrganization` because the crop sale
