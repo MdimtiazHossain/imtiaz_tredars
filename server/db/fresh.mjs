@@ -19,6 +19,7 @@
  * password on first sign-in and it is never written down anywhere.
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +40,27 @@ import {
 } from './foundation.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ENV_PATH = path.join(HERE, '..', '.env');
+
+/**
+ * Issue a new signing secret, so tokens from the old database stop working.
+ *
+ * Access tokens are stateless JWTs naming a user by id. Wiping the database and
+ * creating a new administrator hands that administrator id 1 -- the id the
+ * previous one had -- so a browser still holding yesterday's token goes on
+ * being signed in, now as the new account. Rotating the secret is what makes
+ * "start again" mean it.
+ *
+ * @returns {boolean} whether the secret was replaced
+ */
+function rotateSigningSecret() {
+  if (!fs.existsSync(ENV_PATH)) return false;
+  const source = fs.readFileSync(ENV_PATH, 'utf8');
+  if (!/^JWT_SECRET=.*$/m.test(source)) return false;
+  const secret = crypto.randomBytes(48).toString('base64url');
+  fs.writeFileSync(ENV_PATH, source.replace(/^JWT_SECRET=.*$/m, `JWT_SECRET=${secret}`), 'utf8');
+  return true;
+}
 
 /** `--name "Imtiaz Traders"` -> {name: 'Imtiaz Traders'} */
 function readArgs(argv) {
@@ -131,6 +153,7 @@ async function main() {
     return;
   }
 
+  const rotated = rotateSigningSecret();
   const password = oneTimePassword();
   const passwordHash = await hashPassword(password);
 
@@ -165,8 +188,14 @@ async function main() {
   console.log(`  roles          ${summary.roles}, with their permissions`);
   console.log(`  units          ${summary.units}`);
   console.log('  numbering, approval limits and notification rules at their defaults');
+  if (rotated) {
+    console.log('  a new signing secret, so every session issued before now is dead');
+  }
   console.log('\nNothing else. No customers, suppliers, companies, products, crops,');
   console.log('warehouses, stock, documents or audit history.');
+  if (rotated) {
+    console.log('\nRestart the API so it reads the new signing secret.');
+  }
 
   console.log(`\n  Sign in as   ${username}`);
   console.log(`  One-time password   ${password}`);
