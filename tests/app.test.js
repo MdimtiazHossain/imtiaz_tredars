@@ -2370,3 +2370,156 @@ describe('where stock actually is', () => {
     for (const row of dealerRows) expect(app.data.warehouses).toContain(row.cells[2].text);
   });
 });
+
+describe('inventory is driven by the stock table', () => {
+  const LINE = (over = {}) => ({
+    kind: 'dealer', name: 'Ridomil Gold', sub: 'Syngenta · Agrochemical',
+    warehouse: 'Main Godown', qty: 40, unit: 'Pcs', cost: 240, value: 9600,
+    age: null, date: null, flagged: false, ...over,
+  });
+
+  /** A repository answering /inventory with the given pages. */
+  function serving(pages, calls = []) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    repository.inventory = async (params) => {
+      calls.push(params);
+      const page = pages[(params.page || 1) - 1] || [];
+      const total = pages.reduce((t, p) => t + p.length, 0);
+      return { rows: page, meta: { total } };
+    };
+    return repository;
+  }
+
+  async function open(repository) {
+    const { app } = await mountApp({ repository });
+    app.go('inventory')();
+    await new Promise((r) => setTimeout(r, 30));
+    return app;
+  }
+
+  it('calls GET /inventory when a backend is available', async () => {
+    const calls = [];
+    await open(serving([[LINE()]], calls));
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[0].page).toBe(1);
+  });
+
+  it('shows one product in one warehouse as one line', async () => {
+    const app = await open(serving([[LINE()]]));
+    const rows = app.renderVals().inv.table.rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells[2].text).toBe('Main Godown');
+  });
+
+  it('shows one product in two warehouses as two lines, each with its own', async () => {
+    const app = await open(serving([[
+      LINE(),
+      LINE({ warehouse: 'Sherpur Store', qty: 10, value: 2400 }),
+    ]]));
+    const rows = app.renderVals().inv.table.rows;
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.cells[2].text).sort()).toEqual(['Main Godown', 'Sherpur Store']);
+    // Same product, so the split is by warehouse and nothing else.
+    expect(new Set(rows.map((r) => r.cells[0].text)).size).toBe(1);
+  });
+
+  it('values stock from the served lines, warehouse by warehouse', async () => {
+    const app = await open(serving([[
+      LINE(),
+      LINE({ warehouse: 'Sherpur Store', qty: 10, value: 2400 }),
+      LINE({ kind: 'crop', name: 'Maize', warehouse: 'Main Godown', qty: 12, unit: 'MT',
+        cost: 30000, value: 360000, age: 20, date: '2026-08-11' }),
+    ]]));
+    const inv = app.renderVals().inv;
+
+    expect(inv.kpis.find((k) => k.k === 'Total stock value').v).toBe(money(9600 + 2400 + 360000));
+    expect(inv.kpis.find((k) => k.k === 'Dealer product stock').s).toBe(money(12000));
+    expect(inv.kpis.find((k) => k.k === 'Bulk crop stock').s).toBe(money(360000));
+    expect(inv.table.footTotal).toBe('Total ' + money(372000));
+  });
+
+  it('counts the warehouses holding stock, not the ones on file', async () => {
+    const app = await open(serving([[LINE(), LINE({ warehouse: 'Sherpur Store' })]]));
+    expect(app.renderVals().inv.kpis[0].s).toBe('across 2 warehouses');
+  });
+
+  it('takes low stock from the served flag rather than recomputing it', async () => {
+    const app = await open(serving([[LINE({ flagged: true }), LINE({ warehouse: 'B' })]]));
+    const inv = app.renderVals().inv;
+    expect(inv.kpis.find((k) => k.k === 'Low stock / dead stock').v).toBe('1 item');
+    expect(inv.table.rows.find((r) => r.cells[2].text === 'Main Godown').cells[7].text)
+      .toBe('Low stock');
+  });
+
+  it('shows a dash where a stock line carries no warehouse', async () => {
+    const app = await open(serving([[LINE({ warehouse: '' })]]));
+    const rows = app.renderVals().inv.table.rows;
+    expect(rows[0].cells[2].text).toBe('—');
+    // A line with no godown cannot be counted as a godown holding stock.
+    expect(app.renderVals().inv.kpis[0].s).toBe('across 0 warehouses');
+  });
+
+  it('follows the pages so a big inventory is not silently truncated', async () => {
+    const first = Array.from({ length: 200 }, (_, i) => LINE({ warehouse: `WH-${i}`, value: 100 }));
+    const second = [LINE({ warehouse: 'WH-200', value: 100 })];
+    const calls = [];
+    const app = await open(serving([first, second], calls));
+
+    expect(calls.map((c) => c.page)).toEqual([1, 2]);
+    expect(app.renderVals().inv.table.rows).toHaveLength(201);
+    expect(app.renderVals().inv.kpis[0].v).toBe(money(20100));
+  });
+
+  it('never derives stock from the product master while a server is answering', async () => {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    repository.inventory = () => new Promise(() => {}); // still in flight
+    const { app } = await mountApp({ repository });
+    app.go('inventory')();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const inv = app.renderVals().inv;
+    // The product master would give 12 lines and a seven-figure valuation.
+    expect(inv.table.rows).toHaveLength(0);
+    expect(inv.kpis[0].v).toBe(money(0));
+    expect(inv.table.emptyTitle).toBe('Loading stock…');
+  });
+
+  it('says stock could not be loaded rather than reporting none', async () => {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    repository.inventory = async () => { throw new Error('gateway down'); };
+    const { app } = await mountApp({ repository });
+    app.go('inventory')();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const table = app.renderVals().inv.table;
+    expect(table.emptyTitle).toBe('Stock could not be loaded');
+    expect(table.emptyNote).toBe('gateway down');
+    // A failed load must never read as a valuation of nothing.
+    expect(table.footTotal).toBe('');
+    expect(table.footNote).toBe('Figures unavailable');
+  });
+
+  it('says the shelves are empty when they genuinely are', async () => {
+    const app = await open(serving([[]]));
+    const table = app.renderVals().inv.table;
+    expect(table.rows).toHaveLength(0);
+    expect(table.emptyTitle).toBe('No stock on hand');
+    expect(table.emptyNote).toContain('Adjust stock');
+  });
+
+  it('still derives from the bundled data with no backend at all', async () => {
+    const { app } = await mountApp();
+    app.go('inventory')();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const inv = app.renderVals().inv;
+    expect(inv.table.rows.length).toBeGreaterThan(0);
+    // And every warehouse it names is one the demo actually has.
+    const dealerRows = inv.table.rows.filter((r) => r.cells[1].text === 'Dealer');
+    for (const row of dealerRows) expect(app.data.warehouses).toContain(row.cells[2].text);
+  });
+});

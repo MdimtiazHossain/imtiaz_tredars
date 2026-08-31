@@ -199,7 +199,10 @@ export class BusinessApp extends Component {
       // Posted invoices, fetched when the dealer sales screen is opened.
       invoices:null, invoicesLoading:false,
       // Stock as the server holds it, per warehouse, fetched on the screen.
-      stock:null,
+      // Which of the three it is matters: an empty inventory, one still
+      // loading and one that failed to load read identically as a bare table,
+      // and only one of them means the business has no stock.
+      stock:null, stockLoading:false, stockError:'',
       // The password form, open or not. Signing out needs no state of its own.
       password:null, expenses:null,
       roleMatrix:null, userAccounts:null,
@@ -1108,9 +1111,31 @@ export class BusinessApp extends Component {
    */
   loadInventory() {
     if (!this.repository || typeof this.repository.inventory !== 'function') return;
-    this.repository.inventory({ pageSize: 200 }).then(
-      result => this.setState({ stock: result.rows || [] }),
-      () => this.setState({ stock: [] })
+    this.setState({ stockLoading: true, stockError: '' });
+
+    // Every line, not the first page of them. The endpoint caps a page at 200
+    // and the screen has no pager: stopping at the cap would quietly drop
+    // stock from the table and from the totals beneath it, which is a wrong
+    // valuation rather than a short list.
+    const PAGE = 200;
+    const gather = (page, sofar) =>
+      this.repository.inventory({ page, pageSize: PAGE }).then(result => {
+        const rows = sofar.concat(result.rows || []);
+        const total = Number(result.meta && result.meta.total) || rows.length;
+        return rows.length >= total || !(result.rows || []).length
+          ? rows
+          : gather(page + 1, rows);
+      });
+
+    gather(1, []).then(
+      rows => this.setState({ stock: rows, stockLoading: false, stockError: '' }),
+      err => this.setState({
+        stock: null,
+        stockLoading: false,
+        // Kept rather than swallowed: an inventory that failed to load must
+        // not be reported to the business as an inventory of nothing.
+        stockError: err && err.message ? err.message : 'Stock could not be loaded.',
+      })
     );
   }
 
@@ -2062,13 +2087,20 @@ export class BusinessApp extends Component {
     // Where stock actually is, when the server has said. Each line names its
     // own warehouse; the same product held in two godowns is two lines, which
     // is what the stock table records and what a stock-take has to match.
-    const served = S.stock;
+    // With a server answering, stock is what the stock table says and nothing
+    // else: deriving it from the product master gives a different warehouse
+    // and a different valuation, so it is not done at all rather than done
+    // while the real figures are in flight.
+    const served = this.serverBacked() ? S.stock || [] : S.stock;
     let rows = [];
     if (served) {
       rows = served
         .filter(r => t === 'all' || r.kind === t)
-        .map(r => ({kind:r.kind, name:r.name, sub:r.sub, wh:r.warehouse, qty:r.qty, unit:r.unit,
-          cost:r.cost, val:r.value, age:r.age, date:r.date ? shortDate(r.date) : '—', low:r.flagged}));
+        .map(r => ({kind:r.kind, name:r.name, sub:r.sub, qty:r.qty, unit:r.unit,
+          cost:r.cost, val:r.value, age:r.age, date:r.date ? shortDate(r.date) : '—',
+          // A stock row carrying no godown is a data fault, and showing it as
+          // blank hides it; a dash is at least visible in the column.
+          wh:r.warehouse || '—', low:r.flagged}));
     } else {
       if (t !== 'dealer') rows = rows.concat(S.batches.map(b => ({kind:'crop', name:b.crop, sub:'Batch ' + b.id + ' · ' + b.grade, wh:b.wh, qty:b.rem, unit:'MT', cost:b.cost, val:b.rem * b.cost, age:b.age, date:b.date, low:b.age > 60})));
       if (t !== 'crop') rows = rows.concat(this.data.products.map(p => ({kind:'dealer', name:p.name, sub:p.brand + ' · ' + p.cat, wh:(this.data.warehouses || [])[0] || '—', qty:p.stock, unit:p.unit, cost:p.pur, val:p.stock * p.pur, age:null, date:'—', low:p.stock < p.min})));
@@ -2118,7 +2150,19 @@ export class BusinessApp extends Component {
           cell(money(r.cost), {align:'right', mono:true}), cell(money(r.val), {align:'right', mono:true, weight:'600'}),
           cell(r.age === null ? '—' : r.age + ' d', {align:'right', mono:true, color:r.age > 60 ? C.dngr : C.mut, sub:r.date}),
           cell(r.low ? (r.kind === 'crop' ? 'Ageing' : 'Low stock') : 'Healthy', {align:'center', badge:true, badgeBg:r.low ? C.warnBg : C.cropBg, badgeFg:r.low ? C.warn : C.crop})]})),
-        {footNote:rows.length + ' stock lines · valuation ' + S.valuation, footTotal:'Total ' + money(total)})};
+        {
+          // Three different situations that all draw as an empty grid, and
+          // only one of them means the business is holding nothing.
+          emptyTitle:S.stockError ? 'Stock could not be loaded'
+            : S.stockLoading ? 'Loading stock…'
+              : 'No stock on hand',
+          emptyNote:S.stockError ? S.stockError
+            : S.stockLoading ? ''
+              : 'Post a purchase, or record an opening balance from Adjust stock.',
+          footNote:S.stockError ? 'Figures unavailable'
+            : rows.length + ' stock lines · valuation ' + S.valuation,
+          footTotal:S.stockError ? '' : 'Total ' + money(total),
+        })};
   }
 
   cust() {
