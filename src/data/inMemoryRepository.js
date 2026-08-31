@@ -363,6 +363,18 @@ export class InMemoryRepository {
     return settle({ rows, total: rows.length }, this.latency);
   }
 
+  /**
+   * Who this installation belongs to, before anyone has signed in.
+   *
+   * Nothing signs in without a backend, so this is never reached by the sign-in
+   * card. It is here because both implementations answer the same contract, and
+   * a method one of them is missing is one a screen can trip over later.
+   */
+  async context() {
+    const org = this._settingsStore().organization;
+    return settle({ name: org.name, systemName: org.systemName }, this.latency);
+  }
+
   /* --------------------------------------------------------------- settings */
 
   /** The Settings screen's working set, in the shape the API returns. */

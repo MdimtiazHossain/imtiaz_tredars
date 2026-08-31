@@ -51,6 +51,28 @@ suite('authentication', () => {
     expect(res.body.error.code).toBe('UNAUTHENTICATED');
   });
 
+  it('names the business without a token, and gives away nothing else', async () => {
+    // The sign-in card has to say who this installation belongs to before
+    // anyone can sign in, so this one endpoint answers without a token.
+    const res = await request(app).get('/api/auth/context');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.name).toBeTruthy();
+    expect(res.body.data.systemName).toBeTruthy();
+
+    // What it must not carry: everything else the organisation record holds is
+    // behind the token, and an unauthenticated caller learns none of it.
+    expect(Object.keys(res.body.data).sort()).toEqual(['name', 'systemName']);
+
+    const { rows } = await query(
+      'SELECT trade_licence_no, bin_no, mobile, email FROM organizations WHERE id = 1'
+    );
+    const body = JSON.stringify(res.body);
+    for (const secret of Object.values(rows[0]).filter(Boolean)) {
+      expect(body).not.toContain(secret);
+    }
+  });
+
   it('refuses a malformed token', async () => {
     const res = await request(app)
       .get('/api/workspace')

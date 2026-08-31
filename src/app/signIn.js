@@ -14,24 +14,32 @@ const FIELD_STYLE =
 const LABEL_STYLE =
   'display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:6px';
 
+/** Escape text going into the card's markup. */
+const escape = (value) =>
+  String(value).replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
+  );
+
 /**
  * Render the form and resolve with the signed-in user.
  *
  * @param {HTMLElement} root
  * @param {(username: string, password: string) => Promise<object>} onSubmit
- * @param {{name?: string, systemName?: string}} [org]
- *   who the installation belongs to. The card names the business, so the name
- *   comes from the organisation record rather than being written into this
- *   screen; without it the card still works and carries the system name alone.
+ * @param {{name?: string, systemName?: string}} [context] who this
+ *   installation belongs to, from `GET /auth/context`
  * @returns {Promise<object>} the authenticated user
  */
-export function renderSignIn(root, onSubmit, org) {
-  const orgName = (org && org.name) || '';
-  const systemName = (org && org.systemName) || 'Business Suite';
-  // The monogram is the first letter of whoever this is, not a fixed M.
-  const initial = (orgName || systemName).trim().charAt(0).toUpperCase() || 'B';
-
+export function renderSignIn(root, onSubmit, context) {
   return new Promise((resolve) => {
+    // The business naming itself, rather than the name of the one this was
+    // first built for. Falls back only when the server could not be asked --
+    // in which case signing in is not going to work either, and a wrong name
+    // is the smaller of the two problems on screen.
+    const name = context?.name || 'Business Suite';
+    const systemName = context?.systemName || 'Sign in to continue';
+    const initial = (name.trim()[0] || 'B').toUpperCase();
+
     root.replaceChildren();
 
     const shell = document.createElement('div');
@@ -48,10 +56,10 @@ export function renderSignIn(root, onSubmit, org) {
       <div style="display:flex;align-items:center;gap:11px;margin-bottom:20px">
         <div style="width:36px;height:36px;flex:none;border-radius:9px;background:#8A2233;
                     color:#fff;display:flex;align-items:center;justify-content:center;
-                    font-weight:700;font-size:16px">${initial}</div>
+                    font-weight:700;font-size:16px">${escape(initial)}</div>
         <div>
-          <div style="font-size:15px;font-weight:700;letter-spacing:-0.01em">${orgName || systemName}</div>
-          <div style="font-size:11.5px;color:#8C877F">${orgName ? systemName : 'Sign in to continue'}</div>
+          <div style="font-size:15px;font-weight:700;letter-spacing:-0.01em">${escape(name)}</div>
+          <div style="font-size:11.5px;color:#8C877F">${escape(systemName)}</div>
         </div>
       </div>
 

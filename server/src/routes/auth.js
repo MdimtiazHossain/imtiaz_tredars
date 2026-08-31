@@ -5,7 +5,7 @@ import { config } from '../lib/config.js';
 import { handler, ok, parseBody } from '../lib/http.js';
 import { authenticate } from '../middleware/auth.js';
 import { login, refresh, logout, changePassword } from '../services/authService.js';
-import { query } from '../lib/db.js';
+import { loadSignInContext } from '../services/settingsService.js';
 
 const router = Router();
 
@@ -29,21 +29,15 @@ const loginLimiter = rateLimit({
 /**
  * Who this installation belongs to, before anyone has signed in.
  *
- * The sign-in card names the business, and until now it named the one the
- * demo data described whatever was in the database. The name and the system
- * title are on every invoice the business issues, so there is nothing to
- * protect in answering this unauthenticated -- and nothing else is answered.
+ * The sign-in card names the business, and it cannot read the workspace to
+ * find out -- that needs a token. This is the only endpoint answering without
+ * one, and it carries nothing that is not already on the company's own
+ * invoices: the name, and what the system is called.
  */
 router.get(
   '/context',
   handler(async (_req, res) => {
-    const { rows } = await query(
-      'SELECT name, system_name FROM organizations ORDER BY id LIMIT 1'
-    );
-    ok(res, {
-      name: rows[0]?.name || '',
-      systemName: rows[0]?.system_name || 'Business Suite',
-    });
+    ok(res, await loadSignInContext(config.orgId));
   })
 );
 
