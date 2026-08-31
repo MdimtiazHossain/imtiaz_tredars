@@ -3216,6 +3216,32 @@ describe('vat', () => {
     expect(ds.netText).toBe(money(10000));
   });
 
+  it('knows the tax configuration on arrival, without Settings being opened first', async () => {
+    const repository = serving({ inclusive: true });
+    const { app } = await mountApp({ repository });
+
+    // Straight to the screen, the way a salesperson arrives at it.
+    app.go('dealer-sales')();
+    await new Promise((r) => setTimeout(r, 40));
+    app.data.products = app.data.products.map((x, i) => (i ? x : { ...x, taxRateId: 1 }));
+    app.setState({
+      ds: {
+        ...app.state.ds,
+        lines: [{ pid: app.data.products[0].code, qty: 10, rate: 1150, disc: 0, bonus: 0 }],
+        paid: 0,
+      },
+    });
+    app.renderNow();
+
+    // Without the configuration the summary drops the VAT line and reports a
+    // margin against a tax-inclusive figure -- four times the real one, and
+    // the number somebody decides a price on.
+    const ds = app.renderVals().ds;
+    expect(ds.showVat).toBe(true);
+    expect(ds.vatText).toBe(money(1500));
+    expect(ds.netText).toBe(money(11500));
+  });
+
   it('will not name one rate on an invoice charged at several', async () => {
     const { app } = await openSettingsOn('tax', serving());
     const [first, second] = app.data.products;

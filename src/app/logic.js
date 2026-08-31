@@ -138,6 +138,14 @@ const STATUS_LABELS = {
   CANCELLED: 'Cancelled',
 };
 
+/** Screens that price a document, and so need the tax configuration. */
+const DOCUMENT_SCREENS = new Set([
+  'dealer-sales',
+  'dealer-purchase',
+  'crop-sales',
+  'crop-purchase',
+]);
+
 /** Today, as a date input wants it. */
 const today = () => {
   const d = new Date();
@@ -257,6 +265,11 @@ export class BusinessApp extends Component {
       if (id === 'employees') this.loadAccessControl();
       if (id === 'audit') this.loadAudit();
       if (id === 'dealer-sales') this.loadInvoices();
+      // A screen that prices a document has to know what the business charges
+      // and how it quotes. Without this the summary silently drops the VAT
+      // line and reports a margin against a tax-inclusive figure -- 16% where
+      // the real one is 4%, which is exactly the number somebody decides on.
+      if (DOCUMENT_SCREENS.has(id)) this.loadSettings();
       if (id === 'reports') {
         // The catalogue says which reports exist and what each can be narrowed
         // by, so it belongs with the screen that needs it rather than being
