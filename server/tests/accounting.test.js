@@ -217,11 +217,21 @@ suite('the books', () => {
   it('reverses the whole journal when a posted sale is cancelled', async () => {
     const ctx = (await request(app).get('/api/reference/context').set(auth())).body.data;
     const customers = (await request(app).get('/api/customers').set(auth())).body.data;
+    const companies = (await request(app).get('/api/companies').set(auth())).body.data;
     const products = (await request(app).get('/api/products').set(auth())).body.data;
     const warehouseId = Object.values(ctx.warehouseIds)[0];
-    if (!customers.length || !products.length) return;
+    if (!customers.length || !products.length || !companies.length) return;
 
     const today = new Date().toISOString().slice(0, 10);
+    // Buy what this test is about to sell. Relying on stock an earlier test
+    // happened to leave behind makes the outcome depend on what ran first.
+    await postDocument(app, auth, '/api/dealer/purchases', {
+      txnDate: today,
+      companyId: companies[0].id,
+      warehouseId,
+      lines: [{ productId: products[0].id, quantity: 1, rate: 400, discountPct: 0 }],
+      action: 'POST',
+    });
     const sale = await postDocument(app, auth, '/api/dealer/sales', {
       txnDate: today,
       customerId: customers[0].id,

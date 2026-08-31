@@ -137,6 +137,7 @@ export async function createCropSale(client, { orgId, user, actor, input }) {
     },
     table: 'crops',
     itemIdOf: (l) => l.cropId,
+    side: 'SALE',
   });
   const byLine = new Map(totals.lines.map((l, i) => [i, l]));
 

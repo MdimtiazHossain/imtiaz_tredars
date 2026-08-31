@@ -118,6 +118,7 @@ export async function createCropPurchase(client, { orgId, user, actor, input }) 
       net: totals.purchaseValue },
     table: 'crops',
     itemIdOf: (l) => l.cropId,
+    side: 'PURCHASE',
   });
   const taxedLines = taxes.lines;
 

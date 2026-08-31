@@ -69,6 +69,7 @@ router.post(
         priced: computePurchaseTotals(body),
         table: 'products',
         itemIdOf: (l) => l.productId,
+        side: 'PURCHASE',
       })
     );
     ok(res, previewShape(totals));
@@ -221,6 +222,7 @@ router.post(
         priced,
         table: 'products',
         itemIdOf: (l) => l.productId,
+        side: 'SALE',
       })
     );
     // Profit is on the goods; the tax was never the business's to earn.

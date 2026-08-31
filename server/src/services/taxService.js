@@ -36,7 +36,8 @@ const paisa = (n) => Math.round(n * 100) / 100;
  */
 export async function taxContext(orgId, client = { query }) {
   const { rows: org } = await client.query(
-    'SELECT is_vat_registered, prices_include_tax, bin_no FROM organizations WHERE id = $1',
+    `SELECT is_vat_registered, sale_prices_include_tax, purchase_prices_include_tax, bin_no
+       FROM organizations WHERE id = $1`,
     [orgId]
   );
 
@@ -49,7 +50,12 @@ export async function taxContext(orgId, client = { query }) {
   const byId = new Map(rates.map((r) => [Number(r.id), normalise(r)]));
   return {
     registered: !!org[0]?.is_vat_registered,
-    pricesIncludeTax: !!org[0]?.prices_include_tax,
+    // Each side of the trade quotes its own way: this business sells at a
+    // price with the tax inside it and buys at a price before it.
+    pricesIncludeTax: {
+      SALE: !!org[0]?.sale_prices_include_tax,
+      PURCHASE: !!org[0]?.purchase_prices_include_tax,
+    },
     binNo: org[0]?.bin_no || '',
     rates: rates.map(normalise),
     byId,
@@ -217,10 +223,14 @@ export function reclaimableTax(context, lines) {
  * line exempt -- comes back with the same figures it went in with and a total
  * equal to its net, which is exactly what every document said before VAT was
  * modelled.
+ *
+ * @param {'SALE'|'PURCHASE'} o.side  which basis the rates are quoted on
  */
-export async function taxDocument(client, { orgId, input, priced, table, itemIdOf }) {
+export async function taxDocument(client, { orgId, input, priced, table, itemIdOf, side }) {
   const context = await taxContext(orgId, client);
-  const inclusive = input.taxInclusive ?? context.pricesIncludeTax;
+  // The document may say outright how its rates are quoted; otherwise the
+  // organisation's basis for this side of the trade decides.
+  const inclusive = input.taxInclusive ?? context.pricesIncludeTax[side] ?? false;
   const itemRates = await ratesForItems(client, {
     orgId,
     table,

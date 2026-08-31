@@ -75,7 +75,7 @@ export async function createDealerPurchase(client, { orgId, user, actor, input }
 
   const priced = computePurchaseTotals(input);
   const totals = await taxDocument(client, { orgId, input, priced, table: 'products',
-    itemIdOf: (l) => l.productId });
+    itemIdOf: (l) => l.productId, side: 'PURCHASE' });
   const txnNo =
     input.txnNo || (await nextDocumentNo(client, orgId, 'dealer_purchase', input.txnDate));
 
@@ -403,7 +403,7 @@ export async function createDealerSale(client, { orgId, user, actor, input }) {
   const costMap = new Map(costRows.map((r) => [Number(r.product_id), num(r.avg_cost)]));
   const priced = computeSaleTotals(input, (pid) => costMap.get(Number(pid)) || 0);
   const totals = await taxDocument(client, { orgId, input, priced, table: 'products',
-    itemIdOf: (l) => l.productId });
+    itemIdOf: (l) => l.productId, side: 'SALE' });
   // Profit is on the goods, not on the tax: VAT is collected for the NBR and
   // was never the business's to earn. Inclusive pricing moves the taxable
   // value, so the profit has to be restated against it.

@@ -23,7 +23,7 @@ export async function loadOrganization(orgId) {
   const { rows } = await query(
     `SELECT id, code, name, system_name, trade_licence_no, bin_no, head_office,
             mobile, email, currency_code, default_district, valuation_method,
-            is_vat_registered, prices_include_tax
+            is_vat_registered, sale_prices_include_tax, purchase_prices_include_tax
        FROM organizations WHERE id = $1`,
     [orgId]
   );
@@ -43,7 +43,8 @@ export async function loadOrganization(orgId) {
     defaultDistrict: r.default_district || '',
     valuation: r.valuation_method,
     vatRegistered: r.is_vat_registered,
-    pricesIncludeTax: r.prices_include_tax,
+    salePricesIncludeTax: r.sale_prices_include_tax,
+    purchasePricesIncludeTax: r.purchase_prices_include_tax,
   };
 }
 

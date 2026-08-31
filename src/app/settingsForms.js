@@ -39,7 +39,8 @@ export function defaultsFor(kind, row) {
       currency: row.currency || 'BDT',
       defaultDistrict: row.defaultDistrict || '',
       vatRegistered: row.vatRegistered ? 'yes' : 'no',
-      pricesIncludeTax: row.pricesIncludeTax ? 'yes' : 'no',
+      salePricesIncludeTax: row.salePricesIncludeTax ? 'yes' : 'no',
+      purchasePricesIncludeTax: row.purchasePricesIncludeTax ? 'yes' : 'no',
     };
   }
 
@@ -149,16 +150,25 @@ export function fieldsFor(kind, form, row, on, districts) {
         onChange: on('vatRegistered'),
         hint: 'Turns VAT on across every posted document',
       }),
-      field('pricesIncludeTax', 'Prices quoted', {
+      // Each side of the trade quotes its own way, and this business does:
+      // it sells at a price the tax is inside and buys at a price before it.
+      field('salePricesIncludeTax', 'Sale prices quoted', {
         options: [
           { value: 'no', label: 'Before VAT — tax is added on top' },
           { value: 'yes', label: 'Including VAT — tax is inside the rate' },
         ],
-        value: form.pricesIncludeTax,
-        onChange: on('pricesIncludeTax'),
-        // Both are ordinary in Bangladesh: retail quotes what the customer
-        // pays, business-to-business quotes the goods value.
-        hint: 'How a rate on a document is read',
+        value: form.salePricesIncludeTax,
+        onChange: on('salePricesIncludeTax'),
+        hint: 'How a rate on a sale is read',
+      }),
+      field('purchasePricesIncludeTax', 'Purchase prices quoted', {
+        options: [
+          { value: 'no', label: 'Before VAT — the supplier adds it' },
+          { value: 'yes', label: 'Including VAT — tax is inside the rate' },
+        ],
+        value: form.purchasePricesIncludeTax,
+        onChange: on('purchasePricesIncludeTax'),
+        hint: 'How a rate on a purchase is read',
       }),
     ];
   }
@@ -421,7 +431,8 @@ export function payloadFor(kind, form, row) {
       currency: text(form.currency).toUpperCase(),
       defaultDistrict: text(form.defaultDistrict),
       vatRegistered: form.vatRegistered === 'yes',
-      pricesIncludeTax: form.pricesIncludeTax === 'yes',
+      salePricesIncludeTax: form.salePricesIncludeTax === 'yes',
+      purchasePricesIncludeTax: form.purchasePricesIncludeTax === 'yes',
     };
   }
 

@@ -3029,7 +3029,8 @@ describe('vat', () => {
           ...settings.organization,
           binNo: '004601573-0101',
           vatRegistered: registered,
-          pricesIncludeTax: inclusive,
+          salePricesIncludeTax: inclusive,
+          purchasePricesIncludeTax: false,
         },
         taxRates: rates,
       };
@@ -3082,16 +3083,17 @@ describe('vat', () => {
     expect(root.textContent).toContain('VAT 15%');
   });
 
-  it('states which way prices are quoted', async () => {
+  it('states which way each side of the trade is quoted', async () => {
+    const said = (app, label) => app.renderVals().setVat.rows.find((r) => r.k === label).v;
+
     const before = await openSettingsOn('tax', serving({ inclusive: false }));
-    expect(before.app.renderVals().setVat.rows.find((r) => r.k === 'Prices quoted').v).toBe(
-      'Before VAT'
-    );
+    expect(said(before.app, 'Sale prices quoted')).toBe('Before VAT');
 
     const inside = await openSettingsOn('tax', serving({ inclusive: true }));
-    expect(inside.app.renderVals().setVat.rows.find((r) => r.k === 'Prices quoted').v).toBe(
-      'Including VAT'
-    );
+    // Selling with the tax inside the price says nothing about how the
+    // business buys, and the panel keeps the two apart.
+    expect(said(inside.app, 'Sale prices quoted')).toBe('Including VAT');
+    expect(said(inside.app, 'Purchase prices quoted')).toBe('Before VAT');
   });
 
   it('hides the rate controls from a role that may not touch them', async () => {

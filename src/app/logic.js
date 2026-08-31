@@ -1330,7 +1330,7 @@ export class BusinessApp extends Component {
 
       const pct = Number(rate.rate);
       applied.add(pct);
-      if (org.pricesIncludeTax) {
+      if (org.salePricesIncludeTax) {
         // The rate quoted is what the customer pays, so the tax comes out of
         // it rather than being added to it.
         const taxable = Math.round((Number(line.lineNet) / (1 + pct / 100)) * 100) / 100;
@@ -3617,10 +3617,15 @@ export class BusinessApp extends Component {
             d:'Turns VAT on across every document',
             color:org.vatRegistered ? C.crop : C.mut},
           {k:'BIN', v:org.binNo || '—', d:'Printed on every challanpatra', color:C.ink},
-          {k:'Prices quoted', v:org.pricesIncludeTax ? 'Including VAT' : 'Before VAT',
-            d:org.pricesIncludeTax
+          {k:'Sale prices quoted', v:org.salePricesIncludeTax ? 'Including VAT' : 'Before VAT',
+            d:org.salePricesIncludeTax
               ? 'A rate is what the customer pays; the tax is taken out of it'
               : 'A rate is the goods value; the tax is added on top',
+            color:C.ink},
+          {k:'Purchase prices quoted', v:org.purchasePricesIncludeTax ? 'Including VAT' : 'Before VAT',
+            d:org.purchasePricesIncludeTax
+              ? 'A supplier rate already contains their VAT'
+              : 'A supplier adds their VAT to the rate',
             color:C.ink},
         ],
         canEdit:this.maySettings(),

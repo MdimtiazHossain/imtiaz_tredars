@@ -59,8 +59,14 @@ async function chargeProductAt(productId, rateCode) {
 }
 
 /** Set how the business quotes its prices for the duration of one test. */
-const setPricing = (inclusive) =>
-  query('UPDATE organizations SET prices_include_tax = $1 WHERE id = $2', [inclusive, orgId]);
+/** How this side of the trade quotes its rates, for the length of one test. */
+const setPricing = (inclusive, side = 'SALE') =>
+  query(
+    `UPDATE organizations
+        SET ${side === 'SALE' ? 'sale_prices_include_tax' : 'purchase_prices_include_tax'} = $1
+      WHERE id = $2`,
+    [inclusive, orgId]
+  );
 
 const sell = ({ quantity, rate, paid = 0 }) =>
   postDocument(app, auth, '/api/dealer/sales', {
@@ -109,14 +115,18 @@ suite('vat', () => {
 
     rates = (await request(app).get('/api/tax-rates').set(auth())).body.data;
     await query(
-      'UPDATE organizations SET is_vat_registered = true, prices_include_tax = false WHERE id = $1',
+      `UPDATE organizations SET is_vat_registered = true,
+              sale_prices_include_tax = false, purchase_prices_include_tax = false
+        WHERE id = $1`,
       [orgId]
     );
   });
 
   afterAll(async () => {
     await query(
-      `UPDATE organizations SET is_vat_registered = false, prices_include_tax = false WHERE id = $1`,
+      `UPDATE organizations SET is_vat_registered = false,
+              sale_prices_include_tax = false, purchase_prices_include_tax = false
+        WHERE id = $1`,
       [orgId]
     );
     if (context?.productId) {
@@ -326,6 +336,70 @@ suite('vat', () => {
 
     expect(money(sale.totals.net + sale.totals.tax)).toBe(money(sale.totals.total));
     expect(money(sale.totals.total)).toBe(6993);
+  });
+
+  it('quotes each side of the trade the way that side is quoted', async () => {
+    await chargeProductAt(context.productId, 'VAT15');
+    // Sells at a price the tax is already inside; buys at a price before it.
+    await setPricing(true, 'SALE');
+    await setPricing(false, 'PURCHASE');
+
+    const sale = await request(app)
+      .post('/api/dealer/sales/preview')
+      .set(auth())
+      .send({
+        txnDate: today(),
+        customerId: context.customerId,
+        warehouseId: context.warehouseId,
+        lines: [{ productId: context.productId, quantity: 1, rate: 1150, discountPct: 0 }],
+      });
+    const purchase = await request(app)
+      .post('/api/dealer/purchases/preview')
+      .set(auth())
+      .send({
+        txnDate: today(),
+        companyId: context.companyId,
+        warehouseId: context.warehouseId,
+        lines: [{ productId: context.productId, quantity: 1, rate: 1000, discountPct: 0 }],
+      });
+
+    await setPricing(false, 'SALE');
+
+    // The customer pays the 1,150 they were quoted; the principal is owed
+    // their 1,000 plus the VAT their challanpatra adds.
+    expect(money(sale.body.data.net)).toBe(1000);
+    expect(money(sale.body.data.total)).toBe(1150);
+    expect(money(purchase.body.data.net)).toBe(1000);
+    expect(money(purchase.body.data.total)).toBe(1150);
+  });
+
+  it('one side does not move when the other is changed', async () => {
+    await chargeProductAt(context.productId, 'VAT15');
+    await setPricing(false, 'SALE');
+    await setPricing(false, 'PURCHASE');
+
+    const quote = (path, body) =>
+      request(app)
+        .post(path)
+        .set(auth())
+        .send({ txnDate: today(), warehouseId: context.warehouseId, ...body });
+
+    const purchaseBefore = await quote('/api/dealer/purchases/preview', {
+      companyId: context.companyId,
+      lines: [{ productId: context.productId, quantity: 1, rate: 1000, discountPct: 0 }],
+    });
+
+    await setPricing(true, 'SALE');
+    const purchaseAfter = await quote('/api/dealer/purchases/preview', {
+      companyId: context.companyId,
+      lines: [{ productId: context.productId, quantity: 1, rate: 1000, discountPct: 0 }],
+    });
+    await setPricing(false, 'SALE');
+
+    // Under one flag this was unresolvable: setting it for sales read every
+    // supplier invoice as cheaper than it was.
+    expect(money(purchaseAfter.body.data.total)).toBe(money(purchaseBefore.body.data.total));
+    expect(money(purchaseAfter.body.data.total)).toBe(1150);
   });
 
   /* -------------------------------------------------------------- purchases */

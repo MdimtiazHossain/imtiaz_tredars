@@ -42,7 +42,9 @@ const organizationSchema = z.object({
   // Registering turns VAT on across every document; until then the rates are
   // master data with nothing charging at them.
   vatRegistered: z.coerce.boolean().optional(),
-  pricesIncludeTax: z.coerce.boolean().optional(),
+  // Each side of the trade quotes its own way, so each is set on its own.
+  salePricesIncludeTax: z.coerce.boolean().optional(),
+  purchasePricesIncludeTax: z.coerce.boolean().optional(),
 });
 
 const ORGANIZATION_COLUMNS = {
@@ -57,7 +59,8 @@ const ORGANIZATION_COLUMNS = {
   defaultDistrict: 'default_district',
   valuation: 'valuation_method',
   vatRegistered: 'is_vat_registered',
-  pricesIncludeTax: 'prices_include_tax',
+  salePricesIncludeTax: 'sale_prices_include_tax',
+  purchasePricesIncludeTax: 'purchase_prices_include_tax',
 };
 
 router.patch(
