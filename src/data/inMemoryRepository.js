@@ -1,6 +1,6 @@
 import * as seed from './seed.js';
 import { ACCOUNTS, PAYMENT_METHOD_OPTIONS, EXPENSE_CATEGORIES } from './financeLookups.js';
-import { EMPLOYEES } from './reference.js';
+import { EMPLOYEES, EXPENSE_VOUCHERS } from './reference.js';
 
 /**
  * In-memory implementation of the repository contract.
@@ -137,6 +137,12 @@ export class InMemoryRepository {
     if (kind === 'crop') return this._cropRecords();
     if (kind === 'warehouse') return this._warehouseRecords();
     return this._collection(kind);
+  }
+
+  /** Posted expense vouchers; the bundled ones, with no ledger behind them. */
+  async expenses() {
+    const rows = clone(EXPENSE_VOUCHERS);
+    return settle({ rows, total: rows.reduce((t, r) => t + r.amount, 0) }, this.latency);
   }
 
   /** One page of a master list, filtered by name or code as the server does. */

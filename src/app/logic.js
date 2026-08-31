@@ -9,7 +9,7 @@
  */
 import { Component } from '../runtime/component.js';
 import { C } from '../styles/tokens.js';
-import { money, int, dec2, lakh } from '../domain/format.js';
+import { money, int, dec2, lakh, shortDate } from '../domain/format.js';
 import { cell, column, table } from '../components/dataTable.js';
 import { formModal as formModalOf } from '../components/formModal.js';
 import {
@@ -43,6 +43,7 @@ import {
   UNIT_CONVERSIONS,
   PAYMENT_METHODS,
   CASH_ACCOUNTS,
+  EXPENSE_VOUCHERS,
   NOTIFICATION_RULES,
 } from '../data/reference.js';
 
@@ -60,7 +61,7 @@ export class BusinessApp extends Component {
       invTab:'all', invSort:'value', acctTab:'receivable', setSec:'company', repSel:'crop-batch-profit', repLoading:false,
       custSel:'CUS-003', custTab:'purchases', supSel:'SUP-001', supTab:'purchases', valuation:'FIFO',
       cp:{sup:'SUP-001', crop:'Maize', grade:'A (Premium)', wh:'Naogaon Central Godown', date:'2026-08-28', qty:100, unit:'MT', moist:1.5, rate:30000, transport:50000, loading:12000, unloading:8000, other:0, advance:1500000, note:''},
-      extraCusts:[], custModal:false, master:null, masterRows:{},
+      extraCusts:[], custModal:false, master:null, masterRows:{}, expenses:null,
       newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'', district:'Bogura', upazila:'', limit:500000, days:15, opening:0},
       cs:{buyer:'PRAN Agro Business Ltd.', crop:'Maize', date:'2026-08-28', rate:34500, transport:15000, other:5000, target:40, alloc:{}},
       ds:{cust:'CUS-002', date:'2026-08-28', sp:'Shamim Reza', wh:'Bogura Depot', terms:'Credit 15 days', paid:150000,
@@ -86,7 +87,9 @@ export class BusinessApp extends Component {
       if (id === 'products') this.loadMasterList('product');
       if (id === 'warehouses') this.loadMasterList('warehouse');
       if (id === 'employees') this.loadMasterList('employee');
-      if (id === 'accounts') { this.loadMasterList('account'); this.loadMasterList('category'); }
+      if (id === 'accounts') {
+        this.loadMasterList('account'); this.loadMasterList('category'); this.loadExpenses();
+      }
       if (id === 'settings') this.loadMasterList('method');
     };
   }
@@ -399,6 +402,15 @@ export class BusinessApp extends Component {
   reportMasterError(err) {
     if (err.silent) return;
     this.setState(s => (s.master ? { master: { ...s.master, busy: false, error: err.message } } : null));
+  }
+
+  /** Fetch the posted expense vouchers behind the Expense tab. */
+  loadExpenses() {
+    if (!this.repository || typeof this.repository.expenses !== 'function') return;
+    this.repository.expenses().then(
+      result => this.setState({ expenses: result }),
+      () => {}
+    );
   }
 
   /** A master change moves what every picker offers, so refetch rather than patch. */
@@ -1184,13 +1196,26 @@ export class BusinessApp extends Component {
     rows.sort((a, b) => sort === 'value' ? b.val - a.val : sort === 'age' ? (b.age || 0) - (a.age || 0) : sort === 'qty' ? b.qty - a.qty : a.name.localeCompare(b.name));
     const mark = k => sort === k ? '  ↓' : '';
     const total = rows.reduce((t2, r) => t2 + r.val, 0);
+    // The KPIs describe all stock, not the tab in view, so they are built from
+    // every line rather than from the filtered `rows` above.
+    const crops = S.batches.map(b => ({ qty: b.rem, val: b.rem * b.cost }));
+    const goods = this.data.products.map(p => ({ qty: p.stock, val: p.stock * p.pur, min: p.min }));
+    const sum = (list, key) => list.reduce((x, r) => x + (Number(r[key]) || 0), 0);
+    const cropValue = sum(crops, 'val');
+    const goodsValue = sum(goods, 'val');
+    const warehouses = new Set(S.batches.map(b => b.wh)).size || this.data.warehouses.length;
+    const needsAction = goods.filter(g => g.min && g.qty < g.min).length
+      + S.batches.filter(b => (b.age || 0) > 60).length;
     return {actions:[
         {l:'Transfer stock', onClick:() => this.openForm('transfer')},
         {l:'Adjust stock', onClick:() => this.openForm('adjustment')}
       ],
       tabs:[{k:'all', l:'All stock'}, {k:'crop', l:'Bulk crops'}, {k:'dealer', l:'Dealer products'}].map(x => ({l:x.l, on:x.k === t,
         bg:x.k === t ? '#fff' : 'transparent', color:x.k === t ? C.ink : C.mut, onClick:this.hs('invTab', x.k)})),
-      kpis:[{k:'Total stock value', v:money(24360000), s:'across 4 warehouses'}, {k:'Bulk crop stock', v:'365 MT', s:money(18740000)}, {k:'Dealer product stock', v:'3,842 units', s:money(5620000)}, {k:'Low stock / dead stock', v:'3 items', s:'needs action'}],
+      kpis:[{k:'Total stock value', v:money(cropValue + goodsValue), s:'across ' + warehouses + (warehouses === 1 ? ' warehouse' : ' warehouses')},
+        {k:'Bulk crop stock', v:dec2(sum(crops, 'qty')) + ' MT', s:money(cropValue)},
+        {k:'Dealer product stock', v:int(sum(goods, 'qty')) + ' units', s:money(goodsValue)},
+        {k:'Low stock / dead stock', v:needsAction + (needsAction === 1 ? ' item' : ' items'), s:needsAction ? 'needs action' : 'nothing flagged'}],
       table:table([column('Item', 'left', {onClick:this.hs('invSort', 'name'), sortMark:mark('name')}), column('Type'), column('Warehouse'),
         column('Quantity', 'right', {onClick:this.hs('invSort', 'qty'), sortMark:mark('qty')}), column('Avg cost', 'right'),
         column('Stock value', 'right', {onClick:this.hs('invSort', 'value'), sortMark:mark('value')}),
@@ -1345,13 +1370,28 @@ export class BusinessApp extends Component {
        emptyNote:'Add one and expenses can be booked against it.',
        footNote:categories.length + (categories.length === 1 ? ' category' : ' categories'),
        footTotal:'Spent ' + money(categories.reduce((t, c) => t + (c.spent || 0), 0))});
+    // Whatever the business actually spent, once fetched.
+    const vouchers = (S.expenses && S.expenses.rows) || EXPENSE_VOUCHERS;
+    const spent = S.expenses && S.expenses.total != null
+      ? S.expenses.total
+      : vouchers.reduce((t2, r) => t2 + (Number(r.amount) || 0), 0);
     const exp = table([column('Voucher'), column('Date'), column('Category'), column('Note'), column('Business'), column('Amount', 'right')],
-      [['EXP-2608-118', '27 Aug', 'Transport', 'Dinajpur → Bogura, 3 trucks', 'crop', 96000], ['EXP-2608-112', '26 Aug', 'Loading / Unloading', 'Naogaon godown labour', 'crop', 34000],
-       ['EXP-2608-108', '25 Aug', 'Salary', 'August advance — 4 staff', 'both', 128000], ['EXP-2608-101', '23 Aug', 'Warehouse', 'Rangpur store rent', 'both', 45000],
-       ['EXP-2608-094', '21 Aug', 'Fuel', 'Delivery van, dealer route', 'dealer', 18600], ['EXP-2608-088', '19 Aug', 'Commission', 'Aratdar commission, paddy lot', 'crop', 62500]].map(r => ({cells:[
-        cell(r[0], {mono:true, weight:'600'}), cell(r[1], {color:C.mut}), cell(r[2]), cell(r[3], {color:C.mut}),
-        cell(r[4] === 'crop' ? 'Bulk Crop' : r[4] === 'dealer' ? 'Dealer' : 'Shared', {badge:true, badgeBg:r[4] === 'crop' ? C.cropBg : r[4] === 'dealer' ? C.dealBg : '#F0EEE9', badgeFg:r[4] === 'crop' ? C.crop : r[4] === 'dealer' ? C.deal : '#3D3A36'}),
-        cell(money(r[5]), {align:'right', mono:true, weight:'600'})]})), {footNote:'August 2026 expenses', footTotal:'Total ' + money(384100)});
+      vouchers.map(r => {
+        const line = r.businessType === 'BULK_CROP' ? 'Bulk Crop' : r.businessType === 'DEALER' ? 'Dealer' : 'Shared';
+        return {cells:[
+          cell(r.no, {mono:true, weight:'600'}),
+          cell(shortDate(r.date), {color:C.mut}),
+          cell(r.category || '—'),
+          cell(r.note || '—', {color:C.mut}),
+          cell(line, {badge:true,
+            badgeBg:line === 'Bulk Crop' ? C.cropBg : line === 'Dealer' ? C.dealBg : '#F0EEE9',
+            badgeFg:line === 'Bulk Crop' ? C.crop : line === 'Dealer' ? C.deal : '#3D3A36'}),
+          cell(money(r.amount), {align:'right', mono:true, weight:'600'})]};
+      }),
+      {emptyTitle:'No expenses recorded yet',
+       emptyNote:'Record one and it appears here against its category.',
+       footNote:vouchers.length + (vouchers.length === 1 ? ' voucher' : ' vouchers'),
+       footTotal:'Total ' + money(spent)});
     return {tabs:this.tabify([{k:'receivable', l:'Receivable'}, {k:'payable', l:'Payable'}, {k:'cash', l:'Cash & Bank'}, {k:'expense', l:'Expense'}, {k:'category', l:'Categories'}, {k:'pl', l:'Profit & Loss'}], t, 'acctTab'),
       actions:[
         {l:'Receive payment', onClick:() => this.openForm('payment', {direction:'RECEIPT', partyType:'CUSTOMER'})},

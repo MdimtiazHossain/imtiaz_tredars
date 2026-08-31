@@ -19,6 +19,7 @@ import { ApiRepository } from './apiRepository.js';
  * | `updateMaster(kind, ...)`  | edit one of them                              |
  * | `retireMaster(kind, id)`   | deactivate one; master rows are never deleted |
  * | `restoreMaster(kind, id)`  | put a retired one back                        |
+ * | `expenses(query)`          | posted expense vouchers                       |
  * | `postCropPurchase(args)`   | post a bulk crop purchase                     |
  * | `postCropSale(args)`       | post a bulk crop sale (FIFO allocation)       |
  * | `postDealerPurchase(args)` | post a dealer purchase                        |

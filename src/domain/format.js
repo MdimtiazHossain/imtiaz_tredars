@@ -29,3 +29,23 @@ export function lakh(n) {
   const v = (Number(n) || 0) / 100000;
   return '৳' + (Math.abs(v) >= 100 ? (v / 100).toFixed(2) + ' Cr' : v.toFixed(2) + ' L');
 }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A date as "27 Aug", the way the screens write one.
+ *
+ * Accepts what the API sends -- an ISO date or a full timestamp -- and reads
+ * the calendar parts out of the string rather than through a Date, so a
+ * timestamp at midnight UTC does not slip to the previous day east of
+ * Greenwich.
+ */
+export function shortDate(value) {
+  if (!value) return '—';
+  const iso = String(value).slice(0, 10);
+  const [, month, day] = iso.split('-');
+  const index = Number(month) - 1;
+  if (!day || index < 0 || index > 11) return String(value);
+  return `${Number(day)} ${MONTHS[index]}`;
+}

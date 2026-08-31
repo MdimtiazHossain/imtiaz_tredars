@@ -267,6 +267,18 @@ export class ApiRepository {
     return data;
   }
 
+  /**
+   * Posted expense vouchers.
+   *
+   * The screen used to show a bundled list whatever the business had actually
+   * spent, which is how the Expense tab came to total Tk 3,84,100 against a
+   * single Tk 12,500 voucher.
+   */
+  async expenses(params = {}) {
+    const payload = await this.client.get('/expenses', params);
+    return { rows: payload.data, total: payload.meta?.totalAmount ?? null };
+  }
+
   /** Record an expense voucher. */
   async createExpense(expense) {
     return (await this.client.post('/expenses', expense)).data;

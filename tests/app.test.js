@@ -1346,6 +1346,43 @@ describe('derived figures', () => {
     expect(acct.cash.footNote).toBe(acct.cash.rows.length + ' accounts');
   });
 
+  it('states an inventory value that matches the stock it lists', async () => {
+    const { app } = await mountApp();
+    app.setState({ screen: 'inventory' });
+    const inv = app.renderVals().inv;
+
+    // Every line on the all-stock tab, valued the way the table values it.
+    const listed = inv.table.rows.length;
+    expect(listed).toBeGreaterThan(0);
+
+    const crops = app.state.batches.reduce((t, b) => t + b.rem * b.cost, 0);
+    const goods = app.data.products.reduce((t, p) => t + p.stock * p.pur, 0);
+    expect(inv.kpis.find((k) => k.k === 'Total stock value').v).toBe(money(crops + goods));
+    expect(inv.kpis.find((k) => k.k === 'Bulk crop stock').s).toBe(money(crops));
+    expect(inv.kpis.find((k) => k.k === 'Dealer product stock').s).toBe(money(goods));
+  });
+
+  it('counts the warehouses the stock is actually in', async () => {
+    const { app } = await mountApp();
+    app.setState({ screen: 'inventory' });
+    const held = new Set(app.state.batches.map((b) => b.wh)).size;
+    expect(app.renderVals().inv.kpis[0].s).toBe('across ' + held + ' warehouses');
+  });
+
+  it('totals the expense vouchers it shows', async () => {
+    const { app } = await mountApp();
+    app.loadExpenses();
+    await new Promise((r) => setTimeout(r, 40));
+
+    const acct = app.renderVals().acct;
+    const rows = app.state.expenses.rows;
+    expect(acct.exp.rows).toHaveLength(rows.length);
+    expect(acct.exp.footNote).toBe(rows.length + ' vouchers');
+    expect(acct.exp.footTotal).toBe(
+      'Total ' + money(rows.reduce((t, r) => t + r.amount, 0))
+    );
+  });
+
   it('takes the margin against total revenue, not one business line', async () => {
     const { app } = await mountApp();
     const kpi = app.renderVals().acct.kpis.find((k) => k.k.startsWith('Net profit'));

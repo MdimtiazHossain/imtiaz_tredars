@@ -99,3 +99,19 @@ export const CASH_ACCOUNTS = [
   { name: 'DBBL — 1471...8802', type: 'Bank', last: '27 Aug 2026', balance: 1520000 },
   { name: 'bKash Merchant — 01755...', type: 'MFS', last: '28 Aug 2026', balance: 240000 },
 ];
+
+/**
+ * Expense vouchers shown when there is no backend.
+ *
+ * With the API wired these come from `GET /expenses`; this is the fixture the
+ * demo runs on, kept here rather than inline in a screen so the table and its
+ * total are built from one list.
+ */
+export const EXPENSE_VOUCHERS = [
+  { no: 'EXP-2608-118', date: '2026-08-27', category: 'Transport', note: 'Dinajpur to Bogura, 3 trucks', businessType: 'BULK_CROP', amount: 96000 },
+  { no: 'EXP-2608-112', date: '2026-08-26', category: 'Loading / Unloading', note: 'Naogaon godown labour', businessType: 'BULK_CROP', amount: 34000 },
+  { no: 'EXP-2608-108', date: '2026-08-25', category: 'Salary', note: 'August advance — 4 staff', businessType: null, amount: 128000 },
+  { no: 'EXP-2608-101', date: '2026-08-23', category: 'Warehouse', note: 'Rangpur store rent', businessType: null, amount: 45000 },
+  { no: 'EXP-2608-094', date: '2026-08-21', category: 'Fuel', note: 'Delivery van, dealer route', businessType: 'DEALER', amount: 18600 },
+  { no: 'EXP-2608-088', date: '2026-08-19', category: 'Commission', note: 'Aratdar commission, paddy lot', businessType: 'BULK_CROP', amount: 62500 },
+];
