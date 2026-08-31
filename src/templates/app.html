@@ -624,6 +624,11 @@
             <div style="font-size:11.5px;color:#8C877F;line-height:1.5">Posting reduces batch stock, raises the customer receivable, records the collection and computes line-wise profit.</div>
           </div>
         </div>
+        <div style="margin-top:18px">
+          <div style="font-size:14.5px;font-weight:700;margin-bottom:4px">Invoices raised</div>
+          <div style="font-size:12.5px;color:#6E6A64;margin-bottom:10px">Every invoice on record, newest first. Print re-opens the document as it was issued.</div>
+          <dc-import name="DataTable" t="{{ invoices }}" hint-size="100%,420px"></dc-import>
+        </div>
       </sc-if>
 
       <sc-if value="{{ is.dealerpurchase }}">

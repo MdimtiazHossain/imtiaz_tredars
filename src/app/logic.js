@@ -12,6 +12,7 @@ import { C } from '../styles/tokens.js';
 import { money, int, dec2, lakh, shortDate } from '../domain/format.js';
 import { cell, column, table } from '../components/dataTable.js';
 import { field, formModal as formModalOf } from '../components/formModal.js';
+import { openInvoice } from './invoicePrint.js';
 import {
   buildModal,
   defaultsFor,
@@ -128,6 +129,15 @@ function auditValue(snapshot, name) {
   return String(value);
 }
 
+/** A document's status, in the words the rest of the app already uses. */
+const STATUS_LABELS = {
+  DRAFT: 'Draft',
+  PENDING_APPROVAL: 'Pending approval',
+  APPROVED: 'Approved',
+  POSTED: 'Posted',
+  CANCELLED: 'Cancelled',
+};
+
 /** Turn a snake_case column name into something a person reads. */
 const humanField = (name) =>
   String(name || '')
@@ -155,6 +165,8 @@ export class BusinessApp extends Component {
       // Configuration, fetched when Settings is opened; the audit trail, when
       // its screen is. Neither belongs in the workspace every screen boots from.
       settings:null, settingsForm:null, auditRows:null,
+      // Posted invoices, fetched when the dealer sales screen is opened.
+      invoices:null, invoicesLoading:false,
       // The password form, open or not. Signing out needs no state of its own.
       password:null, expenses:null,
       roleMatrix:null, userAccounts:null,
@@ -189,6 +201,7 @@ export class BusinessApp extends Component {
       if (id === 'settings') { this.loadSettings(); this.loadMasterList('method'); this.loadAccessControl(); }
       if (id === 'employees') this.loadAccessControl();
       if (id === 'audit') this.loadAudit();
+      if (id === 'dealer-sales') this.loadInvoices();
     };
   }
   h(g, k, num) { return e => { const v = num ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value; this.setState(s => { const o = Object.assign({}, s[g]); o[k] = v; return {[g]:o}; }); }; }
@@ -1017,6 +1030,85 @@ export class BusinessApp extends Component {
     );
   }
 
+  /* ---------------------------------------------------------------- invoices */
+
+  /**
+   * Load the invoices raised so far.
+   *
+   * The dealer sales screen has only ever been a form for writing one. What a
+   * business needs beside it is the ones already written: to look at, to check
+   * against a payment, and to print again when a customer mislays theirs.
+   */
+  loadInvoices() {
+    if (!this.repository || typeof this.repository.invoices !== 'function') return;
+    this.setState({ invoicesLoading: true });
+    this.repository.invoices({ pageSize: 100 }).then(
+      result => this.setState({ invoices: result.rows || [], invoicesLoading: false }),
+      () => this.setState({ invoices: [], invoicesLoading: false })
+    );
+  }
+
+  /**
+   * Fetch one invoice in full and hand it to the browser to print.
+   *
+   * The row on the list carries a total and a status; a printed invoice needs
+   * the lines, both parties and the letterhead, so it is fetched rather than
+   * assembled out of whatever the list happened to be holding.
+   */
+  printInvoice(row) {
+    if (!this.repository || typeof this.repository.invoice !== 'function') {
+      this.fire('Invoices can only be printed with a server behind the app.', 'warn');
+      return;
+    }
+    this.repository.invoice(row.id).then(
+      invoice => {
+        if (!openInvoice(invoice)) {
+          // Nothing opened, and saying so beats a window that silently is not there.
+          this.fire('Allow pop-ups for this site to print an invoice.', 'warn');
+          return;
+        }
+        this.fire(row.no + ' opened for printing', 'ok');
+      },
+      err => this.fire('Could not open ' + row.no + ' — ' + err.message, 'danger')
+    );
+  }
+
+  /** The invoices raised, as a table with a print action on every row. */
+  invoiceList() {
+    const rows = this.state.invoices || [];
+    const settled = rows.filter(r => (Number(r.due) || 0) <= 0).length;
+
+    return table(
+      [column('Invoice'), column('Date'), column('Customer'), column('Items', 'right'),
+        column('Amount', 'right'), column('Paid', 'right'), column('Due', 'right'),
+        column('Status', 'center'), column('', 'right')],
+      rows.map(r => ({cells:[
+        cell(r.no, {mono:true, weight:'600'}),
+        cell(shortDate(r.date), {color:C.mut}),
+        cell(r.customer, {weight:'600'}),
+        cell(int(r.items), {align:'right', mono:true, color:C.mut}),
+        cell(money(r.amount), {align:'right', mono:true, weight:'600'}),
+        cell(money(r.paid), {align:'right', mono:true, color:C.crop}),
+        cell(r.due > 0 ? money(r.due) : '—', {align:'right', mono:true, weight:'600',
+          color:r.due > 0 ? C.dngr : C.mut}),
+        cell(STATUS_LABELS[r.status] || r.status, {align:'center', badge:true,
+          badgeBg:r.status === 'POSTED' ? C.cropBg : r.status === 'CANCELLED' ? '#FBEEF0' : C.warnBg,
+          badgeFg:r.status === 'POSTED' ? C.crop : r.status === 'CANCELLED' ? C.dngr : C.warn}),
+        cell('', {align:'right', actions:[{label:'Print', onClick:() => this.printInvoice(r)}]}),
+      ]})),
+      {
+        maxH:'420px',
+        emptyTitle:this.state.invoicesLoading ? 'Loading invoices…' : 'No invoices yet',
+        emptyNote:this.state.invoicesLoading ? '' : 'Post one above and it appears here, ready to print.',
+        footNote:rows.length
+          ? rows.length + (rows.length === 1 ? ' invoice · ' : ' invoices · ') + settled + ' settled'
+          : '',
+        footTotal:rows.length
+          ? 'Outstanding ' + money(rows.reduce((t, r) => t + (Number(r.due) || 0), 0))
+          : '',
+      }
+    );
+  }
   /* ------------------------------------------------------------- audit trail */
 
   /**
@@ -2598,6 +2690,7 @@ export class BusinessApp extends Component {
         : 'What each role may do. The server checks these on every request, so the table is the rule rather than a description of it.',
 
       audit:this.auditTable(),
+      invoices:this.invoiceList(),
       repFilters:[{k:'Period', v:'01–28 Aug 2026'}, {k:'Business type', v:S.biz === 'all' ? 'All' : S.biz === 'crop' ? 'Bulk Crop' : 'Dealer'},
         {k:'Warehouse', v:'All'}, {k:'Customer', v:'All'}, {k:'Supplier', v:'All'}, {k:'Crop / product', v:'All'}, {k:'Currency', v:'BDT ৳'}],
       skeleton:[{w:'92%'}, {w:'78%'}, {w:'85%'}, {w:'64%'}, {w:'88%'}, {w:'71%'}],

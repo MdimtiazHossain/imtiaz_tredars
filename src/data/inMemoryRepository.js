@@ -381,6 +381,23 @@ export class InMemoryRepository {
     return settle({ name: org.name, systemName: org.systemName }, this.latency);
   }
 
+  /* --------------------------------------------------------------- invoices */
+
+  /**
+   * Dealer invoices, without a server.
+   *
+   * The bundled dataset posts no dealer sales, so there is nothing to list and
+   * nothing to print. Answering with an empty page is honest, and keeps the
+   * screen working rather than leaving it waiting on a method that is not there.
+   */
+  async invoices() {
+    return settle({ rows: [], meta: { total: 0 } }, this.latency);
+  }
+
+  async invoice() {
+    throw new Error('Invoices can only be opened with a server behind the app.');
+  }
+
   /* --------------------------------------------------------------- settings */
 
   /** The Settings screen's working set, in the shape the API returns. */

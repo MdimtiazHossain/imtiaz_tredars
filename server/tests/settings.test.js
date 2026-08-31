@@ -40,7 +40,7 @@ const as = (role) => ({ authorization: `Bearer ${tokens[role]}` });
 suite('settings', () => {
   beforeAll(async () => {
     app = createApp();
-    for (const role of ['Admin', 'Sales']) tokens[role] = await signIn(role);
+    for (const role of ['Admin', 'Sales', 'Purchase']) tokens[role] = await signIn(role);
   });
 
   afterAll(async () => {
@@ -407,4 +407,49 @@ suite('settings', () => {
     expect(res.status).toBe(403);
   });
 
+
+  /* --------------------------------------------------------------- invoices */
+
+  it('returns one invoice whole, with both parties and its lines', async () => {
+    const listed = (await request(app).get('/api/dealer/sales').set(as('Admin'))).body.data;
+    if (!listed.length) return; // nothing posted in this dataset
+
+    const res = await request(app).get(`/api/dealer/sales/${listed[0].id}`).set(as('Admin'));
+    expect(res.status).toBe(200);
+    const invoice = res.body.data;
+
+    // Who it is for, and who issued it. An invoice missing either is not one.
+    expect(invoice.customer.name).toBeTruthy();
+    expect(invoice.org.name).toBeTruthy();
+    expect(invoice.lines.length).toBeGreaterThan(0);
+    for (const line of invoice.lines) {
+      expect(line.name).toBeTruthy();
+      expect(line.unit).toBeTruthy();
+    }
+    // The lines have to add up to what is being asked for.
+    const lineTotal = invoice.lines.reduce((t, l) => t + l.amount, 0);
+    expect(Math.abs(lineTotal - invoice.totals.net)).toBeLessThan(1);
+  });
+
+  it('keeps profit off the invoice even for a user allowed to see profit', async () => {
+    const listed = (await request(app).get('/api/dealer/sales').set(as('Admin'))).body.data;
+    if (!listed.length) return;
+
+    const res = await request(app).get(`/api/dealer/sales/${listed[0].id}`).set(as('Admin'));
+    const body = JSON.stringify(res.body);
+    // Admin sees profit on the listing; a document handed to the customer
+    // never carries it, whoever asked for it.
+    expect(body).not.toContain('profit');
+    expect(body).not.toContain('cost');
+  });
+
+  it('refuses an invoice belonging to nobody', async () => {
+    const res = await request(app).get('/api/dealer/sales/99999').set(as('Admin'));
+    expect(res.status).toBe(404);
+  });
+
+  it('refuses a user who may not see dealer sales', async () => {
+    const res = await request(app).get('/api/dealer/sales/1').set(as('Purchase'));
+    expect([403, 404]).toContain(res.status);
+  });
 });

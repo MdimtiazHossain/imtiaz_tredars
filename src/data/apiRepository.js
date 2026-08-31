@@ -449,6 +449,19 @@ export class ApiRepository {
     return (await this.client.post(`/users/${id}/password`, { password })).data;
   }
 
+  /* --------------------------------------------------------------- invoices */
+
+  /** Posted and draft dealer invoices, newest first. */
+  async invoices(params = {}) {
+    const payload = await this.client.get('/dealer/sales', params);
+    return { rows: payload.data, meta: payload.meta };
+  }
+
+  /** One invoice in full, with its lines and both parties, for print. */
+  async invoice(id) {
+    return (await this.client.get(`/dealer/sales/${id}`)).data;
+  }
+
   async decideApproval(requestNo, approved, comment) {
     const list = await this.client.get('/approvals', { status: 'PENDING', pageSize: 200 });
     const match = list.data.find((a) => a.requestNo === requestNo);

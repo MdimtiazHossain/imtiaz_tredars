@@ -2148,3 +2148,105 @@ describe('classification lists against a server', () => {
     expect(asked).toContain('settings');
   });
 });
+
+describe('invoices', () => {
+  /** One posted invoice, in the shape the API returns it. */
+  const INVOICE = {
+    id: 7,
+    no: 'DS-2608-221',
+    date: '28 Aug 2026',
+    status: 'POSTED',
+    terms: 'Credit 15 days',
+    dueDate: '12 Sep 2026',
+    warehouse: 'Bogura Depot',
+    salesperson: 'Shamim Reza',
+    customer: {
+      code: 'CUS-003', name: 'Nabin Krishi Bitan', bn: 'নবীন কৃষি বিতান',
+      mobile: '01911-450288', address: 'Mohadevpur, Naogaon', creditDays: 21,
+    },
+    org: {
+      name: 'Imtiaz Tredars', tradeLicenceNo: 'BOG-TL-2019-04471', binNo: '003912847-0201',
+      headOffice: 'Sherpur Road, Bogura', mobile: '01711-330099',
+      email: 'accounts@example.com', currency: 'BDT',
+    },
+    lines: [
+      { lineNo: 1, code: 'P-1001', name: 'Ridomil Gold', brand: 'Syngenta', unit: 'Pcs',
+        quantity: 120, bonus: 4, rate: 295, discountPct: 2, amount: 34692 },
+    ],
+    totals: { gross: 35400, discount: 708, net: 34692, paid: 10000, due: 24692 },
+  };
+
+  function withInvoices(rows = [], detail = INVOICE) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    repository.invoices = async () => ({ rows, meta: { total: rows.length } });
+    repository.invoice = async () => detail;
+    return repository;
+  }
+
+  const ROW = {
+    id: 7, no: 'DS-2608-221', date: '2026-08-28', customer: 'Nabin Krishi Bitan',
+    items: 2, amount: 34692, paid: 10000, due: 24692, status: 'POSTED',
+  };
+
+  it('lists the invoices raised, newest first as the server sent them', async () => {
+    const { app } = await mountApp({ repository: withInvoices([ROW]) });
+    app.go('dealer-sales')();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const table = app.renderVals().invoices;
+    expect(table.rows).toHaveLength(1);
+    expect(table.rows[0].cells[0].text).toBe('DS-2608-221');
+    expect(table.rows[0].cells[4].text).toBe(money(34692));
+    expect(table.footTotal).toBe('Outstanding ' + money(24692));
+  });
+
+  it('says nothing has been raised rather than showing an empty grid', async () => {
+    const { app } = await mountApp({ repository: withInvoices([]) });
+    app.go('dealer-sales')();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const table = app.renderVals().invoices;
+    expect(table.rows).toHaveLength(0);
+    expect(table.emptyTitle).toBe('No invoices yet');
+  });
+
+  it('opens the document when Print is used on a row', async () => {
+    const opened = [];
+    const { app } = await mountApp({ repository: withInvoices([ROW]) });
+    app.go('dealer-sales')();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const written = [];
+    const fakeWindow = {
+      document: { write: (html) => written.push(html), close: () => {} },
+    };
+    const original = window.open;
+    // @ts-ignore -- standing in for the browser's own window
+    window.open = (...args) => { opened.push(args); return fakeWindow; };
+
+    app.renderVals().invoices.rows[0].cells[8].actions[0].onClick();
+    await new Promise((r) => setTimeout(r, 20));
+    window.open = original;
+
+    expect(opened).toHaveLength(1);
+    expect(written[0]).toContain('DS-2608-221');
+    expect(app.state.toast.msg).toContain('opened for printing');
+  });
+
+  it('says so when the browser blocks the window rather than failing silently', async () => {
+    const { app } = await mountApp({ repository: withInvoices([ROW]) });
+    app.go('dealer-sales')();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const original = window.open;
+    // @ts-ignore -- a blocked pop-up returns null
+    window.open = () => null;
+    app.renderVals().invoices.rows[0].cells[8].actions[0].onClick();
+    await new Promise((r) => setTimeout(r, 20));
+    window.open = original;
+
+    expect(app.state.toast.msg).toContain('pop-ups');
+    expect(app.state.toast.tone).toBe('warn');
+  });
+});

@@ -14,6 +14,7 @@ import {
   pageMeta,
 } from '../lib/http.js';
 import { requirePermission, canSeeProfit } from '../middleware/auth.js';
+import { notFound } from '../lib/errors.js';
 import {
   createDealerPurchase,
   postDealerPurchase,
@@ -312,6 +313,112 @@ router.post(
       })
     );
     ok(res, result);
+  })
+);
+
+/**
+ * One invoice, whole, for looking at and for printing.
+ *
+ * The listing above is a row per document; this is the document. It carries the
+ * seller's own details as well as the buyer's, because an invoice handed to a
+ * customer has to name who issued it, and the letterhead is the organisation
+ * record rather than anything typed into a template.
+ *
+ * Profit is on the row for the business's own eyes and is never part of an
+ * invoice, so it is not returned here at all -- not even to a user who may see
+ * profit elsewhere.
+ */
+router.get(
+  '/sales/:id',
+  requirePermission('dealer.sale.view'),
+  handler(async (req, res) => {
+    const { id } = parseParams(idParamSchema, req);
+
+    const { rows: header } = await query(
+      `SELECT s.id, s.txn_no, to_char(s.txn_date, 'DD Mon YYYY') AS txn_date,
+              to_char(s.txn_date, 'YYYY-MM-DD') AS txn_iso,
+              s.payment_terms, s.gross_amount, s.discount_amount, s.net_amount,
+              s.paid_amount, s.status,
+              c.code AS customer_code, c.name AS customer, c.name_bn AS customer_bn,
+              c.mobile AS customer_mobile, c.district, c.upazila, c.credit_days,
+              w.name AS warehouse, e.name AS salesperson,
+              COALESCE(r.balance, 0) AS due,
+              to_char(r.due_date, 'DD Mon YYYY') AS due_date,
+              o.name AS org_name, o.trade_licence_no, o.bin_no, o.head_office,
+              o.mobile AS org_mobile, o.email AS org_email, o.currency_code
+         FROM dealer_sales s
+         JOIN customers c      ON c.id = s.customer_id
+         JOIN warehouses w     ON w.id = s.warehouse_id
+         JOIN organizations o  ON o.id = s.org_id
+         LEFT JOIN employees e ON e.id = s.salesperson_id
+         LEFT JOIN receivables r ON r.invoice_type = 'dealer_sales' AND r.invoice_id = s.id
+        WHERE s.id = $1 AND s.org_id = $2`,
+      [id, req.orgId]
+    );
+    if (!header.length) throw notFound('Invoice');
+    const h = header[0];
+
+    const { rows: lines } = await query(
+      `SELECT i.line_no, p.code, p.name, u.code AS unit, b.name AS brand,
+              i.quantity, i.bonus_quantity, i.rate, i.discount_pct, i.line_net
+         FROM dealer_sale_items i
+         JOIN products p    ON p.id = i.product_id
+         JOIN units u       ON u.id = p.unit_id
+         LEFT JOIN brands b ON b.id = p.brand_id
+        WHERE i.sale_id = $1
+        ORDER BY i.line_no`,
+      [id]
+    );
+
+    ok(res, {
+      id: Number(h.id),
+      no: h.txn_no,
+      date: h.txn_date,
+      dateIso: h.txn_iso,
+      status: h.status,
+      terms: h.payment_terms || '',
+      dueDate: h.due_date || '',
+      warehouse: h.warehouse,
+      salesperson: h.salesperson || '',
+      // Who it is issued to.
+      customer: {
+        code: h.customer_code,
+        name: h.customer,
+        bn: h.customer_bn || '',
+        mobile: h.customer_mobile || '',
+        address: [h.upazila, h.district].filter(Boolean).join(', '),
+        creditDays: Number(h.credit_days) || 0,
+      },
+      // Who issued it. An invoice without this is not an invoice.
+      org: {
+        name: h.org_name,
+        tradeLicenceNo: h.trade_licence_no || '',
+        binNo: h.bin_no || '',
+        headOffice: h.head_office || '',
+        mobile: h.org_mobile || '',
+        email: h.org_email || '',
+        currency: h.currency_code,
+      },
+      lines: lines.map((l) => ({
+        lineNo: Number(l.line_no),
+        code: l.code,
+        name: l.name,
+        brand: l.brand || '',
+        unit: l.unit,
+        quantity: num(l.quantity),
+        bonus: num(l.bonus_quantity),
+        rate: num(l.rate),
+        discountPct: num(l.discount_pct),
+        amount: num(l.line_net),
+      })),
+      totals: {
+        gross: num(h.gross_amount),
+        discount: num(h.discount_amount),
+        net: num(h.net_amount),
+        paid: num(h.paid_amount),
+        due: num(h.due),
+      },
+    });
   })
 );
 
