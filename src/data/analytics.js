@@ -28,7 +28,12 @@ export const MONTHLY_SERIES = [{l:'Feb', ds:7.2, dp:5.9, cs:14.1, cp:12.8}, {l:'
 /** Best customers by sales value. */
 export const TOP_CUSTOMERS = [{n:'Sonar Bangla Enterprise', v:6180000}, {n:'Messrs. Rahman Traders', v:4820000}, {n:'Nabin Krishi Bitan', v:3740000}, {n:'Bhai Bhai Agro Store', v:2960000}, {n:'Uttara Seed House', v:2410000}];
 
-/** Best counterparty companies by traded value. */
+/**
+ * Best counterparty companies by traded value.
+ *
+ * The dashboard ranks the parties actually on file now; these remain as a
+ * description of the demo dataset rather than as anything a screen reads.
+ */
 export const TOP_COMPANIES = [{n:'PRAN Agro Business Ltd.', v:9840000}, {n:'City Group (Rice Unit)', v:7260000}, {n:'Akij Foods & Beverage', v:4180000}, {n:'Square Feeds Ltd.', v:3320000}, {n:'ACI Agrochemicals', v:2610000}];
 
 /** Receivable aging buckets. */
