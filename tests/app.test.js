@@ -298,7 +298,11 @@ describe('dealer posting', () => {
     const { app } = await mountApp();
     app.repository.postDealerSale = async () => ({ txnNo: 'DS-9999-003', status: 'POSTED' });
 
-    // The invoice defaults carry a payment larger than the invoice total.
+    // Paid more than the invoice comes to. A blank invoice opens with nothing
+    // paid, so the overpayment this is about is stated here rather than
+    // inherited from a default.
+    const total = app.calcDS().netNum ?? 10_000_000;
+    app.setState({ ds: { ...app.state.ds, paid: total + 50000 } });
     app.calcDS().onPost();
     await new Promise((r) => setTimeout(r, 20));
 
@@ -2248,5 +2252,37 @@ describe('invoices', () => {
 
     expect(app.state.toast.msg).toContain('pop-ups');
     expect(app.state.toast.tone).toBe('warn');
+  });
+});
+
+describe('the date a document is posted with', () => {
+  it('is the one chosen on the form, not the day the design was drawn', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.postDealerSale = async (payload) => {
+      sent.push(payload.intent.date);
+      return { txnNo: 'DS-9999-010', status: 'POSTED' };
+    };
+
+    app.setState({ ds: { ...app.state.ds, date: '2026-09-14' } });
+    app.calcDS().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(sent).toEqual(['2026-09-14']);
+  });
+
+  it('carries the chosen date through a dealer purchase too', async () => {
+    const { app } = await mountApp();
+    const sent = [];
+    app.repository.postDealerPurchase = async (payload) => {
+      sent.push(payload.intent.date);
+      return { txnNo: 'DP-9999-010', status: 'POSTED' };
+    };
+
+    app.setState({ dp: { ...app.state.dp, date: '2026-09-02' } });
+    app.calcDP().onPost();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(sent).toEqual(['2026-09-02']);
   });
 });

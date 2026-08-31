@@ -138,6 +138,33 @@ const STATUS_LABELS = {
   CANCELLED: 'Cancelled',
 };
 
+/** Today, as a date input wants it. */
+const today = () => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+/**
+ * What a transaction form opens on.
+ *
+ * The imported design opened every form on a worked example -- customer
+ * CUS-002, two named products, a warehouse in Bogura. That reads well against
+ * the dataset it was drawn from and is nonsense against a real one, where none
+ * of those records exist: the form cannot be posted, because the codes it is
+ * holding resolve to nothing.
+ *
+ * The example is kept where the record it names is genuinely there, so the demo
+ * is unchanged. Otherwise the first real record stands in, and with nothing to
+ * stand in the field opens empty for the operator to choose.
+ */
+function opening(rows, preferred, key) {
+  const list = rows || [];
+  const valueOf = (row) => (key ? row && row[key] : row);
+  if (list.some((row) => valueOf(row) === preferred)) return preferred;
+  return list.length ? valueOf(list[0]) || '' : '';
+}
+
 /** Turn a snake_case column name into something a person reads. */
 const humanField = (name) =>
   String(name || '')
@@ -157,10 +184,14 @@ export class BusinessApp extends Component {
     this.state = {
       screen:'dashboard', biz:'all', q:'', qOpen:false, notifOpen:false, userOpen:false, toast:null,
       invTab:'all', invSort:'value', acctTab:'receivable', setSec:'company', repSel:'crop-batch-profit', repLoading:false,
-      custSel:'CUS-003', custTab:'purchases', supSel:'SUP-001', supTab:'purchases',
+      custSel:opening(data.customers, 'CUS-003', 'code'), custTab:'purchases',
+      supSel:opening(data.suppliers, 'SUP-001', 'code'), supTab:'purchases',
       // The configured costing method, not a default the screen decides on.
       valuation:data.company && data.company.valuation === 'WEIGHTED_AVERAGE' ? 'Weighted Average' : 'FIFO',
-      cp:{sup:'SUP-001', crop:'Maize', grade:'A (Premium)', wh:'Naogaon Central Godown', date:'2026-08-28', qty:100, unit:'MT', moist:1.5, rate:30000, transport:50000, loading:12000, unloading:8000, other:0, advance:1500000, note:''},
+      cp:{sup:opening(data.suppliers, 'SUP-001', 'code'), crop:opening(data.crops, 'Maize'),
+        grade:opening(data.grades, 'A (Premium)'), wh:opening(data.warehouses, 'Naogaon Central Godown'),
+        date:today(), qty:100, unit:opening(data.units, 'MT'), moist:1.5, rate:30000,
+        transport:50000, loading:12000, unloading:8000, other:0, advance:1500000, note:''},
       extraCusts:[], custModal:false, master:null, masterRows:{},
       // Configuration, fetched when Settings is opened; the audit trail, when
       // its screen is. Neither belongs in the workspace every screen boots from.
@@ -170,12 +201,24 @@ export class BusinessApp extends Component {
       // The password form, open or not. Signing out needs no state of its own.
       password:null, expenses:null,
       roleMatrix:null, userAccounts:null,
-      newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'', district:'Bogura', upazila:'', limit:500000, days:15, opening:0},
-      cs:{buyer:'PRAN Agro Business Ltd.', crop:'Maize', date:'2026-08-28', rate:34500, transport:15000, other:5000, target:40, alloc:{}},
-      ds:{cust:'CUS-002', date:'2026-08-28', sp:'Shamim Reza', wh:'Bogura Depot', terms:'Credit 15 days', paid:150000,
-        lines:[{pid:'P-1001', qty:120, rate:295, disc:2, bonus:4}, {pid:'P-1004', qty:60, rate:510, disc:0, bonus:0}]},
-      dp:{co:'CMP-01', inv:'ACI/DH/26-4471', date:'2026-08-27', wh:'Bogura Depot', terms:'Credit 30 days', transport:18000, other:4500,
-        lines:[{pid:'P-1001', qty:600, free:24, rate:245, disc:3}, {pid:'P-1003', qty:200, free:0, rate:180, disc:0}]},
+      newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'',
+        district:opening((data.customers || []).concat(data.suppliers || []), 'Bogura', 'district'),
+        upazila:'', limit:500000, days:15, opening:0},
+      cs:{buyer:opening(data.buyers, 'PRAN Agro Business Ltd.'), crop:opening(data.crops, 'Maize'),
+        date:today(), rate:34500, transport:15000, other:5000, target:40, alloc:{}},
+      ds:{cust:opening(data.customers, 'CUS-002', 'code'), date:today(),
+        sp:opening(data.employees, 'Shamim Reza', 'name'), wh:opening(data.warehouses, 'Bogura Depot'),
+        terms:'Credit 15 days', paid:0,
+        lines:BusinessApp.openingLines(data.products, [
+          {pid:'P-1001', qty:120, rate:295, disc:2, bonus:4},
+          {pid:'P-1004', qty:60, rate:510, disc:0, bonus:0},
+        ], p => ({pid:p.code, qty:'', rate:p.sale, disc:0, bonus:0}))},
+      dp:{co:opening(data.companies, 'CMP-01', 'code'), inv:'', date:today(),
+        wh:opening(data.warehouses, 'Bogura Depot'), terms:'Credit 30 days', transport:0, other:0,
+        lines:BusinessApp.openingLines(data.products, [
+          {pid:'P-1001', qty:600, free:24, rate:245, disc:3},
+          {pid:'P-1003', qty:200, free:0, rate:180, disc:0},
+        ], p => ({pid:p.code, qty:'', free:0, rate:p.pur, disc:0}))},
       batches: data.batches,
       approvals: data.approvals,
       cropLog: data.cropLog,
@@ -503,6 +546,26 @@ export class BusinessApp extends Component {
    * looking for `method.edit` when the code is `payment.method.edit` silently
    * hides every control.
    */
+  /**
+   * The lines a goods form opens with.
+   *
+   * The worked example is kept only while every product it names is really in
+   * the catalogue -- a line pointing at a product that does not exist cannot be
+   * posted, because the code resolves to no id and the server refuses the body.
+   * Otherwise the form opens on the first product with its own rate and no
+   * quantity, which is a line waiting to be filled in rather than a guess.
+   *
+   * @param {Array} products the catalogue as loaded
+   * @param {Array} example  the design's worked lines
+   * @param {(product: object) => object} blank a line built from one product
+   */
+  static openingLines(products, example, blank) {
+    const catalogue = products || [];
+    const known = new Set(catalogue.map(p => p.code));
+    if (example.every(line => known.has(line.pid))) return example;
+    return catalogue.length ? [blank(catalogue[0])] : [];
+  }
+
   static PERMISSION_PREFIX = {
     category: 'expense.category',
     productCategory: 'product.category',
@@ -1554,7 +1617,7 @@ export class BusinessApp extends Component {
     const no = 'PC-2608-0' + (14 + this.state.cropLog.length - 5);
     const batch = {id:c.batchId, crop:f.crop, grade:f.grade, wh:f.wh, qty:c.net, rem:c.net, cost:c.cpuNum, date:'28 Aug 2026', age:0, sup:c.sup.name};
     const logRow = {no:no, date:'28 Aug 2026', sup:c.sup.name, crop:f.crop, qty:c.net, unit:f.unit, rate:+f.rate || 0, cpu:c.cpuNum, total:c.total, status:c.needAppr ? 'Pending approval' : 'Posted'};
-    const intent = {date:'2026-08-28', supplierCode:f.sup, crop:f.crop, grade:f.grade, warehouse:f.wh,
+    const intent = {date:f.date, supplierCode:f.sup, crop:f.crop, grade:f.grade, warehouse:f.wh,
       quantity:+f.qty || 0, unit:f.unit, moisture:+f.moist || 0, rate:+f.rate || 0,
       transport:+f.transport || 0, loading:+f.loading || 0, unloading:+f.unloading || 0,
       other:+f.other || 0, advance:+f.advance || 0, note:f.note};
@@ -1601,7 +1664,7 @@ export class BusinessApp extends Component {
     if (!c.allocQty) { this.fire('Allocate quantity from at least one batch.', 'danger'); return; }
     const logRow = {no:c.salesNo, date:'28 Aug 2026', buyer:f.buyer, crop:f.crop, batch:c.rows.filter(r => (+f.alloc[r.id] || 0) > 0).map(r => r.id).join(', '),
       qty:c.allocQty, rate:+f.rate || 0, amt:c.allocQty * (+f.rate || 0), profit:0, status:'Posted'};
-    const intent = {date:'2026-08-28', buyerName:f.buyer, crop:f.crop, quantity:c.allocQty,
+    const intent = {date:f.date, buyerName:f.buyer, crop:f.crop, quantity:c.allocQty,
       rate:+f.rate || 0, transport:+f.transport || 0, other:+f.other || 0,
       valuation:this.state.valuation};
     this.persist('postCropSale', {logRow:logRow, allocations:Object.assign({}, f.alloc), intent:intent}).then(saved => {
@@ -1638,7 +1701,7 @@ export class BusinessApp extends Component {
 
     const f = this.state.ds;
     const cust = this.custList().filter(c => c.code === f.cust)[0];
-    const intent = {date:'2026-08-28', customerCode:f.cust, warehouse:f.wh, terms:f.terms,
+    const intent = {date:f.date, customerCode:f.cust, warehouse:f.wh, terms:f.terms,
       paid:+f.paid || 0,
       lines:f.lines.map(l => { const p = this.data.products.filter(x => x.code === l.pid)[0] || {};
         return {productCode:l.pid, quantity:+l.qty || 0, bonus:+l.bonus || 0,
@@ -1665,7 +1728,7 @@ export class BusinessApp extends Component {
   postDP(net) {
     const f = this.state.dp;
     const co = this.data.companies.filter(c => c.code === f.co)[0];
-    const intent = {date:'2026-08-28', companyCode:f.co, warehouse:f.wh, invoiceNo:f.inv,
+    const intent = {date:f.date, companyCode:f.co, warehouse:f.wh, invoiceNo:f.inv,
       terms:f.terms, transport:+f.transport || 0, other:+f.other || 0,
       lines:f.lines.map(l => ({productCode:l.pid, quantity:+l.qty || 0, free:+l.free || 0,
         rate:+l.rate || 0, discount:+l.disc || 0}))};
@@ -1703,7 +1766,7 @@ export class BusinessApp extends Component {
       onNew:() => this.setState({custModal:true}), onCancel:() => this.setState({custModal:false}), onSave:() => this.saveCustomer(),
       types:this.optionsInUse(all, 'type', ['Dealer', 'Retailer', 'Corporate', 'Individual']),
       districts:this.optionsInUse(all.concat(this.data.suppliers, this.data.companies), 'district'),
-      grossText:money(gross), discText:'− ' + money(discAmt).slice(1), netText:money(net), costText:money(cost),
+      grossText:money(gross), discText:'− ' + money(discAmt).slice(1), netText:money(net), netNum:net, costText:money(cost),
       profitText:money(profit), marginText:margin.toFixed(2) + '%', profitColor:profit >= 0 ? C.crop : C.dngr,
       paidText:money(paid), dueText:money(due), limitText:money(cust.limit), outText:money(cust.out),
       availText:money(avail), availColor:avail < 0 ? C.dngr : C.crop, overLimit:avail < 0,

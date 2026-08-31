@@ -138,3 +138,42 @@ describe('an empty database', () => {
     expect(app.state.master.kind).toBe('customer');
   });
 });
+
+describe('transaction forms on an empty database', () => {
+  it('opens on no record rather than on one that does not exist', async () => {
+    const { app } = await mountEmpty();
+    const { ds, dp, cp, cs } = app.state;
+
+    // The design opened these on a worked example. On a database with none of
+    // those records the codes resolve to nothing and the post is refused, so
+    // the fields open empty for the operator to choose.
+    expect(ds.cust).toBe('');
+    expect(ds.wh).toBe('');
+    expect(ds.lines).toHaveLength(0);
+    expect(dp.co).toBe('');
+    expect(dp.lines).toHaveLength(0);
+    expect(cp.sup).toBe('');
+    expect(cs.buyer).toBe('');
+  });
+
+  it('dates a new document today, not the day the design was drawn', async () => {
+    const { app } = await mountEmpty();
+    const today = new Date();
+    const expected = [
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    ].join('-');
+
+    for (const form of ['ds', 'dp', 'cp', 'cs']) {
+      expect(app.state[form].date, form).toBe(expected);
+    }
+  });
+
+  it('opens a blank invoice with nothing already paid on it', async () => {
+    const { app } = await mountEmpty();
+    expect(app.state.ds.paid).toBe(0);
+    expect(app.state.dp.transport).toBe(0);
+    expect(app.state.dp.inv).toBe('');
+  });
+});
