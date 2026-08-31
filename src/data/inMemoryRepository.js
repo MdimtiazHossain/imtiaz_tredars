@@ -101,6 +101,12 @@ export class InMemoryRepository {
     };
     // Units live with the settings rather than the working set, but they are
     // maintained through the same master routes.
+    if (kind === 'productCategory' || kind === 'brand') {
+      if (!this._settings) this._settings = clone(SETTINGS);
+      const key = kind === 'brand' ? 'brands' : 'categories';
+      if (!this._settings[key]) this._settings[key] = [];
+      return this._settings[key];
+    }
     if (kind === 'unit') {
       if (!this._settings) this._settings = clone(SETTINGS);
       return this._settings.units;

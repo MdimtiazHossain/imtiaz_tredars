@@ -1013,4 +1013,94 @@ registerMasterCrud(router, {
   }),
 });
 
+/* ------------------------------------------- product categories and brands */
+
+/**
+ * What a product is classified by.
+ *
+ * The product form offers the categories and brands the catalogue already
+ * uses, which is a dead end on an empty database: with no product carrying a
+ * category there is none to choose, so none is ever set. These two routes are
+ * what break that circle. Both tables are shared rather than org-scoped and
+ * carry no timestamps, as expense categories do.
+ */
+const classificationSchema = z.object({
+  name: z.string().trim().min(1, 'A name is required').max(80),
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Z0-9_]*$/, 'Use capitals, digits and underscores, like AGROCHEMICAL.')
+    .max(24)
+    .optional(),
+});
+
+/** In use by a product, so retiring it would leave that product unclassified. */
+const inUseBy = (column) => ({
+  sql: `SELECT COUNT(*)::int AS value, $2::bigint AS org_id
+          FROM products WHERE ${column} = $1 AND is_active`,
+  code: 'CLASSIFICATION_IN_USE',
+  message: (n) =>
+    `${n} active product${n === 1 ? ' is' : 's are'} filed under this. Move them first.`,
+});
+
+const presentClassification = (r) => ({
+  id: Number(r.id),
+  code: r.code,
+  name: r.name,
+  active: r.is_active,
+  status: r.is_active ? 'Active' : 'Retired',
+});
+
+for (const entity of [
+  {
+    path: 'product-categories',
+    table: 'product_categories',
+    label: 'Product category',
+    prefix: 'CAT',
+    column: 'category_id',
+    permissions: {
+      create: 'product.category.create',
+      edit: 'product.category.edit',
+      remove: 'product.category.delete',
+    },
+  },
+  {
+    path: 'brands',
+    table: 'brands',
+    label: 'Brand',
+    prefix: 'BRAND',
+    column: 'brand_id',
+    permissions: { create: 'brand.create', edit: 'brand.edit', remove: 'brand.delete' },
+  },
+]) {
+  router.get(
+    `/${entity.path}`,
+    requirePermission('product.view'),
+    handler(async (_req, res) => {
+      const { rows } = await query(
+        `SELECT id, code, name, is_active,
+                (SELECT COUNT(*)::int FROM products p
+                  WHERE p.${entity.column} = t.id AND p.is_active) AS products
+           FROM ${entity.table} t ORDER BY name`
+      );
+      ok(
+        res,
+        rows.map((r) => ({ ...presentClassification(r), products: r.products }))
+      );
+    })
+  );
+
+  registerMasterCrud(router, {
+    ...entity,
+    // The code is optional; the next in sequence is allocated when it is omitted.
+    code: { prefix: entity.prefix, width: 2, fromBody: true },
+    schema: classificationSchema,
+    orgScoped: false,
+    timestamped: false,
+    columns: (b) => ({ name: b.name }),
+    blockers: [inUseBy(entity.column)],
+    present: presentClassification,
+  });
+}
+
 export default router;

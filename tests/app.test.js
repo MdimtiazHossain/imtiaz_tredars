@@ -1032,17 +1032,76 @@ describe('master data', () => {
     expect(app.state.master.error).toMatch(/below the purchase rate/i);
   });
 
-  it('offers only categories and brands the catalogue already uses', async () => {
+  it('offers the categories and brands that have been set up', async () => {
     const { app } = await mountApp();
     app.openMaster('product');
     const fields = app.renderVals().modal.fields;
-    const known = app.data.products;
+    const settings = app.settingsData();
 
     const cats = fields.find((f) => f.key === 'cat').options.map((o) => o.value);
     const brands = fields.find((f) => f.key === 'brand').options.map((o) => o.value);
-    expect(cats.length).toBeGreaterThan(0);
-    cats.forEach((c) => expect(known.map((p) => p.cat)).toContain(c));
-    brands.forEach((b) => expect(known.map((p) => p.brand)).toContain(b));
+
+    // Blank first: both are optional, and an unclassified catalogue is a real
+    // state rather than an error.
+    expect(cats[0]).toBe('');
+    expect(brands[0]).toBe('');
+    expect(cats.slice(1)).toEqual(settings.categories.map((c) => c.name));
+    expect(brands.slice(1)).toEqual(settings.brands.map((b) => b.name));
+  });
+
+  it('offers a category no product uses yet', async () => {
+    const { app } = await mountApp();
+    // This is the case that used to be impossible: the form listed only what
+    // other products were filed under, so the first one could never be set.
+    const fresh = { id: 99, code: 'BIO', name: 'Biological', products: 0, active: true };
+    app.setState({ settings: { ...app.settingsData(), categories: [fresh] } });
+
+    app.openMaster('product');
+    const cats = app.renderVals().modal.fields.find((f) => f.key === 'cat').options.map((o) => o.value);
+
+    expect(cats).toEqual(['', 'Biological']);
+    expect(app.data.products.some((p) => p.cat === 'Biological')).toBe(false);
+  });
+
+  it('leaves a retired category off the form', async () => {
+    const { app } = await mountApp();
+    app.setState({
+      settings: {
+        ...app.settingsData(),
+        categories: [
+          { id: 1, code: 'A', name: 'Still offered', products: 1, active: true },
+          { id: 2, code: 'B', name: 'Retired one', products: 0, active: false },
+        ],
+      },
+    });
+
+    app.openMaster('product');
+    const cats = app.renderVals().modal.fields.find((f) => f.key === 'cat').options.map((o) => o.value);
+    expect(cats).toEqual(['', 'Still offered']);
+  });
+
+  it('maintains categories and brands from the settings screen', async () => {
+    const { app } = await mountApp();
+    app.setState({ screen: 'settings', setSec: 'classify' });
+    const groups = app.renderVals().setClassify;
+
+    expect(groups.map((g) => g.title)).toEqual(['Product categories', 'Brands']);
+    expect(groups[0].rows.length).toBe(app.settingsData().categories.length);
+    // Each row says what would be left behind if it were retired.
+    expect(groups[0].rows[0].d).toContain('product');
+    expect(groups[0].addLabel).toBe('Add category');
+    expect(groups[1].addLabel).toBe('Add brand');
+  });
+
+  it('says so when nothing has been set up yet', async () => {
+    const { app } = await mountApp();
+    app.setState({
+      screen: 'settings', setSec: 'classify',
+      settings: { ...app.settingsData(), categories: [], brands: [] },
+    });
+    const groups = app.renderVals().setClassify;
+    expect(groups[0].isEmpty).toBe(true);
+    expect(groups[0].emptyNote).toContain('appears on the product form');
   });
 
   it('sends a new product with the names the server resolves', async () => {

@@ -492,6 +492,7 @@ export class BusinessApp extends Component {
    */
   static PERMISSION_PREFIX = {
     category: 'expense.category',
+    productCategory: 'product.category',
     method: 'payment.method',
   };
 
@@ -568,6 +569,10 @@ export class BusinessApp extends Component {
       // The unit form needs the records, not just the codes every other screen
       // works in, so it can offer the base units and show the conversions.
       unitRecords: rows.unit || this.settingsData().units || [],
+      // The categories and brands that exist, rather than the ones other
+      // products happen to use -- which is what made the first one impossible.
+      productCategories: this.settingsData().categories || [],
+      brands: this.settingsData().brands || [],
     };
   }
 
@@ -683,7 +688,9 @@ export class BusinessApp extends Component {
     this.loadMasterList(kind);
     // Units and payment methods are maintained from the Settings screen, and
     // that screen reads them out of the settings payload.
-    if (kind === 'unit' || kind === 'method') this.loadSettings();
+    if (kind === 'unit' || kind === 'method' || kind === 'productCategory' || kind === 'brand') {
+      this.loadSettings();
+    }
   }
 
   /**
@@ -2529,11 +2536,13 @@ export class BusinessApp extends Component {
         bg:x.k === S.valuation ? C.accBg : '#fff', color:x.k === S.valuation ? C.acc : C.mut, bd:x.k === S.valuation ? C.acc : C.bd,
         onClick:() => this.setValuation(x.k)})),
       setSecs:[['company', 'Company profile'], ['fy', 'Financial year'], ['numbering', 'Numbering'], ['units', 'Units & conversion'], ['pay', 'Payment methods'],
+        ['classify', 'Categories & brands'],
         ['limits', 'Approval limits'], ['valuation', 'Inventory valuation'], ['roles', 'Roles & permissions'], ['notif', 'Notification rules']].map(x => ({
         l:x[1], on:S.setSec === x[0], bg:S.setSec === x[0] ? C.accBg : 'transparent', color:S.setSec === x[0] ? C.acc : '#3D3A36',
         weight:S.setSec === x[0] ? '600' : '400', onClick:this.hs('setSec', x[0])})),
       setIs:{company:S.setSec === 'company', fy:S.setSec === 'fy', numbering:S.setSec === 'numbering', units:S.setSec === 'units',
-        pay:S.setSec === 'pay', limits:S.setSec === 'limits', valuation:S.setSec === 'valuation', roles:S.setSec === 'roles', notif:S.setSec === 'notif'},
+        pay:S.setSec === 'pay', classify:S.setSec === 'classify', limits:S.setSec === 'limits',
+        valuation:S.setSec === 'valuation', roles:S.setSec === 'roles', notif:S.setSec === 'notif'},
       // The grants actually held, not a description of what they were meant to
       // be: computed from `role_permissions`, and editable in place. A cell is
       // one role against one module, so clicking it opens that module's
@@ -2625,6 +2634,36 @@ export class BusinessApp extends Component {
           onToggle:() => (on ? this.confirmRetire('unit', u) : this.restoreMaster('unit', u)),
         };
       }),
+      // Categories and brands read the same way as units: a list, an add
+      // button, and a switch that retires or restores the row it sits beside.
+      setClassify:[
+        {kind:'productCategory', title:'Product categories',
+          note:'What the dealer catalogue is grouped by',
+          rows:this.settingsData().categories || []},
+        {kind:'brand', title:'Brands',
+          note:'Whose product it is — the maker, not the supplier',
+          rows:this.settingsData().brands || []},
+      ].map(group => ({
+        title:group.title, note:group.note,
+        canAdd:this.mayMaster(group.kind, 'create'),
+        addLabel:group.kind === 'brand' ? 'Add brand' : 'Add category',
+        onAdd:() => this.openMaster(group.kind),
+        isEmpty:group.rows.length === 0,
+        emptyNote:'None yet — add one and it appears on the product form.',
+        rows:group.rows.map(r => {
+          const on = r.active !== false;
+          return {
+            k:r.name,
+            d:r.products ? r.products + (r.products === 1 ? ' product' : ' products') : 'nothing filed under it',
+            tone:on ? C.crop : '#D9D5CD', knob:on ? '19px' : '2px',
+            canEdit:this.mayMaster(group.kind, 'edit'),
+            canToggle:on ? this.mayMaster(group.kind, 'delete') : this.mayMaster(group.kind, 'edit'),
+            toggleLabel:on ? 'Retire' : 'Restore',
+            onEdit:() => this.openMaster(group.kind, r),
+            onToggle:() => (on ? this.confirmRetire(group.kind, r) : this.restoreMaster(group.kind, r)),
+          };
+        }),
+      })),
       addUnit:{canAdd:this.mayMaster('unit', 'create'), label:'Add unit',
         onAdd:() => this.openMaster('unit')},
 

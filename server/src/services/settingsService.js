@@ -197,6 +197,34 @@ function formatFactor(value) {
   return rounded.toLocaleString('en-IN', { maximumFractionDigits: 4 });
 }
 
+/* -------------------------------------------- product categories and brands */
+
+/**
+ * What the product catalogue is classified by, and how much is filed under
+ * each -- so retiring one shows what it would leave behind.
+ */
+export async function loadClassifications() {
+  const columns = { product_categories: 'category_id', brands: 'brand_id' };
+  const read = async (table) => {
+    const { rows } = await query(
+      `SELECT t.id, t.code, t.name, t.is_active,
+              (SELECT COUNT(*)::int FROM products p
+                WHERE p.${columns[table]} = t.id AND p.is_active) AS products
+         FROM ${table} t ORDER BY t.name`
+    );
+    return rows.map((r) => ({
+      id: Number(r.id),
+      code: r.code,
+      name: r.name,
+      products: r.products,
+      active: r.is_active,
+      status: r.is_active ? 'Active' : 'Retired',
+    }));
+  };
+  const [categories, brands] = await Promise.all([read('product_categories'), read('brands')]);
+  return { categories, brands };
+}
+
 /* --------------------------------------------------------- approval limits */
 
 /** What the rule applies to, in the words the screen uses. */
@@ -265,16 +293,24 @@ export { loadPermissionMatrix } from './roleService.js';
 
 /** One round trip for the whole Settings screen. */
 export async function loadSettings(orgId) {
-  const [organization, fiscalYears, numbering, units, approvalRules, notificationRules, permissions] =
-    await Promise.all([
-      loadOrganization(orgId),
-      loadFiscalYears(orgId),
-      loadNumbering(orgId),
-      loadUnits(),
-      loadApprovalRules(orgId),
-      loadNotificationRules(orgId),
-      loadPermissionMatrix(),
-    ]);
+  const [
+    organization, fiscalYears, numbering, units, approvalRules, notificationRules,
+    permissions, classifications,
+  ] = await Promise.all([
+    loadOrganization(orgId),
+    loadFiscalYears(orgId),
+    loadNumbering(orgId),
+    loadUnits(),
+    loadApprovalRules(orgId),
+    loadNotificationRules(orgId),
+    loadPermissionMatrix(),
+    loadClassifications(),
+  ]);
 
-  return { organization, fiscalYears, numbering, units, approvalRules, notificationRules, permissions };
+  return {
+    organization, fiscalYears, numbering, units, approvalRules, notificationRules,
+    permissions,
+    categories: classifications.categories,
+    brands: classifications.brands,
+  };
 }

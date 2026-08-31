@@ -338,4 +338,73 @@ suite('settings', () => {
     // it. Only the unit itself is cleared, so the suite can run again.
     await query('DELETE FROM units WHERE id = $1', [created.body.data.id]);
   });
+
+  /* ------------------------------------- product categories and brands */
+
+  it('lists them with what is filed under each', async () => {
+    const res = await request(app).get('/api/product-categories').set(as('Admin'));
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    for (const row of res.body.data) {
+      expect(row.code).toBeTruthy();
+      expect(typeof row.products).toBe('number');
+    }
+  });
+
+  it('carries them on the settings payload the screen reads', async () => {
+    const res = await request(app).get('/api/settings').set(as('Admin'));
+    expect(res.body.data.categories.length).toBeGreaterThan(0);
+    expect(res.body.data.brands.length).toBeGreaterThan(0);
+  });
+
+  it('adds one nothing is using and retires it again', async () => {
+    await query("DELETE FROM brands WHERE code = 'TESTBRAND'");
+
+    const created = await request(app)
+      .post('/api/brands')
+      .set(as('Admin'))
+      .send({ name: 'Test Brand', code: 'TESTBRAND' });
+    expect(created.status).toBe(201);
+    expect(created.body.data.code).toBe('TESTBRAND');
+
+    const retired = await request(app).delete(`/api/brands/${created.body.data.id}`).set(as('Admin'));
+    expect(retired.status).toBe(200);
+    expect(retired.body.data.active).toBe(false);
+
+    const restored = await request(app)
+      .post(`/api/brands/${created.body.data.id}/restore`)
+      .set(as('Admin'));
+    expect(restored.body.data.active).toBe(true);
+
+    await query('DELETE FROM brands WHERE id = $1', [created.body.data.id]);
+  });
+
+  it('refuses to retire one that products are filed under', async () => {
+    const listed = (await request(app).get('/api/product-categories').set(as('Admin'))).body.data;
+    const inUse = listed.find((c) => c.products > 0);
+    expect(inUse).toBeTruthy();
+
+    const res = await request(app).delete(`/api/product-categories/${inUse.id}`).set(as('Admin'));
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('CLASSIFICATION_IN_USE');
+  });
+
+  it('refuses a duplicate code', async () => {
+    const listed = (await request(app).get('/api/brands').set(as('Admin'))).body.data;
+    const res = await request(app)
+      .post('/api/brands')
+      .set(as('Admin'))
+      .send({ name: 'Another', code: listed[0].code });
+    expect(res.status).toBe(409);
+  });
+
+  it('refuses a sales user, who does not maintain the catalogue', async () => {
+    tokens.Sales = tokens.Sales || (await signIn('Sales'));
+    const res = await request(app)
+      .post('/api/brands')
+      .set(as('Sales'))
+      .send({ name: 'Not allowed' });
+    expect(res.status).toBe(403);
+  });
+
 });

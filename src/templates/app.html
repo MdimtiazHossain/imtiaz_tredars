@@ -1429,6 +1429,42 @@
                 </sc-for>
               </div>
             </sc-if>
+            <sc-if value="{{ setIs.classify }}">
+              <sc-for list="{{ setClassify }}" as="g" hint-placeholder-count="2">
+                <div style="margin-bottom:22px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;max-width:560px">
+                    <div style="font-size:14.5px;font-weight:700">{{ g.title }}</div>
+                    <sc-if value="{{ g.canAdd }}">
+                      <button onClick="{{ g.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ g.addLabel }}</button>
+                    </sc-if>
+                  </div>
+                  <div style="font-size:12.5px;color:#6E6A64;margin-bottom:12px">{{ g.note }}</div>
+                  <sc-if value="{{ g.isEmpty }}">
+                    <div style="max-width:560px;padding:16px;border:1px dashed #E3E0DA;border-radius:8px;font-size:12.5px;color:#8C877F">{{ g.emptyNote }}</div>
+                  </sc-if>
+                  <div style="display:flex;flex-direction:column;gap:8px;max-width:560px">
+                    <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="4">
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                        <div>
+                          <div style="font-size:13px;font-weight:600">{{ r.k }}</div>
+                          <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ r.d }}</div>
+                        </div>
+                        <span style="display:flex;align-items:center;gap:10px;flex:none">
+                          <sc-if value="{{ r.canEdit }}">
+                            <button onClick="{{ r.onEdit }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Edit</button>
+                          </sc-if>
+                          <sc-if value="{{ r.canToggle }}">
+                            <button onClick="{{ r.onToggle }}" title="{{ r.toggleLabel }}" style="width:38px;height:21px;border:0;padding:0;border-radius:11px;background:{{ r.tone }};position:relative;flex:none;cursor:pointer">
+                              <span style="position:absolute;top:2px;left:{{ r.knob }};width:17px;height:17px;border-radius:50%;background:#fff"></span>
+                            </button>
+                          </sc-if>
+                        </span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </sc-if>
             <sc-if value="{{ setIs.pay }}">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;max-width:560px">
                 <div style="font-size:14.5px;font-weight:700">Payment methods</div>

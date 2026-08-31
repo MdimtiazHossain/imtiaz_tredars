@@ -242,6 +242,18 @@ export const SETTINGS = {
     { id: 5, code: 'LARGE_TRANSACTION', name: 'Large transaction', description: 'any single transaction above {value}', threshold: 2000000, unit: 'amount', active: true },
     { id: 6, code: 'EXPENSE_THRESHOLD', name: 'Expense threshold', description: 'an expense above {value}', threshold: 50000, unit: 'amount', active: true },
   ],
+  categories: [
+    { id: 1, code: 'AGROCHEMICAL', name: 'Agrochemical', products: 3, active: true, status: 'Active' },
+    { id: 2, code: 'FERTILIZER', name: 'Fertilizer', products: 2, active: true, status: 'Active' },
+    { id: 3, code: 'SEEDS', name: 'Seeds', products: 1, active: true, status: 'Active' },
+    { id: 4, code: 'FEED', name: 'Feed', products: 0, active: true, status: 'Active' },
+  ],
+  brands: [
+    { id: 1, code: 'SYNGENTA', name: 'Syngenta', products: 2, active: true, status: 'Active' },
+    { id: 2, code: 'ACI', name: 'ACI', products: 2, active: true, status: 'Active' },
+    { id: 3, code: 'SQUARE', name: 'Square', products: 1, active: true, status: 'Active' },
+    { id: 4, code: 'ISPAHANI', name: 'Ispahani', products: 1, active: true, status: 'Active' },
+  ],
   permissions: permissionMatrix(ROLES),
 };
 

@@ -27,6 +27,8 @@ const MASTER_PATHS = {
   category: '/expense-categories',
   method: '/payment-methods',
   unit: '/units',
+  productCategory: '/product-categories',
+  brand: '/brands',
   customer: '/customers',
   supplier: '/suppliers',
   company: '/companies',

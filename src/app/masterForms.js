@@ -13,6 +13,18 @@ import { field, formModal } from '../components/formModal.js';
  * next form, and the app never offers a unit the server would reject.
  */
 
+/**
+ * The names on a maintained list, falling back to what is already in use.
+ *
+ * The maintained list is the answer once there is one; the fallback keeps the
+ * form working before the settings payload has arrived, and in the no-backend
+ * demo where the two lists are not kept separately.
+ */
+function named(rows, fallback) {
+  const names = (rows || []).filter((r) => r.active !== false).map((r) => r.name);
+  return names.length ? names : fallback;
+}
+
 /** Options that exist in the data, plus the value being edited, sorted. */
 function optionsFrom(rows, key, extra) {
   const seen = new Set();
@@ -45,7 +57,7 @@ const COMPANY_ROLES = [
 
 export const MASTER_KINDS = [
   'crop', 'product', 'customer', 'supplier', 'company', 'warehouse', 'employee',
-  'account', 'category', 'method', 'unit',
+  'account', 'category', 'method', 'unit', 'productCategory', 'brand',
 ];
 
 const TITLES = {
@@ -60,6 +72,8 @@ const TITLES = {
   category: ['expense category', 'What spending is booked against'],
   method: ['payment method', 'How money is taken in and paid out'],
   unit: ['unit', 'How quantities are measured, and what they convert to'],
+  productCategory: ['product category', 'What the dealer catalogue is grouped by'],
+  brand: ['brand', 'Whose product it is — the maker, not the supplier'],
 };
 
 /** What one record of this kind is called, for a title or a message. */
@@ -99,7 +113,7 @@ export function defaultsFor(kind, data, row) {
     };
   }
 
-  if (kind === 'category') {
+  if (kind === 'category' || kind === 'productCategory' || kind === 'brand') {
     return { code: row ? row.code : '', name: row ? row.name : '' };
   }
 
@@ -319,6 +333,25 @@ export function fieldsFor(kind, form, data, on, row) {
     ];
   }
 
+  if (kind === 'productCategory' || kind === 'brand') {
+    const noun = kind === 'brand' ? 'Brand' : 'Category';
+    return [
+      field('name', `${noun} name`, {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: kind === 'brand' ? 'Syngenta' : 'Agrochemical',
+        wide: true,
+      }),
+      field('code', 'Code', {
+        value: form.code,
+        onChange: on('code'),
+        mono: true,
+        placeholder: kind === 'brand' ? 'SYNGENTA' : 'AGROCHEMICAL',
+        hint: 'Optional — one is allocated if left blank',
+      }),
+    ];
+  }
+
   if (kind === 'category') {
     return [
       field('name', 'Category name', {
@@ -393,13 +426,19 @@ export function fieldsFor(kind, form, data, on, row) {
       }),
       // Categories and brands are the ones the catalogue already uses; the
       // server refuses an unknown one rather than quietly inventing it.
+      // The categories and brands that have been set up. Blank is offered
+      // first because both are optional, and because a catalogue that has not
+      // been classified yet is a real state rather than an error.
       field('cat', 'Category', {
-        options: optionsFrom(data.products, 'cat', form.cat),
+        options: [''].concat(
+          named(data.productCategories, optionsFrom(data.products, 'cat', form.cat))
+        ),
         value: form.cat,
         onChange: on('cat'),
+        hint: 'Set them up under Settings › Categories & brands',
       }),
       field('brand', 'Brand', {
-        options: optionsFrom(data.products, 'brand', form.brand),
+        options: [''].concat(named(data.brands, optionsFrom(data.products, 'brand', form.brand))),
         value: form.brand,
         onChange: on('brand'),
       }),
@@ -579,7 +618,8 @@ export function validate(kind, form) {
     return null;
   }
 
-  if (kind === 'account' || kind === 'category' || kind === 'method') {
+  if (kind === 'account' || kind === 'category' || kind === 'method'
+      || kind === 'productCategory' || kind === 'brand') {
     // The server holds the same rule; saying it here means the operator finds
     // out while typing rather than after saving.
     const allowed = kind === 'account' ? /^[A-Z0-9-]*$/ : /^[A-Z0-9_]*$/;
@@ -631,7 +671,7 @@ export function payloadFor(kind, form) {
     };
   }
 
-  if (kind === 'category') {
+  if (kind === 'category' || kind === 'productCategory' || kind === 'brand') {
     return { code: text(form.code) || undefined, name: text(form.name) };
   }
 
