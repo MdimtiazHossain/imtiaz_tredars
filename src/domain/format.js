@@ -33,6 +33,10 @@ export function lakh(n) {
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/** Spelled out, for headings rather than table cells. */
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December'];
+
 /**
  * A date as "27 Aug", the way the screens write one.
  *
@@ -48,4 +52,34 @@ export function shortDate(value) {
   const index = Number(month) - 1;
   if (!day || index < 0 || index > 11) return String(value);
   return `${Number(day)} ${MONTHS[index]}`;
+}
+
+/**
+ * Name the span a statement covers, e.g. `August 2026`, `1 Jan – 31 Mar 2026`.
+ *
+ * A heading that names a month it was not given is a claim, and the P&L header
+ * carried one for as long as the figures beneath it were a fixture. This says
+ * only what the period actually is: a whole calendar month by its name, a range
+ * within one year without repeating the year, and anything else in full.
+ */
+export function periodLabel(period) {
+  const from = period && period.from ? String(period.from).slice(0, 10) : '';
+  const to = period && period.to ? String(period.to).slice(0, 10) : '';
+  if (!from && !to) return 'all posted transactions';
+  if (!from || !to) return shortDate(from || to);
+
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const monthName = (y, m) => `${MONTH_NAMES[m - 1]} ${y}`;
+  if (!MONTHS[fm - 1] || !MONTHS[tm - 1]) return `${from} – ${to}`;
+
+  // A range that fills exactly one month is that month.
+  const lastDay = new Date(Date.UTC(ty, tm, 0)).getUTCDate();
+  if (fy === ty && fm === tm) {
+    if (fd === 1 && td === lastDay) return monthName(fy, fm);
+    return `${fd} – ${td} ${monthName(fy, fm)}`;
+  }
+
+  if (fy === ty) return `${shortDate(from)} – ${shortDate(to)} ${ty}`;
+  return `${shortDate(from)} ${fy} – ${shortDate(to)} ${ty}`;
 }

@@ -9,11 +9,18 @@
  */
 
 export const ACCOUNTS = [
-  { id: 1, code: 'CASH-BOG', name: 'Office cash — Bogura', type: 'CASH' },
-  { id: 2, code: 'BANK-IBBL', name: 'Islami Bank — 20501...4417', type: 'BANK' },
-  { id: 3, code: 'BANK-DBBL', name: 'DBBL — 1471...8802', type: 'BANK' },
-  { id: 4, code: 'MFS-BKASH', name: 'bKash Merchant — 01755...', type: 'MFS' },
+  { id: 1, code: 'CASH-BOG', name: 'Office cash — Bogura', type: 'Cash',
+    lastMovement: '2026-08-28', balance: 385000 },
+  { id: 2, code: 'BANK-IBBL', name: 'Islami Bank — 20501...4417', type: 'Bank',
+    lastMovement: '2026-08-28', balance: 2140000 },
+  { id: 3, code: 'BANK-DBBL', name: 'DBBL — 1471...8802', type: 'Bank',
+    lastMovement: '2026-08-27', balance: 1520000 },
+  { id: 4, code: 'MFS-BKASH', name: 'bKash Merchant — 01755...', type: 'MFS',
+    lastMovement: '2026-08-28', balance: 240000 },
 ];
+
+/** What the accounts hold between them, for the dashboard's cash tile. */
+export const CASH_ON_HAND = ACCOUNTS.reduce((total, a) => total + a.balance, 0);
 
 /** Rocket is configured but not in use, as the Settings screen shows. */
 export const PAYMENT_METHOD_OPTIONS = [

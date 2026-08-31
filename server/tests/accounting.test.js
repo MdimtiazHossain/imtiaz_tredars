@@ -5,6 +5,7 @@ import { createApp } from '../src/app.js';
 import { query, closePool } from '../src/lib/db.js';
 import { HAS_DB } from './helpers/database.js';
 import { LEDGER } from '../src/services/financeService.js';
+import { profitAndLoss } from '../src/services/statementService.js';
 
 /**
  * The books, end to end.
@@ -270,5 +271,76 @@ suite('the books', () => {
       [saleId]
     );
     expect(reversals[0].n).toBeGreaterThan(0);
+  });
+  /* -------------------------------------------------------- the statement */
+
+
+  it('reports revenue less cost of sales as gross profit', async () => {
+    const s = await profitAndLoss(orgId, {});
+
+    expect(s.totals.revenue).toBeGreaterThan(0);
+    expect(s.totals.costOfSales).toBeGreaterThan(0);
+    expect(money(s.totals.grossProfit)).toBe(money(s.totals.revenue - s.totals.costOfSales));
+    expect(money(s.totals.netProfit)).toBe(
+      money(s.totals.grossProfit - s.totals.operatingExpense)
+    );
+  });
+
+  it('reads its lines as a column that sums to the net figure', async () => {
+    const s = await profitAndLoss(orgId, {});
+
+    // Costs are negative, so the detail lines add up to net profit without the
+    // reader having to know which ones to subtract.
+    const detail = s.lines.filter((l) => !l.bold).reduce((t, l) => t + l.amount, 0);
+    expect(money(detail)).toBe(money(s.totals.netProfit));
+  });
+
+  it('gives the report and the screen the same answer', async () => {
+    const direct = await profitAndLoss(orgId, {});
+
+    const report = await request(app)
+      .get('/api/reports/fin-pl')
+      .set(auth());
+    expect(report.status).toBe(200);
+
+    // Both read the same journal through the same service; a second opinion is
+    // what the fixture and the old report were, and what caused the drift.
+    expect(money(report.body.data.totals.netProfit)).toBe(money(direct.totals.netProfit));
+    expect(report.body.data.rows).toHaveLength(direct.lines.length);
+  });
+
+  it('narrows to one business line without changing how it adds up', async () => {
+    const all = await profitAndLoss(orgId, {});
+    const dealer = await profitAndLoss(orgId, { businessType: 'DEALER' });
+    const crop = await profitAndLoss(orgId, { businessType: 'BULK_CROP' });
+
+    expect(money(dealer.totals.revenue + crop.totals.revenue)).toBe(money(all.totals.revenue));
+    expect(money(dealer.totals.netProfit + crop.totals.netProfit)).toBe(money(all.totals.netProfit));
+  });
+
+  it('reports nothing for a period in which nothing was posted', async () => {
+    const s = await profitAndLoss(orgId, { from: '2000-01-01', to: '2000-12-31' });
+
+    expect(s.isEmpty).toBe(true);
+    expect(s.totals.netProfit).toBe(0);
+    expect(s.totals.marginPct).toBe(0);
+  });
+
+  it('refuses a user who may not see profit', async () => {
+    const { rows } = await query(
+      `SELECT u.username FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+        WHERE r.code = 'Sales' LIMIT 1`
+    );
+    if (!rows.length) return;
+    const sales = await request(app)
+      .post('/api/auth/login')
+      .send({ username: rows[0].username, password: PASSWORD });
+
+    const res = await request(app)
+      .get('/api/profit-and-loss')
+      .set({ authorization: `Bearer ${sales.body.data.accessToken}` });
+    expect(res.status).toBe(403);
   });
 });

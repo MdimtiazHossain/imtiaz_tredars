@@ -268,20 +268,6 @@ export const PAYMENT_METHODS = [
 ];
 
 /**
- * Cash and bank accounts shown on the Accounts screen without a backend.
- *
- * Named rather than written inline so the table, its footer and the KPI above
- * it all count the same list. With the API wired the balances come from the
- * server's account rows instead.
- */
-export const CASH_ACCOUNTS = [
-  { name: 'Office cash — Bogura', type: 'Cash', last: '28 Aug 2026', balance: 385000 },
-  { name: 'Islami Bank — 20501...4417', type: 'Bank', last: '28 Aug 2026', balance: 2140000 },
-  { name: 'DBBL — 1471...8802', type: 'Bank', last: '27 Aug 2026', balance: 1520000 },
-  { name: 'bKash Merchant — 01755...', type: 'MFS', last: '28 Aug 2026', balance: 240000 },
-];
-
-/**
  * Expense vouchers shown when there is no backend.
  *
  * With the API wired these come from `GET /expenses`; this is the fixture the

@@ -9,7 +9,7 @@
  */
 import { Component } from '../runtime/component.js';
 import { C } from '../styles/tokens.js';
-import { money, int, dec2, lakh, shortDate } from '../domain/format.js';
+import { money, int, dec2, lakh, shortDate, periodLabel } from '../domain/format.js';
 import { cell, column, table } from '../components/dataTable.js';
 import { field, formModal as formModalOf } from '../components/formModal.js';
 import { openInvoice } from './invoicePrint.js';
@@ -33,16 +33,15 @@ import {
   TOP_CUSTOMERS,
   TOP_COMPANIES,
   AGING_BUCKETS,
-  PROFIT_AND_LOSS,
   REPORT_GROUPS,
 } from '../data/analytics.js';
 import {
   PHONE_SCREENS,
   PAYMENT_METHODS,
-  CASH_ACCOUNTS,
   EXPENSE_VOUCHERS,
   SETTINGS,
 } from '../data/reference.js';
+import { ACCOUNTS } from '../data/financeLookups.js';
 import {
   defaultsFor as settingsDefaults,
   validate as validateSettings,
@@ -203,6 +202,8 @@ export class BusinessApp extends Component {
       // loading and one that failed to load read identically as a bare table,
       // and only one of them means the business has no stock.
       stock:null, stockLoading:false, stockError:'',
+      // The profit and loss, as the journal reports it.
+      statement:null, statementError:'',
       // The password form, open or not. Signing out needs no state of its own.
       password:null, expenses:null,
       roleMatrix:null, userAccounts:null,
@@ -244,6 +245,7 @@ export class BusinessApp extends Component {
       if (id === 'warehouses') this.loadMasterList('warehouse');
       if (id === 'employees') this.loadMasterList('employee');
       if (id === 'accounts') {
+        this.loadStatement();
         this.loadMasterList('account'); this.loadMasterList('category'); this.loadExpenses();
       }
       if (id === 'settings') { this.loadSettings(); this.loadMasterList('method'); this.loadAccessControl(); }
@@ -1096,6 +1098,29 @@ export class BusinessApp extends Component {
         this.setState({ valuation: label === 'FIFO' ? 'Weighted Average' : 'FIFO' });
         if (!err.silent) this.fire(err.message, 'danger');
       }
+    );
+  }
+
+  /* -------------------------------------------------------------- statements */
+
+  /**
+   * Load the profit and loss.
+   *
+   * The screen rendered a fixture: figures that never moved, under a heading
+   * reading Net profit. They are read from the ledger now, which is the only
+   * place a profit can be said to come from.
+   */
+  loadStatement() {
+    if (!this.repository || typeof this.repository.profitAndLoss !== 'function') return;
+    this.setState({ statementError: '' });
+    this.repository.profitAndLoss().then(
+      statement => this.setState({ statement, statementError: '' }),
+      err => this.setState({
+        statement: null,
+        // A statement that failed to load must not read as a business that
+        // earned nothing.
+        statementError: err && err.message ? err.message : 'The profit and loss could not be loaded.',
+      })
     );
   }
 
@@ -2270,12 +2295,16 @@ export class BusinessApp extends Component {
       owedSuppliers.reduce((x, y) => x + y.out, 0) + owedCompanies.reduce((x, y) => x + y.bal, 0);
     const owedParties = owedSuppliers.length + owedCompanies.length;
     const owingParties = owing.length + owingCompanies.length;
-    const pl = PROFIT_AND_LOSS;
-    const netProfit = (pl.find(x => /net profit/i.test(x.k)) || {}).v || 0;
-    // The total, not the first line that happens to say "Sales" -- margin
-    // against one business line rather than both would read three times high.
-    const revenue = (pl.find(x => /total revenue/i.test(x.k)) || {}).v || 0;
-    const margin = revenue ? (netProfit / revenue * 100).toFixed(1) + '%' : '—';
+    // Every figure below comes from the one statement, so the lines, the KPI
+    // and the margin cannot disagree with each other or with the report.
+    // Nothing stands in for a statement that did not arrive. A screen that
+    // falls back to a specimen on failure reports a profit the business never
+    // made, which is worse than reporting nothing at all.
+    const statement = S.statement;
+    const pl = statement ? statement.lines : [];
+    const netProfit = statement ? statement.totals.netProfit : 0;
+    const revenue = statement ? statement.totals.revenue : 0;
+    const margin = statement && revenue ? statement.totals.marginPct.toFixed(1) + '%' : '—';
     const rec = table([column('Customer'), column('Type'), column('Credit limit', 'right'), column('0–30', 'right'), column('31–60', 'right'), column('61–90', 'right'), column('90+', 'right'), column('Total due', 'right'), column('', 'center')],
       owing.map(c => ({cells:[cell(c.name, {weight:'600', sub:c.district}), cell(c.type, {color:C.mut}),
         cell(money(c.limit), {align:'right', mono:true, color:C.mut}), cell(money(c.b30), {align:'right', mono:true}),
@@ -2306,14 +2335,14 @@ export class BusinessApp extends Component {
       {footNote:'Payables across farmers and companies', footTotal:'Payable ' + money(payableTotal)});
     // The real accounts once they have been fetched; the bundled list is the
     // fallback for running with no backend.
-    const accounts = (S.masterRows.account || CASH_ACCOUNTS).filter(a => a.status !== 'Closed');
+    const accounts = (S.masterRows.account || ACCOUNTS).filter(a => a.status !== 'Closed');
     const cashTotal = accounts.reduce((t, r) => t + (r.balance ?? r.opening ?? 0), 0);
     const cash = table([column('Account'), column('Code'), column('Type'), column('Last movement'), column('Balance', 'right'), column('', 'right')],
       accounts.map(r => ({cells:[
         cell(r.name, {weight:'600'}),
         cell(r.code || '—', {mono:true, color:C.mut}),
         cell(r.type, {badge:true, badgeBg:'#F0EEE9', badgeFg:'#3D3A36'}),
-        cell(r.lastMovement ? String(r.lastMovement).slice(0, 10) : r.last || '—', {color:C.mut}),
+        cell(shortDate(r.lastMovement || r.last), {color:C.mut}),
         cell(money(r.balance ?? r.opening ?? 0), {align:'right', mono:true, weight:'700'}),
         cell('', {align:'right', actions:this.masterRowActions('account', r)})]})),
       {footNote:accounts.length + ' accounts', footTotal:'Total ' + money(cashTotal)});
@@ -2368,10 +2397,21 @@ export class BusinessApp extends Component {
       // never disagree with the table it sits above.
       kpis:[{k:'Total receivable', v:money(receivableTotal), s:money(overdue) + ' overdue'},
         {k:'Total payable', v:money(payableTotal), s:owedParties + ' parties'},
-        {k:'Cash & bank', v:money(cashTotal), s:CASH_ACCOUNTS.length + ' accounts'},
-        {k:'Net profit — August', v:money(netProfit), s:'margin ' + margin}],
-      pl:pl.map(x => ({k:x.k, v:money(x.v), bold:x.bold ? '600' : '400', size:x.big ? '17px' : '13.5px',
-        color:x.good ? C.crop : x.v < 0 ? '#3D3A36' : C.ink, bg:x.bold ? '#FAF9F7' : '#fff'}))};
+        {k:'Cash & bank', v:money(cashTotal), s:accounts.length + (accounts.length === 1 ? ' account' : ' accounts')},
+        {k:'Net profit', v:statement ? money(netProfit) : '—', s:'margin ' + margin}],
+      pl:pl.map(x => ({k:x.label, v:money(x.amount), bold:x.bold ? '600' : '400', size:x.big ? '17px' : '13.5px',
+        color:x.good ? C.crop : x.amount < 0 ? '#3D3A36' : C.ink, bg:x.bold ? '#FAF9F7' : '#fff'})),
+      plTitle:'Profit & loss' + (statement && !statement.isEmpty ? ' — ' + periodLabel(statement.period) : ''),
+      plSub:statement && statement.period && statement.period.businessType
+        ? 'One business line, as posted to the ledger'
+        : 'Both business models combined, as posted to the ledger',
+      plNote:S.statementError
+        ? S.statementError
+        : !statement
+          ? 'Loading the profit and loss…'
+          : statement.isEmpty
+            ? 'Nothing has been posted yet, so there is nothing to report.'
+            : ''};
   }
 
   /**

@@ -1469,6 +1469,8 @@ describe('derived figures', () => {
 
   it('takes the margin against total revenue, not one business line', async () => {
     const { app } = await mountApp();
+    app.go('accounts')();
+    await new Promise((r) => setTimeout(r, 30));
     const kpi = app.renderVals().acct.kpis.find((k) => k.k.startsWith('Net profit'));
     // Both lines together, so the margin cannot read several times high.
     expect(kpi.s).toBe('margin 10.3%');
@@ -2521,5 +2523,147 @@ describe('inventory is driven by the stock table', () => {
     // And every warehouse it names is one the demo actually has.
     const dealerRows = inv.table.rows.filter((r) => r.cells[1].text === 'Dealer');
     for (const row of dealerRows) expect(app.data.warehouses).toContain(row.cells[2].text);
+  });
+});
+
+describe('the profit and loss', () => {
+  /** The statement as the ledger reports it. */
+  const STATEMENT = {
+    lines: [
+      { label: 'Dealer sales — Dealer business', amount: 82660 },
+      { label: 'Crop sales — Bulk crop business', amount: 865200 },
+      { label: 'Total revenue', amount: 947860, bold: true },
+      { label: 'Cost of goods sold — Dealer business', amount: -69109.9 },
+      { label: 'Cost of goods sold — Bulk crop business', amount: -512536.38 },
+      { label: 'Gross profit', amount: 366213.72, bold: true, good: true },
+      { label: 'Selling expenses — Bulk crop business', amount: -40000 },
+      { label: 'Total operating expense', amount: -40000, bold: true },
+      { label: 'Net profit', amount: 326213.72, bold: true, big: true, good: true },
+    ],
+    totals: {
+      revenue: 947860, costOfSales: 581646.28, grossProfit: 366213.72,
+      operatingExpense: 40000, netProfit: 326213.72, marginPct: 34.4,
+    },
+    period: { from: '2026-08-01', to: '2026-08-31', businessType: null },
+    isEmpty: false,
+  };
+
+  function serving(/** @type {any} */ statement = STATEMENT) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    repository.profitAndLoss = async () => {
+      if (statement instanceof Error) throw statement;
+      return statement;
+    };
+    return repository;
+  }
+
+  async function openAccounts(repository) {
+    const { app, root } = await mountApp({ repository });
+    app.go('accounts')();
+    await new Promise((r) => setTimeout(r, 30));
+    // The statement lives behind its own tab, the way a reader reaches it.
+    app.renderVals().acct.tabs.find((t) => t.l === 'Profit & Loss').onClick();
+    app.renderNow();
+    return { app, root };
+  }
+
+  it('renders the statement the ledger returned, line for line', async () => {
+    const { app } = await openAccounts(serving());
+    const pl = app.renderVals().acct.pl;
+
+    expect(pl).toHaveLength(STATEMENT.lines.length);
+    expect(pl[0].k).toBe('Dealer sales — Dealer business');
+    expect(pl.find((r) => r.k === 'Total revenue').v).toBe(money(947860));
+    expect(pl.find((r) => r.k === 'Net profit').v).toBe(money(326213.72));
+  });
+
+  it('puts those lines on the page, not just in the view model', async () => {
+    const { root } = await openAccounts(serving());
+    const text = root.textContent;
+
+    expect(text).toContain('Crop sales — Bulk crop business');
+    expect(text).toContain(money(366213.72)); // gross profit
+    expect(text).toContain(money(326213.72)); // net profit
+    // The fixture's figures are gone from the page entirely.
+    expect(text).not.toContain(money(4030000));
+  });
+
+  it('takes the net profit KPI and margin from the same statement', async () => {
+    const { app } = await openAccounts(serving());
+    const kpi = app.renderVals().acct.kpis.find((k) => k.k.startsWith('Net profit'));
+
+    expect(kpi.v).toBe(money(326213.72));
+    // The margin is against total revenue, not one business line.
+    expect(kpi.s).toBe('margin 34.4%');
+  });
+
+  it('totals the cash it is actually showing', async () => {
+    const { app } = await openAccounts(serving());
+    const acct = app.renderVals().acct;
+    const kpi = acct.kpis.find((k) => k.k === 'Cash & bank');
+
+    // The accounts the screen loads and the accounts that carry balances were
+    // two separate fixtures, so the table, its footer and this tile all read
+    // zero while the dashboard reported the real total.
+    const shown = acct.cash.rows.reduce(
+      (t, r) => t + Number(String(r.cells[4].text).replace(/[^0-9.-]/g, '')),
+      0
+    );
+    expect(shown).toBeGreaterThan(0);
+    expect(kpi.v).toBe(money(shown));
+    expect(acct.cash.footTotal).toBe('Total ' + money(shown));
+  });
+
+  it('counts the cash accounts it is actually showing', async () => {
+    const { app } = await openAccounts(serving());
+    const acct = app.renderVals().acct;
+    const kpi = acct.kpis.find((k) => k.k === 'Cash & bank');
+
+    // The value read real accounts while the count read a fixture; they could
+    // disagree on screen, and on an empty database always did.
+    expect(kpi.s).toBe(`${acct.cash.rows.length} accounts`);
+  });
+
+  it('says nothing has been posted rather than reporting a profit of nothing', async () => {
+    const empty = {
+      lines: [{ label: 'Net profit', amount: 0, bold: true, big: true }],
+      totals: { revenue: 0, costOfSales: 0, grossProfit: 0, operatingExpense: 0, netProfit: 0, marginPct: 0 },
+      isEmpty: true,
+    };
+    const { app, root } = await openAccounts(serving(empty));
+    const acct = app.renderVals().acct;
+
+    expect(acct.plNote).toContain('Nothing has been posted');
+    expect(root.textContent).toContain('Nothing has been posted');
+    expect(acct.kpis.find((k) => k.k.startsWith('Net profit')).s).toBe('margin —');
+  });
+
+  it('names the span it is reporting on', async () => {
+    const { app } = await openAccounts(serving());
+    expect(app.renderVals().acct.plTitle).toBe('Profit & loss — August 2026');
+  });
+
+  it('reports a failure to load rather than showing a fixture', async () => {
+    const { app, root } = await openAccounts(serving(new Error('ledger unavailable')));
+    const acct = app.renderVals().acct;
+
+    expect(acct.plNote).toBe('ledger unavailable');
+    expect(acct.kpis.find((k) => k.k.startsWith('Net profit')).s).toBe('margin —');
+    // A specimen statement in place of a real one would report a profit the
+    // business never made — the worst thing this screen could do.
+    expect(acct.pl).toHaveLength(0);
+    expect(acct.kpis.find((k) => k.k.startsWith('Net profit')).v).toBe('—');
+    expect(root.textContent).not.toContain(money(34440000));
+  });
+
+  it('still shows the bundled statement with no backend at all', async () => {
+    const { app } = await mountApp();
+    app.go('accounts')();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const pl = app.renderVals().acct.pl;
+    expect(pl.length).toBeGreaterThan(0);
+    expect(pl.some((r) => /net profit/i.test(r.k))).toBe(true);
   });
 });

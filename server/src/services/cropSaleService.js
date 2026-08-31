@@ -365,6 +365,24 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
     });
   }
 
+  // Transport and other cost on the sale are what it took to deliver, not
+  // what the crop cost. They are accrued against a payable: the goods go when
+  // the sale posts and the transporter is settled separately.
+  if (expenses > 0) {
+    await writeLedgerPair(client, {
+      orgId,
+      entryDate: header.txn_date,
+      businessType: 'BULK_CROP',
+      amount: expenses,
+      narration: `Selling expense on ${header.txn_no}`,
+      referenceType: 'crop_sales',
+      referenceId: saleId,
+      userId: user.id,
+      debit: { coaId: await ledgerAccount(client, orgId, LEDGER.SELLING_EXPENSE) },
+      credit: { coaId: await ledgerAccount(client, orgId, LEDGER.PAYABLE) },
+    });
+  }
+
   await client.query(
     `UPDATE crop_sales
         SET status = 'POSTED', posted_at = now(), cogs_amount = $1,

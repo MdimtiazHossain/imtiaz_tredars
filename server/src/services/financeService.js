@@ -53,6 +53,7 @@ export const LEDGER = {
   CROP_SALES: '4200',
   COST_OF_SALES: '5100',
   OPERATING_EXPENSE: '5200',
+  SELLING_EXPENSE: '5300',
 };
 
 /**

@@ -8,6 +8,7 @@ import {
   ROLES,
   permissionMatrix,
 } from './reference.js';
+import { PROFIT_AND_LOSS } from './analytics.js';
 
 /**
  * In-memory implementation of the repository contract.
@@ -379,6 +380,38 @@ export class InMemoryRepository {
   async context() {
     const org = this._settingsStore().organization;
     return settle({ name: org.name, systemName: org.systemName }, this.latency);
+  }
+
+  /* ------------------------------------------------------------- statements */
+
+  /**
+   * Without a server there is no journal to derive a statement from, so the
+   * bundled figures stand in — which is what they were always for.
+   */
+  async profitAndLoss() {
+    const lines = clone(PROFIT_AND_LOSS).map((x) => ({
+      label: x.k, amount: x.v, bold: !!x.bold, good: !!x.good, big: !!x.big,
+    }));
+    const find = (re) => (lines.find((l) => re.test(l.label)) || {}).amount || 0;
+    const revenue = find(/total revenue/i);
+    const netProfit = find(/net profit/i);
+    return settle(
+      {
+        lines,
+        totals: {
+          revenue,
+          costOfSales: 0,
+          grossProfit: find(/gross profit/i),
+          operatingExpense: 0,
+          netProfit,
+          marginPct: revenue ? (netProfit / revenue) * 100 : 0,
+        },
+        // The demo figures are a specimen month, and the heading says which.
+        period: { from: '2026-08-01', to: '2026-08-31', businessType: null },
+        isEmpty: false,
+      },
+      this.latency
+    );
   }
 
   /* --------------------------------------------------------------- invoices */

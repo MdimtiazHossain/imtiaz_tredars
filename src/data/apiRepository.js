@@ -449,6 +449,19 @@ export class ApiRepository {
     return (await this.client.post(`/users/${id}/password`, { password })).data;
   }
 
+  /* ------------------------------------------------------------- statements */
+
+  /**
+   * The profit and loss, as the journal reports it.
+   *
+   * The screen used to render a fixture, and the report computed its own
+   * totals from the documents. Both read this now, so they cannot disagree
+   * about the same month.
+   */
+  async profitAndLoss(filters = {}) {
+    return (await this.client.get('/profit-and-loss', filters)).data;
+  }
+
   /* --------------------------------------------------------------- invoices */
 
   /** Posted and draft dealer invoices, newest first. */

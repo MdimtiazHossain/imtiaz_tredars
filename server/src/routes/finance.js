@@ -15,6 +15,7 @@ import { requirePermission } from '../middleware/auth.js';
 
 import { nextDocumentNo } from '../lib/numbering.js';
 import { writeAudit } from '../lib/audit.js';
+import { profitAndLoss, trialBalance, balanceSheet } from '../services/statementService.js';
 import {
   allocatePayment,
   writeLedger,
@@ -778,5 +779,39 @@ registerMasterCrud(router, {
     status: r.is_active ? 'Active' : 'Retired',
   }),
 });
+
+/* ------------------------------------------------------------- statements */
+
+/**
+ * The profit and loss, from the journal.
+ *
+ * Needs `report.profit`, the same permission that governs profit everywhere
+ * else: a Sales or Warehouse user does not see margin on a screen simply
+ * because it is called Accounts rather than Reports.
+ */
+router.get(
+  '/profit-and-loss',
+  requirePermission('report.profit'),
+  handler(async (req, res) => {
+    const q = parseQuery(listQuerySchema, req);
+    ok(res, await profitAndLoss(req.orgId, q));
+  })
+);
+
+router.get(
+  '/trial-balance',
+  requirePermission('report.profit'),
+  handler(async (req, res) => {
+    ok(res, await trialBalance(req.orgId));
+  })
+);
+
+router.get(
+  '/balance-sheet',
+  requirePermission('report.profit'),
+  handler(async (req, res) => {
+    ok(res, await balanceSheet(req.orgId));
+  })
+);
 
 export default router;

@@ -1,4 +1,5 @@
 import { C } from '../styles/tokens.js';
+import { ACCOUNTS, CASH_ON_HAND } from './financeLookups.js';
 
 /**
  * Reporting figures for the dashboard, accounts and reports centre.
@@ -17,7 +18,10 @@ export const DASHBOARD_KPIS = [
       {k:'Outstanding Receivable', d:1580000, c:4270000, note:'42 open invoices', up:'৳12.4 L overdue', good:false},
       {k:'Outstanding Payable', d:2140000, c:1890000, note:'18 bills', up:'৳6.7 L due this week', good:false},
       {k:'Current Stock Value', d:5620000, c:18740000, note:'5 warehouses', up:'6 crop batches', good:true},
-      {k:'Cash & Bank Balance', d:0, c:0, fix:4285000, note:'Cash, 2 banks, bKash', up:'+৳3.2 L today', good:true}
+      // Counted from the accounts themselves, so the tile cannot disagree with
+      // the Cash & Bank table that lists them.
+      {k:'Cash & Bank Balance', d:0, c:0, fix:CASH_ON_HAND,
+        note:ACCOUNTS.length + ' accounts', up:'+৳3.2 L today', good:true}
     ];
 
 /** Monthly sales/purchase series, in lakh BDT, split by business line. */

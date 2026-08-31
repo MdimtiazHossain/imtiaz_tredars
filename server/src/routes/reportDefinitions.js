@@ -1,5 +1,6 @@
 import { query, num } from '../lib/db.js';
 import { col, dateAndBusiness } from './reportHelpers.js';
+import { profitAndLoss } from '../services/statementService.js';
 
 /**
  * The rest of the Reports Centre.
@@ -525,88 +526,21 @@ export const MORE_REPORTS = {
     group: 'Finance',
     label: 'Profit & loss',
     permission: 'report.profit',
+    /**
+     * Read from the journal, not recomputed from the documents.
+     *
+     * This used to total the transaction tables itself, which made it a second
+     * opinion on the same question: it and the ledger could disagree, and
+     * nothing would say which was wrong. Both now come from
+     * `v_profit_and_loss`, so the report and the Accounts screen cannot tell
+     * different stories about the same month.
+     */
     async run(req, q) {
-      const salesParams = [req.orgId];
-      const salesWhere = dateAndBusiness(q, salesParams, 'v');
-      const sales = await query(
-        `SELECT v.business_type,
-                COALESCE(SUM(v.sales_amount), 0) AS sales,
-                COALESCE(SUM(v.cost_amount), 0)  AS cost
-           FROM v_sales_by_business v
-          WHERE v.org_id = $1 ${salesWhere}
-          GROUP BY v.business_type
-          ORDER BY v.business_type`,
-        salesParams
-      );
-
-      // Transport and other cost booked on a crop sale are a selling expense.
-      // The batch's landed cost already sits in COGS, so without this line the
-      // statement would omit them entirely and net profit would overstate --
-      // and disagree with the dashboard, which nets them off `profit_amount`.
-      const sellingParams = [req.orgId];
-      const sellingWhere = dateAndBusiness(q, sellingParams, 'cs');
-      const selling = await query(
-        `SELECT COALESCE(SUM(cs.transport_cost + cs.other_cost), 0) AS amount
-           FROM crop_sales cs
-          WHERE cs.org_id = $1 AND cs.status = 'POSTED' ${sellingWhere}`,
-        sellingParams
-      );
-
-      const expenseParams = [req.orgId];
-      const expenseWhere = dateAndBusiness(q, expenseParams, 'e');
-      const expenses = await query(
-        `SELECT ec.name AS category, COALESCE(SUM(e.amount), 0) AS amount
-           FROM expenses e
-           JOIN expense_categories ec ON ec.id = e.category_id
-          WHERE e.org_id = $1 AND e.status = 'POSTED' ${expenseWhere}
-          GROUP BY ec.name
-          ORDER BY amount DESC`,
-        expenseParams
-      );
-
-      const LABEL = { DEALER: 'Dealer business', BULK_CROP: 'Bulk crop business' };
-      const lines = [];
-      let revenue = 0;
-      let cogs = 0;
-
-      for (const r of sales.rows) {
-        revenue += num(r.sales);
-        cogs += num(r.cost);
-        lines.push({
-          line: `Sales — ${LABEL[r.business_type] || r.business_type}`,
-          amount: num(r.sales),
-        });
-      }
-      lines.push({ line: 'Total revenue', amount: revenue });
-
-      // Cost is shown as a negative so the statement reads as a running sum.
-      for (const r of sales.rows) {
-        lines.push({
-          line: `Cost of goods sold — ${LABEL[r.business_type] || r.business_type}`,
-          amount: -num(r.cost),
-        });
-      }
-      lines.push({ line: 'Gross profit', amount: revenue - cogs });
-
-      let operating = 0;
-
-      const sellingExpense = num(selling.rows[0].amount);
-      if (sellingExpense > 0) {
-        operating += sellingExpense;
-        lines.push({ line: 'Selling expense — transport and other', amount: -sellingExpense });
-      }
-
-      for (const r of expenses.rows) {
-        operating += num(r.amount);
-        lines.push({ line: r.category, amount: -num(r.amount) });
-      }
-      lines.push({ line: 'Total operating expense', amount: -operating });
-      lines.push({ line: 'Net profit', amount: revenue - cogs - operating });
-
+      const statement = await profitAndLoss(req.orgId, q);
       return {
         columns: [col('line', 'Line'), col('amount', 'Amount', 'money')],
-        rows: lines,
-        totals: { netProfit: revenue - cogs - operating },
+        rows: statement.lines.map((l) => ({ line: l.label, amount: l.amount })),
+        totals: { netProfit: statement.totals.netProfit },
       };
     },
   },

@@ -338,6 +338,7 @@ export const CHART_OF_ACCOUNTS = [
   ['5000', 'Expenses', 'EXPENSE', true],
   ['5100', 'Cost of goods sold', 'EXPENSE', false],
   ['5200', 'Operating expenses', 'EXPENSE', false],
+  ['5300', 'Selling expenses', 'EXPENSE', false],
 ];
 
 export async function installChartOfAccounts(client, orgId) {
