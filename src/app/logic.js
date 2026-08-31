@@ -180,6 +180,9 @@ const humanField = (name) =>
     .join(' ')
     .replace(/^./, (c) => c.toUpperCase());
 
+/** The permission matrix before one has been fetched: real shape, no rows. */
+const NO_PERMISSIONS = { roles: [], modules: [], roleList: [] };
+
 export class BusinessApp extends Component {
   /**
    * @param {object} props  role, showProfit, approvalLimit, repository
@@ -269,7 +272,13 @@ export class BusinessApp extends Component {
       // and how it quotes. Without this the summary silently drops the VAT
       // line and reports a margin against a tax-inclusive figure -- 16% where
       // the real one is 4%, which is exactly the number somebody decides on.
-      if (DOCUMENT_SCREENS.has(id)) this.loadSettings();
+      if (DOCUMENT_SCREENS.has(id)) {
+        this.loadSettings();
+        // And the master the lines name, because only the master says which
+        // rate an item is charged at. Without it an exempt crop falls back to
+        // the default and the screen charges 15% on produce that carries none.
+        this.loadMasterList(id.startsWith('crop') ? 'crop' : 'product');
+      }
       if (id === 'reports') {
         // The catalogue says which reports exist and what each can be narrowed
         // by, so it belongs with the screen that needs it rather than being
@@ -905,9 +914,16 @@ export class BusinessApp extends Component {
     return SETTINGS[key] || [];
   }
 
-  /** The roles and their grants, from whichever call brought them last. */
+  /**
+   * The roles and their grants, from whichever call brought them last.
+   *
+   * A settings payload need not carry the matrix -- the Employees screen asks
+   * for it separately, and a server may answer settings without it. Reading a
+   * role list off nothing threw and took the whole render down, so the empty
+   * answer is the empty shape rather than undefined.
+   */
   permissionData() {
-    return this.state.roleMatrix || this.settingsData().permissions;
+    return this.state.roleMatrix || this.settingsData().permissions || NO_PERMISSIONS;
   }
 
   /** The logins, once they have been fetched; the team stands in until then. */
@@ -1317,9 +1333,10 @@ export class BusinessApp extends Component {
    * same three things -- the organisation's registration, the rate each
    * product attracts, and the default behind it.
    *
-   * @param {Array} lines  {productId, lineNet}
+   * @param {Array} lines  each with a lineNet, and whatever names its item
+   * @param {{side?: 'SALE'|'PURCHASE', rateIdOf?: (line: any) => number|null}} [o]
    */
-  taxOn(lines) {
+  taxOn(lines, { side = 'SALE', rateIdOf } = {}) {
     const cfg = this.settingsData();
     const org = cfg.organization || {};
     const rates = cfg.taxRates || [];
@@ -1329,21 +1346,27 @@ export class BusinessApp extends Component {
     const active = rates.filter(r => r.active !== false);
     const fallback = active.filter(r => r.isDefault)[0] || null;
     const byId = new Map(active.map(r => [Number(r.id), r]));
-    const products = this.state.masterRows.product || this.data.products || [];
-    const byCode = new Map(products.map(p => [p.code, p]));
+    // Each side of the trade quotes its own way: a sale price may have the tax
+    // inside it while a supplier adds theirs on top.
+    const inclusive = side === 'PURCHASE'
+      ? !!org.purchasePricesIncludeTax
+      : !!org.salePricesIncludeTax;
 
     let amount = 0;
     let inclusiveAdjustment = 0;
     const applied = new Set();
 
     for (const line of lines) {
-      const product = byCode.get(line.productId);
-      const rate = (product && product.taxRateId ? byId.get(Number(product.taxRateId)) : null) || fallback;
+      // What a line is charged at is the item's own rate where it has one,
+      // and the organisation's default otherwise. The caller says which item
+      // a line names, because a product is keyed by code and a crop by name.
+      const chosen = rateIdOf ? rateIdOf(line) : null;
+      const rate = (chosen ? byId.get(Number(chosen)) : null) || fallback;
       if (!rate || !(Number(rate.rate) > 0)) continue;
 
       const pct = Number(rate.rate);
       applied.add(pct);
-      if (org.salePricesIncludeTax) {
+      if (inclusive) {
         // The rate quoted is what the customer pays, so the tax comes out of
         // it rather than being added to it.
         const taxable = Math.round((Number(line.lineNet) / (1 + pct / 100)) * 100) / 100;
@@ -1360,6 +1383,26 @@ export class BusinessApp extends Component {
       // One rate reads as "VAT 15%"; a mixed invoice cannot, and saying so is
       // better than naming whichever rate happened to come first.
       label: applied.size === 1 ? `VAT ${[...applied][0]}%` : 'VAT',
+    };
+  }
+
+  /**
+   * Which tax rate each item is charged at, by whatever the screen knows it as.
+   *
+   * A dealer screen works in product codes and a crop screen in crop names,
+   * so the lookup is built once per render rather than each line searching
+   * the master list again.
+   *
+   * @param {'product'|'crop'} kind
+   * @param {'code'|'name'} key  what the screen identifies the item by
+   */
+  itemRateLookup(kind, key) {
+    const rows = this.state.masterRows[kind]
+      || (kind === 'product' ? this.data.products : []) || [];
+    const byKey = new Map(rows.filter(r => r && r[key]).map(r => [r[key], r]));
+    return identifier => {
+      const item = byKey.get(identifier);
+      return item && item.taxRateId ? item.taxRateId : null;
     };
   }
 
@@ -2153,17 +2196,27 @@ export class BusinessApp extends Component {
   calcCP() {
     const f = this.state.cp, S = this.state;
     const gross = +f.qty || 0, ded = gross * (+f.moist || 0) / 100, net = gross - ded;
-    const pv = net * (+f.rate || 0);
+    const quotedValue = net * (+f.rate || 0);
+    const cropRate = this.itemRateLookup('crop', 'name');
+    // A supplier's VAT is charged on the goods, not on the transport and
+    // loading this business pays for itself.
+    const tax = this.taxOn([{ crop:f.crop, lineNet:quotedValue }],
+      { side:'PURCHASE', rateIdOf:l => cropRate(l.crop) });
+    const pv = quotedValue - tax.inclusiveAdjustment;
     const add = (+f.transport || 0) + (+f.loading || 0) + (+f.unloading || 0) + (+f.other || 0);
+    // What the crop cost to get into the godown, and what the supplier is
+    // owed. Reclaimable tax is not a cost, so it stays out of the unit cost.
     const total = pv + add, cpu = net ? total / net : 0;
+    const owed = total + tax.amount;
     const last = this.data.lastRate[f.crop] || 0, diff = (+f.rate || 0) - last;
     const sup = this.data.suppliers.filter(s => s.code === f.sup)[0] || this.data.suppliers[0] || BLANK_PARTY;
     const adv = +f.advance || 0;
     return {v:f, sup:sup, supOutText:money(sup.out), supPurText:lakh(sup.pur), grossText:dec2(gross) + ' ' + f.unit, dedText:'− ' + dec2(ded) + ' ' + f.unit,
       netText:dec2(net) + ' ' + f.unit, net:net, pvText:money(pv), addText:money(add), totalText:money(total), total:total,
+      showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), owedText:money(owed),
       cpuText:money(cpu), cpuNum:cpu, perUnitLabel:'per ' + f.unit, lastText:money(last),
       diffText:(diff >= 0 ? '+' : '−') + money(Math.abs(diff)).slice(1) + ' vs last purchase', diffColor:diff > 0 ? C.dngr : C.crop,
-      advText:money(adv), balText:money(pv - adv), needAppr:total > this.limit(), limitText:money(this.limit()),
+      advText:money(adv), balText:money(owed - adv), needAppr:owed > this.limit(), limitText:money(this.limit()),
       batchId:'BC-2608-0' + (12 + S.cropLog.length - 4), purNo:'PC-2608-014',
       crops:this.data.crops, grades:this.data.grades, whs:this.data.warehouses, units:this.data.units, sups:this.data.suppliers,
       log:table([column('Purchase No'), column('Date'), column('Supplier'), column('Crop'), column('Qty', 'right'), column('Rate', 'right'), column('Landed cost / unit', 'right'), column('Total', 'right'), column('Status', 'center')],
@@ -2205,14 +2258,25 @@ export class BusinessApp extends Component {
         qtyVal:f.alloc[b.id] === undefined ? '' : f.alloc[b.id], over:a > b.rem, leftText:dec2(Math.max(0, b.rem - a)) + ' MT left after sale',
         onQty:e => { const v = e.target.value === '' ? '' : Number(e.target.value); this.setState(s => { const al = Object.assign({}, s.cs.alloc); al[b.id] = v; return {cs:Object.assign({}, s.cs, {alloc:al})}; }); }};
     });
-    const sales = allocQty * (+f.rate || 0), exp = (+f.transport || 0) + (+f.other || 0);
+    const quoted = allocQty * (+f.rate || 0), exp = (+f.transport || 0) + (+f.other || 0);
+    // Unprocessed produce is exempt, so this is usually nothing -- but a
+    // processed crop is not, and the buyer has to be told what they are being
+    // charged rather than the screen assuming a crop never carries tax.
+    const cropRate = this.itemRateLookup('crop', 'name');
+    const tax = this.taxOn([{ crop:f.crop, lineNet:quoted }],
+      { side:'SALE', rateIdOf:l => cropRate(l.crop) });
+    // Where a rate has the tax inside it, what the goods are worth is what is
+    // left once the tax is taken out; the buyer still pays what was quoted.
+    const sales = quoted - tax.inclusiveAdjustment;
+    const due = sales + tax.amount;
     const profit = sales - cogs - exp, per = allocQty ? profit / allocQty : 0, margin = sales ? profit / sales * 100 : 0;
     return {v:f, rows:rows, pool:pool, crops:this.data.crops, buyers:this.data.buyers, salesNo:'SC-2608-052',
       allocText:dec2(allocQty) + ' MT', allocQty:allocQty, over:over,
       salesText:money(sales), cogsText:'− ' + money(cogs).slice(1), expText:'− ' + money(exp).slice(1),
+      showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), dueText:money(due),
       profitText:money(profit), profitColor:profit >= 0 ? C.crop : C.dngr, perText:money(per) + ' / MT',
       marginText:margin.toFixed(2) + '%', avgCostText:money(avgCost), valuation:val,
-      rateText:money(+f.rate || 0), showProfit:this.canProfit(), needAppr:sales > this.limit() * 4,
+      rateText:money(+f.rate || 0), showProfit:this.canProfit(), needAppr:due > this.limit() * 4,
       log:table([column('Sales No'), column('Date'), column('Buyer company'), column('Crop'), column('Batch'), column('Qty', 'right'), column('Rate', 'right'), column('Sales value', 'right'), column('Gross profit', 'right')],
         S.saleLog.map(r => ({cells:[cell(r.no, {mono:true, weight:'600'}), cell(r.date, {color:C.mut}), cell(r.buyer), cell(r.crop, {dot:C.crop}),
           cell(r.batch, {mono:true, color:C.mut}), cell(int(r.qty) + ' MT', {align:'right', mono:true}), cell(money(r.rate), {align:'right', mono:true}),
@@ -2325,8 +2389,12 @@ export class BusinessApp extends Component {
     // the one each product attracts rather than a figure typed here, and an
     // unregistered business charges nothing -- which is why the row only
     // appears once there is something in it.
-    const tax = this.taxOn(lines.map((l, i) => ({ productId:l.pid,
-      lineNet:(+f.lines[i].qty || 0) * (+f.lines[i].rate || 0) * (1 - (+f.lines[i].disc || 0) / 100) })));
+    const productRate = this.itemRateLookup('product', 'code');
+    const tax = this.taxOn(
+      lines.map((l, i) => ({ productId:l.pid,
+        lineNet:(+f.lines[i].qty || 0) * (+f.lines[i].rate || 0) * (1 - (+f.lines[i].disc || 0) / 100) })),
+      { side:'SALE', rateIdOf:l => productRate(l.productId) }
+    );
     const net = gross - discAmt - tax.inclusiveAdjustment;
     const profit = net - cost, margin = net ? profit / net * 100 : 0;
     const total = net + tax.amount;
@@ -3460,7 +3528,9 @@ export class BusinessApp extends Component {
     const S = this.state, role = this.role();
     // Configuration in hand, and the organisation inside it. Every Settings
     // panel reads from these two, so nothing on that screen is written twice.
-    const cfg = this.settingsData(), org = cfg.organization;
+    // Every screen's values are computed on every render, so this must hold up
+    // against a settings payload that has arrived only in part.
+    const cfg = this.settingsData(), org = cfg.organization || {};
     // Roles come from their own call where one has been made, so the Employees
     // screen has them without needing the Settings payload.
     const perms = this.permissionData();
@@ -3587,14 +3657,14 @@ export class BusinessApp extends Component {
       skeleton:[{w:'92%'}, {w:'78%'}, {w:'85%'}, {w:'64%'}, {w:'88%'}, {w:'71%'}],
       // Read from the organisation record rather than restated here: the
       // trade licence and BIN go on invoices and cannot be a second copy.
-      setCompany:[{k:'Company name', v:org.name}, {k:'System name', v:org.systemName},
+      setCompany:[{k:'Company name', v:org.name || '—'}, {k:'System name', v:org.systemName || '—'},
         {k:'Trade licence no', v:org.tradeLicenceNo || '—'}, {k:'BIN / VAT registration', v:org.binNo || '—'},
         {k:'Head office', v:org.headOffice || '—'}, {k:'Mobile', v:org.mobile || '—'}, {k:'Email', v:org.email || '—'},
         {k:'Currency', v:currencyName(org.currency)}, {k:'Default district', v:org.defaultDistrict || '—'}],
       companyEdit:{canEdit:this.maySettings(), label:'Edit profile',
         onEdit:() => this.openSettings('company', org)},
 
-      setFy:cfg.fiscalYears.map(y => ({
+      setFy:(cfg.fiscalYears || []).map(y => ({
         k:y.code, d:y.span,
         tag:y.status, bg:y.current ? '#FBFAF8' : '#fff',
         tagBg:y.current ? C.cropBg : y.closed ? '#F0EEE9' : C.warnBg,
@@ -3611,7 +3681,7 @@ export class BusinessApp extends Component {
       addFy:{canAdd:this.maySettings(), label:'Add year',
         onAdd:() => this.openSettings('fiscalYear', this.nextFiscalYear())},
 
-      setNum:cfg.numbering.map(n => ({
+      setNum:(cfg.numbering || []).map(n => ({
         k:n.label, v:n.pattern,
         d:n.issued ? n.issued + ' issued' + (n.lastPeriod ? ' in ' + n.lastPeriod : '') : 'none issued yet',
         canEdit:this.maySettings(), onEdit:() => this.openSettings('numbering', n),
@@ -3670,7 +3740,7 @@ export class BusinessApp extends Component {
           onToggle:() => (on ? this.confirmRetire('taxRate', t) : this.restoreMaster('taxRate', t)),
         };
       }),
-      setUnits:cfg.units.map(u => {
+      setUnits:(cfg.units || []).map(u => {
         const on = u.active !== false;
         return {
           // The name reads on its own; the code belongs with the conversion,
@@ -3742,7 +3812,7 @@ export class BusinessApp extends Component {
       // The limits the approval engine actually applies. The label is built
       // from the threshold rather than stored beside it, so the two can never
       // disagree the way 'Purchase above ৳5,00,000' did once the figure moved.
-      setLimits:cfg.approvalRules.map(r => ({
+      setLimits:(cfg.approvalRules || []).map(r => ({
         k:approvalRuleLabel(r),
         v:r.condition === 'ALWAYS' ? 'always' : r.condition === 'DISCOUNT_PCT_ABOVE'
           ? Number(r.threshold).toFixed(2) + '%' : money(r.threshold),
@@ -3752,7 +3822,7 @@ export class BusinessApp extends Component {
         onEdit:() => this.openSettings('limit', r),
       })),
 
-      setNotif:cfg.notificationRules.map(n => ({
+      setNotif:(cfg.notificationRules || []).map(n => ({
         k:n.name,
         // The rule says where its own figure belongs, so a day count and a
         // taka amount each read as a sentence rather than as a prefix.

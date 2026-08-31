@@ -393,6 +393,14 @@
                 <div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:2px solid #E3E0DA">
                   <span style="font-size:13px;font-weight:700">Total landed cost</span><span style="font-family:'Roboto Mono',monospace;font-size:15px;font-weight:700">{{ cp.totalText }}</span>
                 </div>
+                <sc-if value="{{ cp.showVat }}">
+                  <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                    <span style="font-size:12.5px;color:#6E6A64">{{ cp.vatLabel }}</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cp.vatText }}</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:2px solid #E3E0DA">
+                    <span style="font-size:13px;font-weight:700">Payable to supplier</span><span style="font-family:'Roboto Mono',monospace;font-size:15px;font-weight:700">{{ cp.owedText }}</span>
+                  </div>
+                </sc-if>
                 <div style="margin-top:14px;padding:14px;border-radius:9px;background:#EDF4EE;border:1px solid #CFE3D4">
                   <div style="font-size:11.5px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#2F6B3C">Actual cost {{ cp.perUnitLabel }}</div>
                   <div style="margin-top:6px;font-family:'Roboto Mono',monospace;font-size:26px;font-weight:600;letter-spacing:-0.02em;color:#1F4D2E">{{ cp.cpuText }}</div>
@@ -930,6 +938,14 @@
                 <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:2px solid #E3E0DA">
                   <span style="font-size:12.5px;color:#6E6A64">Selling expense</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cs.expText }}</span>
                 </div>
+                <sc-if value="{{ cs.showVat }}">
+                  <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                    <span style="font-size:12.5px;color:#6E6A64">{{ cs.vatLabel }}</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ cs.vatText }}</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:2px solid #E3E0DA">
+                    <span style="font-size:13px;font-weight:700">Invoiced to buyer</span><span style="font-family:'Roboto Mono',monospace;font-size:15px;font-weight:700">{{ cs.dueText }}</span>
+                  </div>
+                </sc-if>
                 <sc-if value="{{ cs.showProfit }}" hint-placeholder-val="{{ true }}">
                   <div style="margin-top:14px;padding:14px;border-radius:9px;background:#EDF4EE;border:1px solid #CFE3D4">
                     <div style="font-size:11.5px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#2F6B3C">Gross profit</div>

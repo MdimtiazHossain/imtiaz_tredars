@@ -1883,6 +1883,51 @@ describe('logins', () => {
 
     expect(app.state.settingsForm.error).toContain('at least one role');
   });
+
+  it('renders the team before the role matrix has arrived', async () => {
+    // Settings and the role matrix are two calls, and a server may answer the
+    // first without the second. The Employees screen read a role list straight
+    // off whatever came back, so the render threw and the screen went blank
+    // for the moment between the two.
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    const base = repository.settings.bind(repository);
+    repository.settings = async () => {
+      const settings = { ...(await base()) };
+      delete settings.permissions;
+      return settings;
+    };
+
+    const { app } = await mountApp({ repository });
+    app.go('employees')();
+    app.loadSettings();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(() => flush(app)).not.toThrow();
+    // And the team is on screen, waiting only for the roles to fill in.
+    expect(app.renderVals().team.table.rows.length).toBeGreaterThan(0);
+  });
+
+  it('survives a settings payload that carries nothing yet', async () => {
+    // Values are computed for every screen on every render, not just the one
+    // being looked at, so a settings call that answers with less than the
+    // whole configuration used to take down whatever screen was open. Each
+    // list a server might omit is one that has to read as empty.
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.settings = async () => ({});
+
+    const { app } = await mountApp({ repository });
+    app.loadSettings();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(() => flush(app)).not.toThrow();
+    for (const screen of ['settings', 'employees', 'dashboard']) {
+      app.go(screen)();
+      expect(() => flush(app), screen).not.toThrow();
+    }
+    // Nothing configured reads as nothing, not as a broken screen.
+    expect(app.renderVals().setFy).toEqual([]);
+    expect(app.renderVals().setUnits).toEqual([]);
+  });
 });
 
 describe('permission-driven navigation', () => {
@@ -3785,5 +3830,209 @@ describe('the report filter bar', () => {
     app.setState({ biz: 'crop' });
     app.renderNow();
     expect(app.renderVals().repFilters.businessType).toBe('Bulk Crop');
+  });
+});
+
+describe('vat on the crop screens', () => {
+  const RATES = [
+    {
+      id: 1, code: 'VAT15', name: 'VAT 15%', kind: 'STANDARD', rate: 15,
+      isReclaimable: true, isDefault: true, active: true,
+    },
+    {
+      id: 6, code: 'EXEMPT', name: 'Exempt', kind: 'EXEMPT', rate: 0,
+      isReclaimable: false, isDefault: false, active: true,
+    },
+  ];
+
+  /** Settings that say how this business is registered, with crops on file. */
+  function serving({ saleInclusive = false, purchaseInclusive = false, cropRateId = null } = {}) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    const base = repository.settings.bind(repository);
+    repository.settings = async () => {
+      const settings = await base();
+      return {
+        ...settings,
+        organization: {
+          ...settings.organization,
+          vatRegistered: true,
+          salePricesIncludeTax: saleInclusive,
+          purchasePricesIncludeTax: purchaseInclusive,
+        },
+        taxRates: RATES,
+      };
+    };
+    const listMaster = repository.listMaster.bind(repository);
+    repository.listMaster = async (kind, params) => {
+      if (kind !== 'crop') return listMaster(kind, params);
+      // The crop master carries the rate its supply attracts, which is what
+      // lets an exempt crop charge nothing without the screen knowing what a
+      // crop is.
+      return [{ id: 1, code: 'CROP-01', name: 'Maize', unit: 'MT', taxRateId: cropRateId }];
+    };
+    return repository;
+  }
+
+  async function openCrop(screen, repository) {
+    const mounted = await mountApp({ repository });
+    mounted.app.go(screen)();
+    await new Promise((r) => setTimeout(r, 40));
+    mounted.app.renderNow();
+    return Object.assign(mounted.app, { root: mounted.root });
+  }
+
+  /**
+   * What the summary panel actually says. A row is a label span against an
+   * amount span with nothing between them, so the two read as one string.
+   */
+  function panelText(app) {
+    return app.root.textContent;
+  }
+
+  /* ---------------------------------------------------------- crop sales */
+
+  it('charges nothing on an exempt crop, and says nothing', async () => {
+    const app = await openCrop('crop-sales', serving({ cropRateId: 6 }));
+    app.setState({ cs: { ...app.state.cs, crop: 'Maize', rate: 30000 } });
+    app.renderNow();
+
+    // Unprocessed produce is exempt, which is most of what this side sells.
+    // A VAT row reading zero would be noise on every invoice.
+    expect(app.renderVals().cs.showVat).toBe(false);
+  });
+
+  it('charges a processed crop at the rate it attracts', async () => {
+    const app = await openCrop('crop-sales', serving({ cropRateId: 1 }));
+    const batch = app.state.batches.find((b) => b.rem > 0);
+    app.setState({
+      cs: { ...app.state.cs, crop: batch.crop, rate: 1000, alloc: { [batch.id]: 10 } },
+    });
+    app.renderNow();
+
+    const cs = app.renderVals().cs;
+    expect(cs.showVat).toBe(true);
+    expect(cs.vatLabel).toBe('VAT 15%');
+    expect(cs.vatText).toBe(money(1500));
+    // The buyer is invoiced the goods and the tax together.
+    expect(cs.dueText).toBe(money(11500));
+    expect(cs.salesText).toBe(money(10000));
+  });
+
+  it('takes the tax out of a crop price that already contains it', async () => {
+    const app = await openCrop('crop-sales', serving({ cropRateId: 1, saleInclusive: true }));
+    const batch = app.state.batches.find((b) => b.rem > 0);
+    app.setState({
+      cs: { ...app.state.cs, crop: batch.crop, rate: 1150, alloc: { [batch.id]: 10 } },
+    });
+    app.renderNow();
+
+    const cs = app.renderVals().cs;
+    expect(cs.vatText).toBe(money(1500));
+    // What was quoted is what is invoiced; the goods are what is left.
+    expect(cs.dueText).toBe(money(11500));
+    expect(cs.salesText).toBe(money(10000));
+  });
+
+  it('puts the VAT row on the screen, not only in the numbers behind it', async () => {
+    const app = await openCrop('crop-sales', serving({ cropRateId: 1 }));
+    const batch = app.state.batches.find((b) => b.rem > 0);
+    app.setState({
+      cs: { ...app.state.cs, crop: batch.crop, rate: 1000, alloc: { [batch.id]: 10 } },
+    });
+    app.renderNow();
+
+    // A view model can be right while the template never renders it, so read
+    // the panel the way somebody raising the invoice would.
+    const text = panelText(app);
+    expect(text).toContain(`VAT 15%${money(1500)}`);
+    expect(text).toContain(`Invoiced to buyer${money(11500)}`);
+  });
+
+  it('leaves the panel as it was when the crop carries no tax', async () => {
+    const app = await openCrop('crop-sales', serving({ cropRateId: 6 }));
+    const batch = app.state.batches.find((b) => b.rem > 0);
+    app.setState({
+      cs: { ...app.state.cs, crop: batch.crop, rate: 1000, alloc: { [batch.id]: 10 } },
+    });
+    app.renderNow();
+
+    const text = panelText(app);
+    expect(text).not.toContain('VAT');
+    expect(text).not.toContain('Invoiced to buyer');
+  });
+
+  /* ------------------------------------------------------- crop purchase */
+
+  it('adds the supplier VAT to what they are owed, not to the crop cost', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 1 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 500,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    app.renderNow();
+
+    const cp = app.renderVals().cp;
+    expect(cp.showVat).toBe(true);
+    expect(cp.vatText).toBe(money(1500));
+    // The transport is this business's own cost and carries no supplier VAT,
+    // so the landed cost is goods plus transport and the supplier is owed the
+    // goods plus their tax.
+    expect(cp.totalText).toBe(money(10500));
+    expect(cp.owedText).toBe(money(12000));
+  });
+
+  it('keeps reclaimable tax out of what the crop cost per unit', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 1 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 0,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    app.renderNow();
+
+    // Tax the business claims back is not a cost of the crop; carrying it into
+    // the unit cost would overstate every batch and understate every profit.
+    expect(app.renderVals().cp.cpuText).toBe(money(1000));
+  });
+
+  it('puts the supplier VAT on the purchase panel too', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 1 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 500,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    app.renderNow();
+
+    const text = panelText(app);
+    expect(text).toContain(`VAT 15%${money(1500)}`);
+    expect(text).toContain(`Payable to supplier${money(12000)}`);
+  });
+
+  it('charges nothing when buying exempt produce from a farmer', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 6 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 0,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    app.renderNow();
+
+    const cp = app.renderVals().cp;
+    expect(cp.showVat).toBe(false);
+    expect(cp.totalText).toBe(money(10000));
+  });
+
+  it('reads each side of the trade on its own basis', async () => {
+    // Sells with the tax inside the price, buys with it added on top.
+    const repository = serving({ cropRateId: 1, saleInclusive: true, purchaseInclusive: false });
+    const purchase = await openCrop('crop-purchase', repository);
+    purchase.setState({
+      cp: { ...purchase.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 0,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    purchase.renderNow();
+
+    // The farmer's 1,000 is 1,000 of crop with their VAT on top, even though
+    // the sales side quotes the other way.
+    expect(purchase.renderVals().cp.totalText).toBe(money(10000));
+    expect(purchase.renderVals().cp.owedText).toBe(money(11500));
   });
 });

@@ -137,11 +137,13 @@ router.get(
     // what a crop is actually worth holding rather than just its name.
     const { rows } = await query(
       `SELECT c.id, c.code, c.name, c.last_rate, c.is_active, u.code AS unit,
+              c.tax_rate_id, t.code AS tax_code, t.rate AS tax_rate,
               COALESCE(b.quantity, 0)  AS quantity,
               COALESCE(b.value, 0)     AS value,
               b.received_on
          FROM crops c
          JOIN units u ON u.id = c.default_unit_id
+         LEFT JOIN tax_rates t ON t.id = c.tax_rate_id
          LEFT JOIN (
            SELECT crop_id,
                   SUM(quantity_remaining)                     AS quantity,
@@ -170,6 +172,11 @@ router.get(
         quantity: num(r.quantity),
         value: num(r.value),
         last: r.received_on || '',
+        // Null is a real answer: the crop is charged at the organisation's
+        // default rather than at none, and the form has to tell them apart.
+        taxRateId: r.tax_rate_id ? Number(r.tax_rate_id) : null,
+        taxCode: r.tax_code || '',
+        taxRate: r.tax_rate === null || r.tax_rate === undefined ? null : num(r.tax_rate),
         status: r.is_active ? 'Active' : 'Retired',
       })),
       pageMeta(q.page, q.pageSize, countRows[0].total)
