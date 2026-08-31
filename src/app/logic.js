@@ -196,6 +196,16 @@ export class BusinessApp extends Component {
   fire(msg, tone) { this.setState({toast:{msg:msg, tone:tone || 'ok'}}); clearTimeout(this._t); this._t = setTimeout(() => this.setState({toast:null}), 3600); }
   componentWillUnmount() { clearTimeout(this._t); }
 
+  /**
+   * Whether a real backend is answering.
+   *
+   * The bundled dashboard lists and party histories exist so the no-backend
+   * demo has something to show. With a server behind the app they are somebody
+   * else's figures, and on a database with nothing in them they describe
+   * nothing at all -- so the screens compute from the working set instead.
+   */
+  serverBacked() { return !!(this.repository && typeof this.repository.report === 'function'); }
+
   role() { return this.props.role || 'Admin'; }
 
   /**
