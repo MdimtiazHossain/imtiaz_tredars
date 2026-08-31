@@ -2286,3 +2286,87 @@ describe('the date a document is posted with', () => {
     expect(sent).toEqual(['2026-09-02']);
   });
 });
+
+describe('where stock actually is', () => {
+  /** Two warehouses holding the same product, as the stock table reports it. */
+  const STOCK = [
+    { kind: 'dealer', name: 'Ridomil Gold', sub: 'Syngenta · Agrochemical', warehouse: 'Main Godown',
+      qty: 40, unit: 'Pcs', cost: 240, value: 9600, age: null, date: null, flagged: false },
+    { kind: 'dealer', name: 'Ridomil Gold', sub: 'Syngenta · Agrochemical', warehouse: 'Sherpur Store',
+      qty: 10, unit: 'Pcs', cost: 240, value: 2400, age: null, date: null, flagged: true },
+    { kind: 'crop', name: 'Maize', sub: 'Batch BC-2608-001 · A', warehouse: 'Main Godown',
+      qty: 12, unit: 'MT', cost: 30000, value: 360000, age: 20, date: '2026-08-11', flagged: false },
+  ];
+
+  function withStock(rows = STOCK) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    repository.inventory = async () => ({ rows, meta: { total: rows.length } });
+    return repository;
+  }
+
+  async function openInventory(repository) {
+    const { app } = await mountApp({ repository });
+    app.go('inventory')();
+    await new Promise((r) => setTimeout(r, 20));
+    return app;
+  }
+
+  it('names the warehouse each line is really in', async () => {
+    const app = await openInventory(withStock());
+    const rows = app.renderVals().inv.table.rows;
+
+    const warehouses = rows.map((r) => r.cells[2].text);
+    expect(warehouses).toContain('Main Godown');
+    expect(warehouses).toContain('Sherpur Store');
+    // The name that used to be written into the code for every dealer line.
+    expect(warehouses).not.toContain('Bogura Depot');
+  });
+
+  it('shows one product held in two godowns as two lines', async () => {
+    const app = await openInventory(withStock());
+    const ridomil = app.renderVals().inv.table.rows.filter((r) => r.cells[0].text === 'Ridomil Gold');
+    expect(ridomil).toHaveLength(2);
+  });
+
+  it('values the stock from the lines the server sent', async () => {
+    const app = await openInventory(withStock());
+    const kpis = app.renderVals().inv.kpis;
+    expect(kpis.find((k) => k.k === 'Total stock value').v).toBe(money(9600 + 2400 + 360000));
+    expect(kpis.find((k) => k.k === 'Bulk crop stock').s).toBe(money(360000));
+    expect(kpis.find((k) => k.k === 'Dealer product stock').s).toBe(money(12000));
+  });
+
+  it('counts the godowns stock is in, not the ones on file', async () => {
+    const app = await openInventory(withStock());
+    expect(app.renderVals().inv.kpis[0].s).toBe('across 2 warehouses');
+  });
+
+  it('takes the low-stock flag from the server rather than recomputing it', async () => {
+    const app = await openInventory(withStock());
+    const flagged = app.renderVals().inv.kpis.find((k) => k.k === 'Low stock / dead stock');
+    expect(flagged.v).toBe('1 item');
+  });
+
+  it('narrows to one kind of stock on the tabs', async () => {
+    const app = await openInventory(withStock());
+    app.setState({ invTab: 'crop' });
+    const rows = app.renderVals().inv.table.rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells[0].text).toBe('Maize');
+  });
+
+  it('falls back to the bundled derivation with no server behind it', async () => {
+    const { app } = await mountApp();
+    app.setState({ screen: 'inventory' });
+    const rows = app.renderVals().inv.table.rows;
+    expect(rows.length).toBeGreaterThan(0);
+
+    // The dealer lines are the ones that had no warehouse of their own and
+    // were labelled with a name written into the code. They now take a real
+    // godown from the data. (Crop lines carry the warehouse of their batch.)
+    const dealerRows = rows.filter((r) => r.cells[1].text === 'Dealer');
+    expect(dealerRows.length).toBeGreaterThan(0);
+    for (const row of dealerRows) expect(app.data.warehouses).toContain(row.cells[2].text);
+  });
+});

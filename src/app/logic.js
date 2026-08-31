@@ -198,6 +198,8 @@ export class BusinessApp extends Component {
       settings:null, settingsForm:null, auditRows:null,
       // Posted invoices, fetched when the dealer sales screen is opened.
       invoices:null, invoicesLoading:false,
+      // Stock as the server holds it, per warehouse, fetched on the screen.
+      stock:null,
       // The password form, open or not. Signing out needs no state of its own.
       password:null, expenses:null,
       roleMatrix:null, userAccounts:null,
@@ -245,6 +247,7 @@ export class BusinessApp extends Component {
       if (id === 'employees') this.loadAccessControl();
       if (id === 'audit') this.loadAudit();
       if (id === 'dealer-sales') this.loadInvoices();
+      if (id === 'inventory') this.loadInventory();
     };
   }
   h(g, k, num) { return e => { const v = num ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value; this.setState(s => { const o = Object.assign({}, s[g]); o[k] = v; return {[g]:o}; }); }; }
@@ -1090,6 +1093,24 @@ export class BusinessApp extends Component {
         this.setState({ valuation: label === 'FIFO' ? 'Weighted Average' : 'FIFO' });
         if (!err.silent) this.fire(err.message, 'danger');
       }
+    );
+  }
+
+  /* --------------------------------------------------------------- inventory */
+
+  /**
+   * Load stock as the server holds it.
+   *
+   * The screen built its dealer lines out of the product master, which knows
+   * how much of a product exists in total and not where any of it is -- so
+   * every line was labelled with one warehouse name written into the code. The
+   * stock table knows, and `GET /inventory` reports it a line per warehouse.
+   */
+  loadInventory() {
+    if (!this.repository || typeof this.repository.inventory !== 'function') return;
+    this.repository.inventory({ pageSize: 200 }).then(
+      result => this.setState({ stock: result.rows || [] }),
+      () => this.setState({ stock: [] })
     );
   }
 
@@ -2037,9 +2058,21 @@ export class BusinessApp extends Component {
 
   inv() {
     const S = this.state, t = S.invTab;
+
+    // Where stock actually is, when the server has said. Each line names its
+    // own warehouse; the same product held in two godowns is two lines, which
+    // is what the stock table records and what a stock-take has to match.
+    const served = S.stock;
     let rows = [];
-    if (t !== 'dealer') rows = rows.concat(S.batches.map(b => ({kind:'crop', name:b.crop, sub:'Batch ' + b.id + ' · ' + b.grade, wh:b.wh, qty:b.rem, unit:'MT', cost:b.cost, val:b.rem * b.cost, age:b.age, date:b.date, low:b.age > 60})));
-    if (t !== 'crop') rows = rows.concat(this.data.products.map(p => ({kind:'dealer', name:p.name, sub:p.brand + ' · ' + p.cat, wh:'Bogura Depot', qty:p.stock, unit:p.unit, cost:p.pur, val:p.stock * p.pur, age:null, date:'—', low:p.stock < p.min})));
+    if (served) {
+      rows = served
+        .filter(r => t === 'all' || r.kind === t)
+        .map(r => ({kind:r.kind, name:r.name, sub:r.sub, wh:r.warehouse, qty:r.qty, unit:r.unit,
+          cost:r.cost, val:r.value, age:r.age, date:r.date ? shortDate(r.date) : '—', low:r.flagged}));
+    } else {
+      if (t !== 'dealer') rows = rows.concat(S.batches.map(b => ({kind:'crop', name:b.crop, sub:'Batch ' + b.id + ' · ' + b.grade, wh:b.wh, qty:b.rem, unit:'MT', cost:b.cost, val:b.rem * b.cost, age:b.age, date:b.date, low:b.age > 60})));
+      if (t !== 'crop') rows = rows.concat(this.data.products.map(p => ({kind:'dealer', name:p.name, sub:p.brand + ' · ' + p.cat, wh:(this.data.warehouses || [])[0] || '—', qty:p.stock, unit:p.unit, cost:p.pur, val:p.stock * p.pur, age:null, date:'—', low:p.stock < p.min})));
+    }
     const sort = S.invSort;
     rows.sort((a, b) => sort === 'value' ? b.val - a.val : sort === 'age' ? (b.age || 0) - (a.age || 0) : sort === 'qty' ? b.qty - a.qty : a.name.localeCompare(b.name));
     const mark = k => sort === k ? '  ↓' : '';
@@ -2047,14 +2080,24 @@ export class BusinessApp extends Component {
 
     // The KPIs describe all stock, not the tab in view, so they are built from
     // every line rather than from the filtered `rows` above.
-    const crops = S.batches.map(b => ({ qty: b.rem, val: b.rem * b.cost }));
-    const goods = this.data.products.map(p => ({ qty: p.stock, val: p.stock * p.pur, min: p.min }));
+    const crops = served
+      ? served.filter(r => r.kind === 'crop').map(r => ({ qty: r.qty, val: r.value }))
+      : S.batches.map(b => ({ qty: b.rem, val: b.rem * b.cost }));
+    const goods = served
+      ? served.filter(r => r.kind === 'dealer').map(r => ({ qty: r.qty, val: r.value, min: 0, flagged: r.flagged }))
+      : this.data.products.map(p => ({ qty: p.stock, val: p.stock * p.pur, min: p.min }));
     const sum = (list, key) => list.reduce((x, r) => x + (Number(r[key]) || 0), 0);
     const cropValue = sum(crops, 'val');
     const goodsValue = sum(goods, 'val');
-    const warehouses = new Set(S.batches.map(b => b.wh)).size || this.data.warehouses.length;
-    const needsAction = goods.filter(g => g.min && g.qty < g.min).length
-      + S.batches.filter(b => (b.age || 0) > 60).length;
+    const warehouses = served
+      ? new Set(served.map(r => r.warehouse).filter(Boolean)).size
+      : new Set(S.batches.map(b => b.wh)).size || this.data.warehouses.length;
+    // The server flags a line that is low or ageing; without one the minimum
+    // stock on the product master and the batch age are what there is to go on.
+    const needsAction = served
+      ? served.filter(r => r.flagged).length
+      : goods.filter(g => g.min && g.qty < g.min).length
+        + S.batches.filter(b => (b.age || 0) > 60).length;
     return {actions:[
         {l:'Transfer stock', onClick:() => this.openForm('transfer')},
         {l:'Adjust stock', onClick:() => this.openForm('adjustment')}
