@@ -49,6 +49,28 @@ import {
   buildSettingsModal,
 } from './settingsForms.js';
 
+/**
+ * What a screen shows when the record it works on does not exist yet.
+ *
+ * Several screens open on a selected party or product and reached for the
+ * first record whenever nothing matched. On the day a business is installed
+ * there is no first record, so that read returned `undefined` and the next
+ * line asking it for a balance took down the whole app -- not the screen, the
+ * app, because the view model is built in one pass.
+ *
+ * A blank record of the right shape renders as dashes and zeros instead, which
+ * is what a business with no customers should see on its customers screen. It
+ * carries no code, so nothing can be posted against it.
+ */
+const BLANK_PARTY = {
+  code: '', name: '—', type: '', person: '', mobile: '', district: '', upazila: '',
+  out: 0, pur: 0, limit: 0, days: 0, since: '', status: 'Active',
+};
+
+const BLANK_PRODUCT = {
+  code: '', name: '—', cat: '', brand: '', unit: '', pur: 0, sale: 0, stock: 0, min: 0,
+};
+
 /** Currencies the app has words for; anything else reads as its own code. */
 const CURRENCY_NAMES = { BDT: 'Bangladeshi Taka (৳)', USD: 'US Dollar ($)', INR: 'Indian Rupee (₹)', EUR: 'Euro (€)' };
 
@@ -1273,7 +1295,7 @@ export class BusinessApp extends Component {
     const add = (+f.transport || 0) + (+f.loading || 0) + (+f.unloading || 0) + (+f.other || 0);
     const total = pv + add, cpu = net ? total / net : 0;
     const last = this.data.lastRate[f.crop] || 0, diff = (+f.rate || 0) - last;
-    const sup = this.data.suppliers.filter(s => s.code === f.sup)[0] || this.data.suppliers[0];
+    const sup = this.data.suppliers.filter(s => s.code === f.sup)[0] || this.data.suppliers[0] || BLANK_PARTY;
     const adv = +f.advance || 0;
     return {v:f, sup:sup, supOutText:money(sup.out), supPurText:lakh(sup.pur), grossText:dec2(gross) + ' ' + f.unit, dedText:'− ' + dec2(ded) + ' ' + f.unit,
       netText:dec2(net) + ' ' + f.unit, net:net, pvText:money(pv), addText:money(add), totalText:money(total), total:total,
@@ -1423,10 +1445,10 @@ export class BusinessApp extends Component {
   }
 
   calcDS() {
-    const f = this.state.ds, all = this.custList(), cust = all.filter(c => c.code === f.cust)[0] || all[0];
+    const f = this.state.ds, all = this.custList(), cust = all.filter(c => c.code === f.cust)[0] || all[0] || BLANK_PARTY;
     let gross = 0, discAmt = 0, cost = 0;
     const lines = f.lines.map((l, i) => {
-      const p = this.data.products.filter(x => x.code === l.pid)[0] || this.data.products[0];
+      const p = this.data.products.filter(x => x.code === l.pid)[0] || this.data.products[0] || BLANK_PRODUCT;
       const amt = (+l.qty || 0) * (+l.rate || 0), d = amt * (+l.disc || 0) / 100, net = amt - d;
       gross += amt; discAmt += d; cost += (+l.qty || 0) * p.pur;
       return {i:i, pid:l.pid, name:p.name, unit:p.unit, stockText:int(p.stock) + ' ' + p.unit, lastText:money(p.sale),
@@ -1460,10 +1482,10 @@ export class BusinessApp extends Component {
   }
 
   calcDP() {
-    const f = this.state.dp, co = this.data.companies.filter(c => c.code === f.co)[0] || this.data.companies[0];
+    const f = this.state.dp, co = this.data.companies.filter(c => c.code === f.co)[0] || this.data.companies[0] || BLANK_PARTY;
     let gross = 0, discAmt = 0, freeQty = 0;
     const lines = f.lines.map((l, i) => {
-      const p = this.data.products.filter(x => x.code === l.pid)[0] || this.data.products[0];
+      const p = this.data.products.filter(x => x.code === l.pid)[0] || this.data.products[0] || BLANK_PRODUCT;
       const amt = (+l.qty || 0) * (+l.rate || 0), d = amt * (+l.disc || 0) / 100;
       gross += amt; discAmt += d; freeQty += +l.free || 0;
       const eff = ((+l.qty || 0) + (+l.free || 0)) ? (amt - d) / ((+l.qty || 0) + (+l.free || 0)) : 0;
@@ -1649,7 +1671,9 @@ export class BusinessApp extends Component {
     ];
     const topCust = TOP_CUSTOMERS;
     const topCo = TOP_COMPANIES;
-    const bar = arr => { const mx = arr[0].v; return arr.map(x => ({n:x.n, v:lakh(x.v), w:(x.v / mx * 100).toFixed(1) + '%'})); };
+    // Nothing to scale against when there is nothing to chart, and a bar is
+    // a share of the largest value rather than of zero.
+    const bar = arr => { const mx = arr.length ? arr[0].v : 0; return arr.map(x => ({n:x.n, v:lakh(x.v), w:(mx ? x.v / mx * 100 : 0).toFixed(1) + '%'})); };
     const aging = AGING_BUCKETS;
     const agMax = 1870000;
     return {kpis:kpis, chart:chart, panels:panels, showProfit:this.canProfit(),
@@ -1726,57 +1750,82 @@ export class BusinessApp extends Component {
   }
 
   cust() {
-    const S = this.state, all = this.custList(), c = all.filter(x => x.code === S.custSel)[0] || all[0];
+    const S = this.state, all = this.custList();
+    // No customers means no customer to be looking at. The blank record draws
+    // the panel as dashes and zeros rather than taking the render down, and
+    // `selected` is what everything else keys off: there is nobody selected,
+    // so nothing may be edited and no history belongs to anyone.
+    const selected = all.filter(x => x.code === S.custSel)[0] || all[0] || null;
+    const c = selected || BLANK_PARTY;
     const avail = c.limit - c.out;
     const purchases = table([column('Invoice'), column('Date'), column('Items'), column('Amount', 'right'), column('Paid', 'right'), column('Due', 'right'), column('Status', 'center')],
-      [['DS-2608-221', '28 Aug 2026', '4 items', 1328000, 400000, 928000, 'Pending approval'], ['DS-2608-204', '21 Aug 2026', '6 items', 862000, 862000, 0, 'Settled'],
-       ['DS-2608-188', '14 Aug 2026', '3 items', 445000, 245000, 200000, 'Partial'], ['DS-2607-171', '31 Jul 2026', '5 items', 738000, 738000, 0, 'Settled']].map(r => ({cells:[
+      (selected ? [['DS-2608-221', '28 Aug 2026', '4 items', 1328000, 400000, 928000, 'Pending approval'], ['DS-2608-204', '21 Aug 2026', '6 items', 862000, 862000, 0, 'Settled'],
+       ['DS-2608-188', '14 Aug 2026', '3 items', 445000, 245000, 200000, 'Partial'], ['DS-2607-171', '31 Jul 2026', '5 items', 738000, 738000, 0, 'Settled']] : []).map(r => ({cells:[
         cell(r[0], {mono:true, weight:'600'}), cell(r[1], {color:C.mut}), cell(r[2]), cell(money(r[3]), {align:'right', mono:true}),
         cell(money(r[4]), {align:'right', mono:true, color:C.crop}), cell(money(r[5]), {align:'right', mono:true, weight:'600', color:r[5] ? C.dngr : C.mut}),
-        cell(r[6], {align:'center', badge:true, badgeBg:r[6] === 'Settled' ? C.cropBg : r[6] === 'Partial' ? C.warnBg : '#F0EEE9', badgeFg:r[6] === 'Settled' ? C.crop : r[6] === 'Partial' ? C.warn : '#3D3A36'})]})));
+        cell(r[6], {align:'center', badge:true, badgeBg:r[6] === 'Settled' ? C.cropBg : r[6] === 'Partial' ? C.warnBg : '#F0EEE9', badgeFg:r[6] === 'Settled' ? C.crop : r[6] === 'Partial' ? C.warn : '#3D3A36'})]})),
+      {emptyTitle:'No invoices yet', emptyNote:'Sales raised for this customer appear here.'});
     const payments = table([column('Receipt'), column('Date'), column('Mode'), column('Against invoice'), column('Amount', 'right')],
-      [['RC-2608-309', '27 Aug 2026', 'bKash', 'DS-2608-221', 400000], ['RC-2608-291', '21 Aug 2026', 'Bank — Islami Bank', 'DS-2608-204', 862000],
-       ['RC-2608-266', '14 Aug 2026', 'Cash', 'DS-2608-188', 245000], ['RC-2607-240', '31 Jul 2026', 'Cheque', 'DS-2607-171', 738000]].map(r => ({cells:[
+      (selected ? [['RC-2608-309', '27 Aug 2026', 'bKash', 'DS-2608-221', 400000], ['RC-2608-291', '21 Aug 2026', 'Bank — Islami Bank', 'DS-2608-204', 862000],
+       ['RC-2608-266', '14 Aug 2026', 'Cash', 'DS-2608-188', 245000], ['RC-2607-240', '31 Jul 2026', 'Cheque', 'DS-2607-171', 738000]] : []).map(r => ({cells:[
         cell(r[0], {mono:true, weight:'600'}), cell(r[1], {color:C.mut}), cell(r[2]), cell(r[3], {mono:true, color:C.mut}),
-        cell(money(r[4]), {align:'right', mono:true, weight:'600', color:C.crop})]})));
+        cell(money(r[4]), {align:'right', mono:true, weight:'600', color:C.crop})]})),
+      {emptyTitle:'No receipts yet', emptyNote:'Collections against this customer appear here.'});
     const ledger = table([column('Date'), column('Particulars'), column('Debit', 'right'), column('Credit', 'right'), column('Balance', 'right')],
-      [['31 Jul 2026', 'Opening balance', 0, 0, 282000], ['14 Aug 2026', 'Invoice DS-2608-188', 445000, 0, 727000], ['14 Aug 2026', 'Receipt RC-2608-266', 0, 245000, 482000],
+      (selected ? [['31 Jul 2026', 'Opening balance', 0, 0, 282000], ['14 Aug 2026', 'Invoice DS-2608-188', 445000, 0, 727000], ['14 Aug 2026', 'Receipt RC-2608-266', 0, 245000, 482000],
        ['21 Aug 2026', 'Invoice DS-2608-204', 862000, 0, 1344000], ['21 Aug 2026', 'Receipt RC-2608-291', 0, 862000, 482000],
-       ['28 Aug 2026', 'Invoice DS-2608-221', 1328000, 0, 1810000], ['27 Aug 2026', 'Receipt RC-2608-309', 0, 400000, 1410000]].map(r => ({cells:[
+       ['28 Aug 2026', 'Invoice DS-2608-221', 1328000, 0, 1810000], ['27 Aug 2026', 'Receipt RC-2608-309', 0, 400000, 1410000]] : []).map(r => ({cells:[
         cell(r[0], {color:C.mut}), cell(r[1]), cell(r[2] ? money(r[2]) : '—', {align:'right', mono:true}),
-        cell(r[3] ? money(r[3]) : '—', {align:'right', mono:true}), cell(money(r[4]), {align:'right', mono:true, weight:'600'})]})));
+        cell(r[3] ? money(r[3]) : '—', {align:'right', mono:true}), cell(money(r[4]), {align:'right', mono:true, weight:'600'})]})),
+      {emptyTitle:'Nothing on the ledger', emptyNote:'Invoices and receipts build the running balance here.'});
     return {list:all.map(x => ({code:x.code, name:x.name, bn:x.bn, meta:x.type + ' · ' + x.district, out:money(x.out),
       on:x.code === S.custSel, bg:x.code === S.custSel ? C.accBg : '#fff', bd:x.code === S.custSel ? C.acc : '#E3E0DA', onClick:this.hs('custSel', x.code)})),
       c:c, salesText:money(c.sales), collText:money(c.coll), outText:money(c.out), limitText:money(c.limit), availText:money(avail),
-      availW:Math.min(100, c.out / c.limit * 100).toFixed(1) + '%', availColor:avail < 0 ? C.dngr : C.crop, daysText:c.days + ' days',
+      // A limit of nothing is not a limit exceeded: no customer, no bar.
+      availW:(c.limit ? Math.min(100, c.out / c.limit * 100) : 0).toFixed(1) + '%',
+      availColor:avail < 0 ? C.dngr : C.crop, daysText:c.days + ' days',
+      // The screen says so rather than showing a panel of dashes unexplained.
+      isEmpty:!selected, emptyTitle:'No customers yet',
+      emptyNote:'Add the first one and their invoices, receipts and ledger build up here.',
       tabs:this.tabify([{k:'purchases', l:'Purchase history'}, {k:'payments', l:'Payment history'}, {k:'ledger', l:'Ledger'}], S.custTab, 'custTab'),
       isPur:S.custTab === 'purchases', isPay:S.custTab === 'payments', isLed:S.custTab === 'ledger',
       purchases:purchases, payments:payments, ledger:ledger,
-      ...this.masterControls('customer', c), addLabel:'Add customer',
+      // Nothing selected is nothing to edit or retire; adding the first one
+      // is the only thing this screen offers a new business.
+      ...this.masterControls('customer', selected), addLabel:'Add customer',
       countText:all.length + (all.length === 1 ? ' customer' : ' customers')};
   }
 
   sup() {
-    const S = this.state, s = this.data.suppliers.filter(x => x.code === S.supSel)[0] || this.data.suppliers[0];
+    const S = this.state;
+    const picked = this.data.suppliers.filter(x => x.code === S.supSel)[0] || this.data.suppliers[0] || null;
+    const s = picked || BLANK_PARTY;
     const pur = table([column('Purchase No'), column('Date'), column('Crop'), column('Batch'), column('Qty', 'right'), column('Rate', 'right'), column('Amount', 'right'), column('Paid', 'right')],
-      this.state.cropLog.filter(r => r.sup === s.name).concat(this.state.cropLog.slice(0, 2)).slice(0, 4).map((r, i) => ({cells:[
+      // This supplier's purchases. It used to pad the list with the first two
+      // rows of the whole log whatever the supplier, so every farmer appeared
+      // to have delivered someone else's crop.
+      (picked ? this.state.cropLog.filter(r => r.sup === s.name) : []).slice(0, 4).map((r, i) => ({cells:[
         cell(r.no, {mono:true, weight:'600'}), cell(r.date, {color:C.mut}), cell(r.crop, {dot:C.crop}),
         cell('BC-2608-0' + (11 - i), {mono:true, color:C.mut}), cell(int(r.qty) + ' ' + r.unit, {align:'right', mono:true}),
         cell(money(r.rate), {align:'right', mono:true}), cell(money(r.total), {align:'right', mono:true, weight:'600'}),
         cell(money(r.total * (i === 0 ? 0.5 : 1)), {align:'right', mono:true, color:C.crop})]})),
       {emptyTitle:'No purchases from this supplier yet', emptyNote:'Post a bulk crop purchase to see the history here.'});
     const pay = table([column('Voucher'), column('Date'), column('Mode'), column('Against'), column('Amount', 'right')],
-      [['PY-2608-118', '27 Aug 2026', 'bKash', 'PC-2608-013 advance', 1500000], ['PY-2608-104', '22 Aug 2026', 'Bank — DBBL', 'PC-2608-013 balance', 1060000],
-       ['PY-2608-090', '18 Aug 2026', 'Cash', 'PC-2608-009', 800000]].map(r => ({cells:[
+      (picked ? [['PY-2608-118', '27 Aug 2026', 'bKash', 'PC-2608-013 advance', 1500000], ['PY-2608-104', '22 Aug 2026', 'Bank — DBBL', 'PC-2608-013 balance', 1060000],
+       ['PY-2608-090', '18 Aug 2026', 'Cash', 'PC-2608-009', 800000]] : []).map(r => ({cells:[
         cell(r[0], {mono:true, weight:'600'}), cell(r[1], {color:C.mut}), cell(r[2]), cell(r[3], {color:C.mut}),
-        cell(money(r[4]), {align:'right', mono:true, weight:'600', color:C.dngr})]})));
+        cell(money(r[4]), {align:'right', mono:true, weight:'600', color:C.dngr})]})),
+      {emptyTitle:'No payments yet', emptyNote:'Vouchers paid to this supplier appear here.'});
     return {list:this.data.suppliers.map(x => ({code:x.code, name:x.name, bn:x.bn, meta:x.type + ' · ' + x.upazila + ', ' + x.district, out:money(x.out),
       on:x.code === S.supSel, bg:x.code === S.supSel ? C.accBg : '#fff', bd:x.code === S.supSel ? C.acc : '#E3E0DA', onClick:this.hs('supSel', x.code)})),
       s:s, purText:money(s.pur), paidText:money(s.paid), outText:money(s.out),
       tabs:this.tabify([{k:'purchases', l:'Purchase history'}, {k:'payments', l:'Payment history'}], S.supTab, 'supTab'),
       isPur:S.supTab === 'purchases', purchases:pur, payments:pay,
-      ...this.masterControls('supplier', s), addLabel:'Add supplier',
-      countText:this.data.suppliers.length + ' suppliers'};
+      isEmpty:!picked, emptyTitle:'No suppliers yet',
+      emptyNote:'Add the first farmer or trader and their purchases and payments build up here.',
+      ...this.masterControls('supplier', picked), addLabel:'Add supplier',
+      countText:this.data.suppliers.length
+        + (this.data.suppliers.length === 1 ? ' supplier' : ' suppliers')};
   }
 
   /** Values already present in the data, plus a few common ones, sorted. */
