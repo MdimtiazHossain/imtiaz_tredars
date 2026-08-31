@@ -1,6 +1,13 @@
 import * as seed from './seed.js';
 import { ACCOUNTS, PAYMENT_METHOD_OPTIONS, EXPENSE_CATEGORIES } from './financeLookups.js';
-import { EMPLOYEES, EXPENSE_VOUCHERS, SETTINGS, AUDIT_LOG } from './reference.js';
+import {
+  EMPLOYEES,
+  EXPENSE_VOUCHERS,
+  SETTINGS,
+  AUDIT_LOG,
+  ROLES,
+  permissionMatrix,
+} from './reference.js';
 
 /**
  * In-memory implementation of the repository contract.
@@ -437,6 +444,202 @@ export class InMemoryRepository {
     }
     Object.assign(rule, clone(changes));
     return settle(clone(rule), this.latency);
+  }
+
+  /* ------------------------------------------------------ roles and logins */
+
+  /**
+   * Roles and their grants, without a server.
+   *
+   * The same shape the API answers with, and the same rules over it: a role
+   * the business is set up around cannot be deleted, one somebody holds
+   * cannot be either, and nothing may leave the roles with nobody able to
+   * change them back. The demo can cut its own permissions and see the
+   * sidebar change; nothing outlives the page, which is what "no backend"
+   * means.
+   */
+  _roleStore() {
+    if (!this._roles) this._roles = clone(ROLES);
+    return this._roles;
+  }
+
+  _matrix() {
+    const team = this._store ? this._store.employees : EMPLOYEES;
+    const matrix = permissionMatrix(this._roleStore(), team);
+    // The settings working set carries the matrix too, so a grant moved here
+    // is the one the Settings screen reads back.
+    if (this._settings) this._settings.permissions = matrix;
+    return matrix;
+  }
+
+  /**
+   * Apply a change to roles or logins, and undo it if it closes the door.
+   *
+   * The server does this with a transaction: the guard runs inside it and a
+   * refusal rolls the whole thing back. There is no transaction here, so the
+   * mutable state is snapshotted first and put back on refusal -- otherwise a
+   * refused change stays half-applied and the demo drifts away from what the
+   * screen just told the user had not happened.
+   */
+  _guarded(change) {
+    const team = this._store ? this._store.employees : EMPLOYEES;
+    const before = {
+      roles: clone(this._roleStore()),
+      team: team.map((e) => ({ role: e.role, status: e.status })),
+    };
+
+    try {
+      const result = change();
+      this._assertStillAdministrable();
+      return result;
+    } catch (err) {
+      this._roles = before.roles;
+      before.team.forEach((snapshot, i) => Object.assign(team[i], snapshot));
+      throw err;
+    }
+  }
+
+  /** Refuse a change that would leave nobody able to undo it. */
+  _assertStillAdministrable() {
+    const team = this._store ? this._store.employees : EMPLOYEES;
+    const held = new Set(
+      this._roleStore()
+        .filter((r) => team.some((e) => e.role === r.code && e.status !== 'Retired'))
+        .flatMap((r) => r.granted)
+    );
+    for (const [code, what] of [
+      ['role.edit', 'change roles and permissions'],
+      ['settings.edit', 'change the system settings'],
+    ]) {
+      if (!held.has(code)) {
+        throw new Error(
+          `That would leave no active user able to ${what}. Give the permission to ` +
+            'another role, or another role to another user, first.'
+        );
+      }
+    }
+  }
+
+  async roles() {
+    return settle(clone(this._matrix()), this.latency);
+  }
+
+  async createRole(role) {
+    const roles = this._roleStore();
+    if (roles.some((r) => r.code.toLowerCase() === String(role.code).toLowerCase())) {
+      throw new Error(`A role called ${role.code} already exists.`);
+    }
+    roles.push({
+      id: Math.max(0, ...roles.map((r) => r.id)) + 1,
+      code: role.code,
+      name: role.name,
+      description: role.description || '',
+      system: false,
+      granted: clone(role.permissions || []),
+    });
+    return settle(clone(this._matrix()), this.latency);
+  }
+
+  async updateRole(id, changes) {
+    const role = this._roleStore().filter((r) => r.id === id)[0];
+    if (!role) throw new Error('Role not found');
+    if (changes.name !== undefined) role.name = changes.name;
+    if (changes.description !== undefined) role.description = changes.description;
+    return settle(clone(this._matrix()), this.latency);
+  }
+
+  async deleteRole(id) {
+    const roles = this._roleStore();
+    const role = roles.filter((r) => r.id === id)[0];
+    if (!role) throw new Error('Role not found');
+    if (role.system) {
+      throw new Error(
+        `${role.name} is one of the roles the system is set up around, so it cannot be ` +
+          'deleted. Change what it may do instead, or move its users to another role.'
+      );
+    }
+    const team = this._store ? this._store.employees : EMPLOYEES;
+    const holders = team.filter((e) => e.role === role.code).length;
+    if (holders) {
+      throw new Error(
+        `${role.name} is held by ${holders} ${holders === 1 ? 'user' : 'users'}. ` +
+          'Move them to another role first.'
+      );
+    }
+    this._guarded(() => {
+      this._roles = roles.filter((r) => r.id !== id);
+    });
+    return settle(clone(this._matrix()), this.latency);
+  }
+
+  async setRolePermissions(id, scope, permissions) {
+    if (!this._roleStore().some((r) => r.id === id)) throw new Error('Role not found');
+    this._guarded(() => {
+      const role = this._roleStore().filter((r) => r.id === id)[0];
+      const wanted = new Set(permissions);
+      role.granted = role.granted
+        .filter((code) => !scope.includes(code))
+        .concat(scope.filter((code) => wanted.has(code)))
+        .sort();
+    });
+    return settle(clone(this._matrix()), this.latency);
+  }
+
+  /**
+   * The logins, derived from the team directory.
+   *
+   * Without a server there is no `users` table; the demo's accounts are the
+   * employees, each holding the role the directory records, which is what the
+   * Employees screen has always shown.
+   */
+  async userAccounts() {
+    const team = this._store ? this._store.employees : EMPLOYEES;
+    return settle(
+      team.map((e, i) => ({
+        id: e.id ?? i + 1,
+        username: e.name.split(' ')[0].toLowerCase() + String(e.code || '').slice(-2),
+        email: '',
+        active: e.status !== 'Retired',
+        mustChangePassword: false,
+        lastLogin: '',
+        employeeId: e.id ?? i + 1,
+        employeeCode: e.code,
+        name: e.name,
+        designation: e.designation,
+        employeeActive: e.status !== 'Retired',
+        roles: e.role && e.role !== '\u2014' ? [e.role] : [],
+        role: e.role,
+        status: e.status === 'Retired' ? 'Disabled' : 'Active',
+      })),
+      this.latency
+    );
+  }
+
+  async updateUserAccount(id, changes) {
+    const team = this._store ? this._store.employees : EMPLOYEES;
+    const member = team.filter((e) => (e.id ?? 0) === id)[0];
+    if (!member) throw new Error('User account not found');
+
+    this._guarded(() => {
+      if (changes.roles) [member.role] = changes.roles;
+      if (changes.active !== undefined) {
+        member.status = changes.active ? 'Active' : 'Retired';
+      }
+    });
+    return this.userAccounts();
+  }
+
+  /**
+   * Creating a login and resetting a password need somewhere to keep a
+   * password, and the demo deliberately has nowhere. Both refuse rather than
+   * pretending to have done something.
+   */
+  async createUserAccount() {
+    throw new Error('Logins need the server: there is nowhere to keep a password without one.');
+  }
+
+  async resetUserPassword() {
+    throw new Error('Passwords need the server: there is nowhere to keep one without it.');
   }
 
   /** Record an approve/reject decision against a pending request. */

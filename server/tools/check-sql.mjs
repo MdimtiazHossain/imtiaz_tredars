@@ -186,8 +186,11 @@ for (const file of sourceFiles()) {
     .map((lit) => lit[0].slice(1, -1))
     .filter((lit) => /^\s*(?:SELECT|INSERT|UPDATE|DELETE|WITH)\b/i.test(lit))
     .join('\n;\n');
+  // `FOR UPDATE OF u` names the alias to lock, not a table to read from, and
+  // is the only way to lock one side of an outer join. Drop the locking clause
+  // before looking for relations rather than reading "OF" as one.
   const relRe = /\b(?:FROM|JOIN|UPDATE)\s+([a-z_][a-z0-9_]*)\b/gi;
-  while ((m = relRe.exec(scannable))) {
+  while ((m = relRe.exec(scannable.replace(/\bFOR\s+(?:UPDATE|SHARE)\s+OF\b/gi, 'FOR LOCK')))) {
     const name = m[1].toLowerCase();
     if (['select', 'set', 'where', 'values', 'only', 'lateral'].includes(name)) continue;
     if (tables.has(name) || views.has(name)) continue;

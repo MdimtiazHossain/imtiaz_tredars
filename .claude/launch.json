@@ -4,14 +4,39 @@
     {
       "name": "business-suite",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5290", "--strictPort"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5290",
+        "--strictPort"
+      ],
       "port": 5290
     },
     {
       "name": "business-suite-api",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "server", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "server",
+        "run",
+        "dev"
+      ],
       "port": 5310
+    },
+    {
+      "name": "business-suite-demo",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "demo",
+        "--",
+        "--port",
+        "5291",
+        "--strictPort"
+      ],
+      "port": 5291
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { query, num } from '../lib/db.js';
+import { loadPermissionMatrix } from './roleService.js';
 import { DOC_PREFIXES } from '../lib/numbering.js';
 
 /**
@@ -233,123 +234,14 @@ export async function loadNotificationRules(orgId) {
 /* ------------------------------------------------------ roles and permissions */
 
 /**
- * The permission matrix, as modules against roles.
+ * The matrix lives with the writes that change it.
  *
- * The screen has always drawn this table; until now it was a literal that
- * described the intent of the seed script rather than the grants in the
- * database, so revoking a permission changed what the API allowed and left the
- * matrix claiming otherwise.
- *
- * Each module lists its permissions weakest first. A role holding all of them
- * reads 'Full', one holding none reads the module's empty label, and anything
- * between reads the strongest it actually holds.
+ * It was computed here while it was only ever read. Now that a grant can be
+ * moved from the screen, the table and the writes that alter it belong
+ * together in `roleService`, and this passes it through so the Settings screen
+ * still arrives in one round trip.
  */
-const MODULES = [
-  { label: 'Dashboard', permissions: [['dashboard.view', 'View']] },
-  {
-    label: 'Crop purchase',
-    permissions: [
-      ['crop.purchase.view', 'View'], ['crop.purchase.create', 'Create'],
-      ['crop.purchase.post', 'Post'], ['crop.purchase.cancel', 'Cancel'],
-    ],
-  },
-  {
-    label: 'Crop sales',
-    permissions: [
-      ['crop.sale.view', 'View'], ['crop.sale.create', 'Create'],
-      ['crop.sale.post', 'Post'], ['crop.sale.cancel', 'Cancel'],
-    ],
-  },
-  {
-    label: 'Dealer purchase',
-    permissions: [
-      ['dealer.purchase.view', 'View'], ['dealer.purchase.create', 'Create'],
-      ['dealer.purchase.post', 'Post'], ['dealer.purchase.cancel', 'Cancel'],
-    ],
-  },
-  {
-    label: 'Dealer sales',
-    permissions: [
-      ['dealer.sale.view', 'View'], ['dealer.sale.create', 'Create'],
-      ['dealer.sale.post', 'Post'], ['dealer.sale.cancel', 'Cancel'],
-    ],
-  },
-  {
-    label: 'Inventory',
-    permissions: [
-      ['inventory.view', 'View'], ['inventory.transfer', 'Transfer'],
-      ['inventory.adjust', 'Adjust'],
-    ],
-  },
-  {
-    label: 'Customers',
-    permissions: [
-      ['customer.view', 'View'], ['customer.create', 'Create'],
-      ['customer.edit', 'Edit'], ['customer.delete', 'Retire'],
-    ],
-  },
-  {
-    label: 'Suppliers',
-    permissions: [
-      ['supplier.view', 'View'], ['supplier.create', 'Create'],
-      ['supplier.edit', 'Edit'], ['supplier.delete', 'Retire'],
-    ],
-  },
-  {
-    label: 'Products',
-    permissions: [
-      ['product.view', 'View'], ['product.create', 'Create'],
-      ['product.edit', 'Edit'], ['product.delete', 'Retire'],
-    ],
-  },
-  { label: 'Payments', permissions: [['payment.view', 'View'], ['payment.create', 'Collect']] },
-  { label: 'Expenses', permissions: [['expense.view', 'View'], ['expense.create', 'Record']] },
-  {
-    label: 'Profit figures',
-    permissions: [['report.profit', 'Full']],
-    // Not seeing profit is a deliberate state with a name, not an absence.
-    empty: 'Hidden',
-  },
-  {
-    label: 'Approvals',
-    permissions: [['approval.view', 'Request'], ['approval.decide', 'Approve']],
-  },
-  { label: 'Settings', permissions: [['settings.view', 'View'], ['settings.edit', 'Full']] },
-  { label: 'Audit trail', permissions: [['audit.view', 'View']] },
-];
-
-export async function loadPermissionMatrix() {
-  const [roles, grants] = await Promise.all([
-    query('SELECT id, code, name FROM roles ORDER BY id'),
-    query(
-      `SELECT r.code AS role, p.code AS permission
-         FROM role_permissions rp
-         JOIN roles r       ON r.id = rp.role_id
-         JOIN permissions p ON p.id = rp.permission_id`
-    ),
-  ]);
-
-  const held = new Map(roles.rows.map((r) => [r.code, new Set()]));
-  for (const g of grants.rows) held.get(g.role)?.add(g.permission);
-
-  const roleCodes = roles.rows.map((r) => r.code);
-
-  return {
-    roles: roleCodes,
-    modules: MODULES.map((module) => ({
-      label: module.label,
-      levels: Object.fromEntries(
-        roleCodes.map((role) => {
-          const set = held.get(role) || new Set();
-          const owned = module.permissions.filter(([code]) => set.has(code));
-          if (!owned.length) return [role, module.empty || '—'];
-          if (owned.length === module.permissions.length) return [role, 'Full'];
-          return [role, owned[owned.length - 1][1]];
-        })
-      ),
-    })),
-  };
-}
+export { loadPermissionMatrix } from './roleService.js';
 
 /* ------------------------------------------------------------------ the lot */
 

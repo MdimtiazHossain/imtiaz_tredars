@@ -91,7 +91,7 @@
           <div style="position:absolute;top:44px;right:0;width:240px;background:#fff;border:1px solid #E3E0DA;border-radius:10px;box-shadow:0 14px 40px rgba(26,24,23,.14);padding:12px 14px;z-index:40">
             <div style="font-size:13px;font-weight:700">{{ co.user }}</div>
             <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ role }} · {{ co.fy }}</div>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid #F0EEE9;font-size:12px;color:#6E6A64">Role is a tweakable prop — switch it in Tweaks to see permission-based navigation.</div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid #F0EEE9;font-size:12px;color:#6E6A64">{{ userNote }}</div>
           </div>
         </sc-if>
       </div>
@@ -1267,7 +1267,7 @@
         <div style="display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 16px;background:#fff;border:1px solid #E3E0DA;border-radius:10px">
             <div style="font-size:13px"><strong>{{ appr.count }} requests</strong> <span style="color:#8C877F">waiting on you</span></div>
-            <div style="font-size:12px;color:#8C877F">Current approval limit {{ appr.limitText }} · adjust it in Settings or Tweaks</div>
+            <div style="font-size:12px;color:#8C877F">Current approval limit {{ appr.limitText }} · set under Settings → Approval limits</div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px">
             <sc-for list="{{ appr.cards }}" as="a" hint-placeholder-count="4">
@@ -1471,8 +1471,13 @@
               </div>
             </sc-if>
             <sc-if value="{{ setIs.roles }}">
-              <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">Roles and permissions</div>
-              <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px">Switch the role in Tweaks to see the sidebar and profit figures change for that user.</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px">
+                <div style="font-size:14.5px;font-weight:700">Roles and permissions</div>
+                <sc-if value="{{ addRole.canAdd }}">
+                  <button onClick="{{ addRole.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ addRole.label }}</button>
+                </sc-if>
+              </div>
+              <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px;max-width:760px">{{ rolesNote }}</div>
               <div style="overflow:auto;border:1px solid #E3E0DA;border-radius:9px">
                 <table style="width:100%;border-collapse:collapse;font-size:12.5px">
                   <thead>
@@ -1486,12 +1491,37 @@
                     <sc-for list="{{ matrix.rows }}" as="r" hint-placeholder-count="8">
                       <tr style="border-bottom:1px solid #F5F3EF">
                         <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="7">
-                          <td style="padding:9px 13px;white-space:nowrap;text-align:{{ c.align }};font-weight:{{ c.w }};color:{{ c.color }}">{{ c.t }}</td>
+                          <td style="padding:9px 13px;white-space:nowrap;text-align:{{ c.align }};font-weight:{{ c.w }};color:{{ c.color }}">
+                            <sc-if value="{{ c.plain }}">{{ c.t }}</sc-if>
+                            <sc-if value="{{ c.onClick }}">
+                              <button onClick="{{ c.onClick }}" title="{{ c.title }}" style="border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 9px;font-size:12.5px;font-weight:inherit;color:inherit;cursor:pointer" style-hover="border-color:#8A2233;background:#FBF3F4;color:#8A2233">{{ c.t }}</button>
+                            </sc-if>
+                          </td>
                         </sc-for>
                       </tr>
                     </sc-for>
                   </tbody>
                 </table>
+              </div>
+              <div style="font-size:14.5px;font-weight:700;margin:22px 0 12px">The roles themselves</div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-width:620px">
+                <sc-for list="{{ roleRows }}" as="r" hint-placeholder-count="6">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                    <div>
+                      <div style="font-size:13px;font-weight:600">{{ r.k }}</div>
+                      <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ r.d }}</div>
+                    </div>
+                    <span style="display:flex;align-items:center;gap:10px;flex:none">
+                      <span style="padding:4px 10px;border-radius:5px;font-size:11.5px;font-weight:600;background:{{ r.tagBg }};color:{{ r.tagFg }}">{{ r.tag }}</span>
+                      <sc-if value="{{ r.canEdit }}">
+                        <button onClick="{{ r.onEdit }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Edit</button>
+                      </sc-if>
+                      <sc-if value="{{ r.canRemove }}">
+                        <button onClick="{{ r.onRemove }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#B3261E;color:#B3261E">Delete</button>
+                      </sc-if>
+                    </span>
+                  </div>
+                </sc-for>
               </div>
             </sc-if>
             <sc-if value="{{ setIs.notif }}">
@@ -1521,11 +1551,15 @@
 
       <sc-if value="{{ is.employees }}">
         <div style="display:flex;flex-direction:column;gap:10px">
-          <sc-if value="{{ team.canAdd }}">
-            <div style="display:flex;justify-content:flex-end">
+          <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px">
+            <sc-if value="{{ team.login.canAdd }}">
+              <span style="font-size:11.5px;color:#8C877F">{{ team.login.note }}</span>
+              <button onClick="{{ team.login.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">+ {{ team.login.label }}</button>
+            </sc-if>
+            <sc-if value="{{ team.canAdd }}">
               <button onClick="{{ team.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ team.addLabel }}</button>
-            </div>
-          </sc-if>
+            </sc-if>
+          </div>
           <dc-import name="DataTable" t="{{ team.table }}" hint-size="100%,470px"></dc-import>
         </div>
       </sc-if>

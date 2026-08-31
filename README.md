@@ -46,6 +46,7 @@ Then open the printed URL. Other scripts:
 | Script | What it does |
 | --- | --- |
 | `npm run dev` | Vite dev server with hot reload |
+| `npm run demo` | The same, against the bundled seed data with no backend |
 | `npm run build` | Production build into `dist/` |
 | `npm run preview` | Serve the production build |
 | `npm run typecheck` | `tsc --noEmit` over JSDoc-annotated JS |
@@ -53,15 +54,39 @@ Then open the printed URL. Other scripts:
 | `npm test` | Vitest suite |
 | `npm run verify` | All four of the above, in order |
 
-The role, profit visibility and approval limit that the design exposes as
-tweakable inputs are readable from the query string, which is handy for
-checking permission-based navigation:
+`npm run dev` talks to the API at `VITE_API_URL` and asks you to sign in;
+`npm run demo` overrides that with nothing and runs on the bundled seed data,
+which is what a demonstration without a database needs.
+
+### Roles and permissions
+
+Access is a set of permission codes -- `dealer.sale.post`, `report.profit`,
+`settings.edit` -- held by roles, which are held by logins. The API loads them
+from the database on every request rather than from the token, so a change
+takes effect at once, including for someone already signed in.
+
+Both ends read the same grants. **Settings -> Roles & permissions** draws the
+matrix of modules against roles: clicking a cell opens that module's
+permissions for that role, and roles can be added, described and removed there.
+**Employees** is where a login is created for a team member, given its roles,
+reset or switched off. Whatever is granted decides what the sidebar offers and
+whether profit figures are shown -- there is no list of role names anywhere
+deciding that separately.
+
+Nothing may leave the business locked out: every write checks afterwards that
+some active user can still change roles and settings, and refuses if not. The
+six seeded roles can be re-granted but not deleted, and a login is disabled
+rather than removed, because the audit trail names it.
+
+In the no-backend demo the role is a tweakable input, readable from the query
+string along with profit visibility and the approval limit:
 
 ```
-http://localhost:5173/?role=Sales&showProfit=false&approvalLimit=1000000
+http://localhost:5291/?role=Sales&showProfit=false&approvalLimit=1000000
 ```
 
-Roles: `Admin`, `Management`, `Sales`, `Purchase`, `Accounts`, `Warehouse`.
+Roles as seeded: `Admin`, `Management`, `Sales`, `Purchase`, `Accounts`,
+`Warehouse`.
 
 ## How it is put together
 

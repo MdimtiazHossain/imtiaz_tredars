@@ -6,6 +6,7 @@
   "description": "Business management app for dealer and bulk crop trading operations.",
   "scripts": {
     "dev": "vite",
+    "demo": "vite --mode demo",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

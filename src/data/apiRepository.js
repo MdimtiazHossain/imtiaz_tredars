@@ -362,6 +362,62 @@ export class ApiRepository {
     return (await this.client.patch(`/settings/notification-rules/${id}`, changes)).data;
   }
 
+  /* ------------------------------------------------------ roles and logins */
+
+  /**
+   * The permission matrix, the roles behind it and the catalogue of codes.
+   *
+   * Every write below answers with the whole matrix again rather than with the
+   * row it changed: a grant moved on one role changes what the table says for
+   * that role in every module it touches, and re-reading the lot is one round
+   * trip against a table with a few dozen rows.
+   */
+  async roles() {
+    return (await this.client.get('/roles')).data;
+  }
+
+  async createRole(role) {
+    return (await this.client.post('/roles', role)).data.permissions;
+  }
+
+  /** Rename a role, or change the sentence describing what it is for. */
+  async updateRole(id, changes) {
+    return (await this.client.patch(`/roles/${id}`, changes)).data;
+  }
+
+  async deleteRole(id) {
+    return (await this.client.delete(`/roles/${id}`)).data;
+  }
+
+  /**
+   * Grant and revoke inside one module.
+   *
+   * `scope` is the set of codes being decided and `permissions` the ones that
+   * should end up granted; anything outside the scope is left as it was.
+   */
+  async setRolePermissions(id, scope, permissions) {
+    return (await this.client.put(`/roles/${id}/permissions`, { scope, permissions })).data;
+  }
+
+  /** The logins, who they belong to and the roles they hold. */
+  async userAccounts() {
+    return (await this.client.get('/users')).data;
+  }
+
+  async createUserAccount(account) {
+    return (await this.client.post('/users', account)).data.accounts;
+  }
+
+  /** Change the roles on a login, its address, or whether it works at all. */
+  async updateUserAccount(id, changes) {
+    return (await this.client.patch(`/users/${id}`, changes)).data;
+  }
+
+  /** Set a temporary password and sign the account out everywhere. */
+  async resetUserPassword(id, password) {
+    return (await this.client.post(`/users/${id}/password`, { password })).data;
+  }
+
   async decideApproval(requestNo, approved, comment) {
     const list = await this.client.get('/approvals', { status: 'PENDING', pageSize: 200 });
     const match = list.data.find((a) => a.requestNo === requestNo);

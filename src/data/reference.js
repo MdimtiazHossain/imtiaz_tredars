@@ -6,7 +6,6 @@
  * would own rather than figures a reporting endpoint would compute.
  */
 
-/** Team directory: id, name, designation, department, mobile, role, joined. */
 /**
  * The team, as records rather than a positional table.
  *
@@ -14,55 +13,150 @@
  * only ever show this fixed list. As records they seed the in-memory store and
  * the screen renders whatever the repository returns -- the real table with a
  * backend, this fixture without one.
+ *
+ * Each carries an id, as every other master fixture does and as the API's own
+ * rows do: the login on the employees screen is matched to the person by it,
+ * and a record with no id cannot be matched to anything.
  */
 export const EMPLOYEES = [
-  { code: 'EMP-01', name: 'Rakib Hasan', designation: 'Managing Director', department: 'Management', mobile: '01711-330099', role: 'Admin', joined: '2019-01-01' },
-  { code: 'EMP-02', name: 'Nasrin Akter', designation: 'Accounts Manager', department: 'Accounts', mobile: '01715-882204', role: 'Accounts', joined: '2020-03-12' },
-  { code: 'EMP-03', name: 'Sohel Rana', designation: 'Purchase Officer', department: 'Purchase', mobile: '01816-445521', role: 'Purchase', joined: '2021-07-05' },
-  { code: 'EMP-04', name: 'Shamim Reza', designation: 'Senior Sales Officer', department: 'Sales', mobile: '01912-006733', role: 'Sales', joined: '2021-09-18' },
-  { code: 'EMP-05', name: 'Jamal Uddin', designation: 'Warehouse In-charge', department: 'Warehouse', mobile: '01755-119043', role: 'Warehouse', joined: '2022-02-02' },
-  { code: 'EMP-06', name: 'Farhana Yeasmin', designation: 'Accounts Officer', department: 'Accounts', mobile: '01633-220871', role: 'Accounts', joined: '2022-06-20' },
-  { code: 'EMP-07', name: 'Mizanur Rahman', designation: 'Sales Officer', department: 'Sales', mobile: '01521-778812', role: 'Sales', joined: '2023-11-11' },
-  { code: 'EMP-08', name: 'Ashraful Islam', designation: 'Field Officer — Crop', department: 'Operations', mobile: '01844-663019', role: 'Purchase', joined: '2024-01-03' },
-  { code: 'EMP-09', name: 'Sumaiya Khatun', designation: 'Data Entry Operator', department: 'Operations', mobile: '01977-334528', role: 'Sales', joined: '2025-04-15' },
-  { code: 'EMP-10', name: 'Habibur Rahman', designation: 'Store Assistant', department: 'Warehouse', mobile: '01686-901254', role: 'Warehouse', joined: '2026-02-01' },
+  { id: 1, code: 'EMP-01', name: 'Rakib Hasan', designation: 'Managing Director', department: 'Management', mobile: '01711-330099', role: 'Admin', joined: '2019-01-01' },
+  { id: 2, code: 'EMP-02', name: 'Nasrin Akter', designation: 'Accounts Manager', department: 'Accounts', mobile: '01715-882204', role: 'Accounts', joined: '2020-03-12' },
+  { id: 3, code: 'EMP-03', name: 'Sohel Rana', designation: 'Purchase Officer', department: 'Purchase', mobile: '01816-445521', role: 'Purchase', joined: '2021-07-05' },
+  { id: 4, code: 'EMP-04', name: 'Shamim Reza', designation: 'Senior Sales Officer', department: 'Sales', mobile: '01912-006733', role: 'Sales', joined: '2021-09-18' },
+  { id: 5, code: 'EMP-05', name: 'Jamal Uddin', designation: 'Warehouse In-charge', department: 'Warehouse', mobile: '01755-119043', role: 'Warehouse', joined: '2022-02-02' },
+  { id: 6, code: 'EMP-06', name: 'Farhana Yeasmin', designation: 'Accounts Officer', department: 'Accounts', mobile: '01633-220871', role: 'Accounts', joined: '2022-06-20' },
+  { id: 7, code: 'EMP-07', name: 'Mizanur Rahman', designation: 'Sales Officer', department: 'Sales', mobile: '01521-778812', role: 'Sales', joined: '2023-11-11' },
+  { id: 8, code: 'EMP-08', name: 'Ashraful Islam', designation: 'Field Officer — Crop', department: 'Operations', mobile: '01844-663019', role: 'Purchase', joined: '2024-01-03' },
+  { id: 9, code: 'EMP-09', name: 'Sumaiya Khatun', designation: 'Data Entry Operator', department: 'Operations', mobile: '01977-334528', role: 'Sales', joined: '2025-04-15' },
+  { id: 10, code: 'EMP-10', name: 'Habibur Rahman', designation: 'Store Assistant', department: 'Warehouse', mobile: '01686-901254', role: 'Warehouse', joined: '2026-02-01' },
 ];
 
 /**
- * Which role may do what, per module.
+ * Which role may do what.
  *
- * With a backend this is computed from `role_permissions`, so the table states
- * the grants that are actually in force. This is the same shape for the
- * no-backend demo: roles, and the level each one holds per module.
+ * With a backend this comes from `role_permissions`, so the table states the
+ * grants actually in force and editing a cell moves one. This is the same
+ * thing without a server: the modules a permission groups under, the roles,
+ * and the codes each role holds. The levels the matrix prints are derived from
+ * those grants by `permissionMatrix()` rather than written out, so a
+ * permission granted here reaches the table the way it would through the API.
  */
-export const PERMISSION_MATRIX = {
-  roles: ['Admin', 'Management', 'Sales', 'Purchase', 'Accounts', 'Warehouse'],
-  modules: [
-    ['Dashboard', 'Full', 'Full', 'Full', 'Full', 'Full', 'Full'],
-    ['Crop purchase', 'Full', 'View', '—', 'Create', 'View', 'View'],
-    ['Crop sales', 'Full', 'View', 'Post', '—', 'View', 'View'],
-    ['Dealer purchase', 'Full', 'View', '—', 'Create', 'View', 'View'],
-    ['Dealer sales', 'Full', 'View', 'Post', '—', 'View', 'View'],
-    ['Inventory', 'Full', 'View', 'View', 'View', 'View', 'Full'],
-    ['Customers', 'Full', 'View', 'Edit', '—', 'View', '—'],
-    ['Suppliers', 'Full', 'View', '—', 'Create', 'View', '—'],
-    ['Products', 'Full', 'View', 'View', 'View', 'View', 'View'],
-    ['Payments', 'Full', 'View', 'Collect', '—', 'Collect', '—'],
-    ['Expenses', 'Full', 'View', '—', '—', 'Record', '—'],
-    ['Profit figures', 'Full', 'Full', 'Hidden', 'Hidden', 'Full', 'Hidden'],
-    ['Approvals', 'Full', 'Full', '—', '—', 'Request', '—'],
-    ['Settings', 'Full', 'View', '—', '—', '—', '—'],
-    ['Audit trail', 'Full', 'View', '—', '—', 'View', '—'],
-  ].map(([label, ...levels]) => ({
-    label,
-    levels: Object.fromEntries(
-      ['Admin', 'Management', 'Sales', 'Purchase', 'Accounts', 'Warehouse'].map((role, i) => [
-        role,
-        levels[i],
-      ])
-    ),
-  })),
-};
+export const PERMISSION_MODULES = [
+  { key: 'dashboard', label: 'Dashboard', permissions: [['dashboard.view', 'View']] },
+  { key: 'crop_purchase', label: 'Crop purchase', permissions: [['crop.purchase.view', 'View'], ['crop.purchase.create', 'Create'], ['crop.purchase.post', 'Post'], ['crop.purchase.cancel', 'Cancel']] },
+  { key: 'crop_sale', label: 'Crop sales', permissions: [['crop.sale.view', 'View'], ['crop.sale.create', 'Create'], ['crop.sale.post', 'Post'], ['crop.sale.cancel', 'Cancel']] },
+  { key: 'dealer_purchase', label: 'Dealer purchase', permissions: [['dealer.purchase.view', 'View'], ['dealer.purchase.create', 'Create'], ['dealer.purchase.post', 'Post'], ['dealer.purchase.cancel', 'Cancel']] },
+  { key: 'dealer_sale', label: 'Dealer sales', permissions: [['dealer.sale.view', 'View'], ['dealer.sale.create', 'Create'], ['dealer.sale.post', 'Post'], ['dealer.sale.cancel', 'Cancel']] },
+  { key: 'inventory', label: 'Inventory', permissions: [['inventory.view', 'View'], ['inventory.transfer', 'Transfer'], ['inventory.adjust', 'Adjust']] },
+  { key: 'customer', label: 'Customers', permissions: [['customer.view', 'View'], ['customer.create', 'Create'], ['customer.edit', 'Edit'], ['customer.delete', 'Retire']] },
+  { key: 'supplier', label: 'Suppliers', permissions: [['supplier.view', 'View'], ['supplier.create', 'Create'], ['supplier.edit', 'Edit'], ['supplier.delete', 'Retire']] },
+  { key: 'company', label: 'Companies', permissions: [['company.view', 'View'], ['company.create', 'Create'], ['company.edit', 'Edit'], ['company.delete', 'Retire']] },
+  { key: 'crop', label: 'Crops', permissions: [['crop.view', 'View'], ['crop.create', 'Create'], ['crop.edit', 'Edit'], ['crop.delete', 'Retire']] },
+  { key: 'product', label: 'Products', permissions: [['product.view', 'View'], ['product.create', 'Create'], ['product.edit', 'Edit'], ['product.delete', 'Retire']] },
+  { key: 'warehouse', label: 'Warehouses', permissions: [['warehouse.create', 'Create'], ['warehouse.edit', 'Edit'], ['warehouse.delete', 'Close']] },
+  { key: 'employee', label: 'Employees', permissions: [['employee.view', 'View'], ['employee.create', 'Create'], ['employee.edit', 'Edit'], ['employee.delete', 'Retire']] },
+  { key: 'payment', label: 'Payments', permissions: [['payment.view', 'View'], ['payment.create', 'Collect']] },
+  { key: 'payment_method', label: 'Payment methods', permissions: [['payment.method.create', 'Create'], ['payment.method.edit', 'Edit'], ['payment.method.delete', 'Retire']] },
+  { key: 'expense', label: 'Expenses', permissions: [['expense.view', 'View'], ['expense.create', 'Record']] },
+  { key: 'expense_category', label: 'Expense categories', permissions: [['expense.category.create', 'Create'], ['expense.category.edit', 'Edit'], ['expense.category.delete', 'Retire']] },
+  { key: 'account', label: 'Cash and bank accounts', permissions: [['account.create', 'Create'], ['account.edit', 'Edit'], ['account.delete', 'Close']] },
+  { key: 'unit', label: 'Units of measure', permissions: [['unit.create', 'Create'], ['unit.edit', 'Edit'], ['unit.delete', 'Retire']] },
+  { key: 'report', label: 'Reports', permissions: [['report.view', 'View']] },
+  // Not seeing profit is a deliberate state with a name, not an absence.
+  { key: 'profit', label: 'Profit figures', permissions: [['report.profit', 'Full']], empty: 'Hidden' },
+  { key: 'approval', label: 'Approvals', permissions: [['approval.view', 'Request'], ['approval.decide', 'Approve']] },
+  { key: 'settings', label: 'Settings', permissions: [['settings.view', 'View'], ['settings.edit', 'Full']] },
+  { key: 'access', label: 'Roles and logins', permissions: [['user.manage', 'Logins'], ['role.edit', 'Roles']] },
+  { key: 'audit', label: 'Audit trail', permissions: [['audit.view', 'View']] },
+];
+
+/** Every permission code the modules above account for. */
+export const ALL_PERMISSIONS = PERMISSION_MODULES.flatMap((m) =>
+  m.permissions.map(([code]) => code)
+);
+
+/**
+ * The codes a role holds, given how far it reaches into each module.
+ *
+ * A number is how far down that module's ladder the role goes -- 1 is view, 2
+ * is create, and so on -- and `*` is the lot. Written this way because it is
+ * what the grants mean: a role that may post a sale may also see one.
+ */
+const grants = (reach) =>
+  PERMISSION_MODULES.flatMap((module) => {
+    const depth = reach[module.key];
+    if (!depth) return [];
+    const codes = module.permissions.map(([code]) => code);
+    return depth === '*' ? codes : codes.slice(0, depth);
+  });
+
+/** The six roles the business is set up around, and what each one holds. */
+export const ROLES = [
+  {
+    id: 1, code: 'Admin', name: 'Admin', system: true,
+    description: 'Everything, including roles, logins and settings',
+    granted: ALL_PERMISSIONS,
+  },
+  {
+    id: 2, code: 'Management', name: 'Management', system: true,
+    description: 'Sees the whole business and decides approvals',
+    granted: grants({ dashboard: '*', crop_purchase: 1, crop_sale: 1, dealer_purchase: 1, dealer_sale: 1, inventory: 1, customer: 1, supplier: 1, company: 1, crop: 1, product: 1, warehouse: 2, employee: 3, payment: 1, expense: 1, report: '*', profit: '*', approval: '*', settings: 1, audit: '*' }),
+  },
+  {
+    id: 3, code: 'Sales', name: 'Sales', system: true,
+    description: 'Raises sales, collects payment, keeps the customer list',
+    granted: grants({ dashboard: '*', crop_sale: 3, dealer_sale: 3, inventory: 1, customer: 3, crop: 1, product: 1, payment: '*', report: 1 }),
+  },
+  {
+    id: 4, code: 'Purchase', name: 'Purchase', system: true,
+    description: 'Raises purchases and keeps the procurement master',
+    granted: grants({ dashboard: '*', crop_purchase: 2, dealer_purchase: 2, inventory: 1, supplier: 3, company: 3, crop: 3, product: 3, report: 1 }),
+  },
+  {
+    id: 5, code: 'Accounts', name: 'Accounts', system: true,
+    description: 'Money in, money out, and the books behind it',
+    granted: grants({ dashboard: '*', crop_purchase: 1, crop_sale: 1, dealer_purchase: 1, dealer_sale: 1, inventory: 1, customer: 1, supplier: 1, company: 1, crop: 1, product: 1, payment: '*', expense: '*', report: '*', profit: '*', approval: 1, audit: '*' }),
+  },
+  {
+    id: 6, code: 'Warehouse', name: 'Warehouse', system: true,
+    description: 'Stock in the godowns, and the movements between them',
+    granted: grants({ dashboard: '*', crop_purchase: 1, crop_sale: 1, dealer_purchase: 1, dealer_sale: 1, inventory: '*', crop: 1, product: 1 }),
+  },
+];
+
+/**
+ * Turn roles and their grants into the matrix the screen draws.
+ *
+ * The same derivation the server makes: all of a module reads 'Full', none of
+ * it reads the module's empty label, and anything between reads the strongest
+ * level actually held. `users` counts the team members holding the role, so
+ * the roles list can say who would be affected by a change to it.
+ */
+export function permissionMatrix(roles, team = EMPLOYEES) {
+  const holders = (code) => team.filter((e) => e.role === code && e.status !== 'Retired').length;
+  return {
+    roles: roles.map((r) => r.code),
+    roleList: roles.map((r) => ({
+      ...r,
+      users: holders(r.code),
+      activeUsers: holders(r.code),
+    })),
+    modules: PERMISSION_MODULES.map((module) => ({
+      key: module.key,
+      label: module.label,
+      empty: module.empty || '\u2014',
+      permissions: module.permissions.map(([code, label]) => ({ code, label, description: '' })),
+      levels: Object.fromEntries(
+        roles.map((role) => {
+          const owned = module.permissions.filter(([code]) => role.granted.includes(code));
+          if (!owned.length) return [role.code, module.empty || '\u2014'];
+          if (owned.length === module.permissions.length) return [role.code, 'Full'];
+          return [role.code, owned[owned.length - 1][1]];
+        })
+      ),
+    })),
+  };
+}
 
 /** Field-entry and approval screens for the phone. */
 export const PHONE_SCREENS = [
@@ -148,7 +242,7 @@ export const SETTINGS = {
     { id: 5, code: 'LARGE_TRANSACTION', name: 'Large transaction', description: 'any single transaction above {value}', threshold: 2000000, unit: 'amount', active: true },
     { id: 6, code: 'EXPENSE_THRESHOLD', name: 'Expense threshold', description: 'an expense above {value}', threshold: 50000, unit: 'amount', active: true },
   ],
-  permissions: PERMISSION_MATRIX,
+  permissions: permissionMatrix(ROLES),
 };
 
 /** Payment methods and whether each is in use, without a backend. */

@@ -33,6 +33,15 @@ import { ApiRepository } from './apiRepository.js';
  * | `updateApprovalRule(...)`  | move an approval limit, or switch a rule off  |
  * | `updateNotificationRule()` | move or switch off an alert                   |
  * | `audit(filters)`           | the recorded history of every change          |
+ * | `roles()`                  | the roles, their grants and the permissions   |
+ * | `createRole(role)`         | add a role, optionally with grants            |
+ * | `updateRole(id, changes)`  | rename one, or say what it is for             |
+ * | `deleteRole(id)`           | remove one nobody holds                       |
+ * | `setRolePermissions(...)`  | grant and revoke inside one module            |
+ * | `userAccounts()`           | the logins, and the roles each one holds      |
+ * | `createUserAccount(...)`   | give an employee a login                      |
+ * | `updateUserAccount(...)`   | change its roles, or switch it off            |
+ * | `resetUserPassword(...)`   | set a temporary password, ending its sessions |
  *
  * Both implementations resolve to the same shapes. The write methods accept an
  * `intent` — what the user did — rather than a finished row, so the server can

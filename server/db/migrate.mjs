@@ -35,7 +35,18 @@ if (!DATABASE_URL) {
 
 const client = new pg.Client({ connectionString: DATABASE_URL });
 
-const sha = (text) => crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+/**
+ * Checksum a migration.
+ *
+ * Line endings are normalised first. Git hands the same file out as LF on one
+ * machine and CRLF on another, and hashing the bytes as they sit on disk made
+ * a fresh Windows checkout report every applied migration as "changed after
+ * being applied" -- refusing to run the next one over a difference no one
+ * made. What is being guarded against is an edited migration, not a checkout
+ * setting.
+ */
+const shaRaw = (text) => crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+const sha = (text) => shaRaw(text.replace(/\r\n/g, '\n'));
 
 function readMigrations() {
   return fs
@@ -44,7 +55,11 @@ function readMigrations() {
     .sort()
     .map((filename) => {
       const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, filename), 'utf8');
-      return { filename, sql, checksum: sha(sql) };
+      // `legacy` is what this file hashed to before line endings were
+      // normalised. Rows recorded then are a mix of the two, depending on how
+      // each machine happened to check the file out; recognising the old value
+      // lets an existing database be healed rather than reset.
+      return { filename, sql, checksum: sha(sql), legacy: shaRaw(sql) };
     });
 }
 
@@ -72,6 +87,15 @@ async function up() {
   for (const m of all) {
     const previous = done.get(m.filename);
     if (previous) {
+      if (previous === m.legacy && previous !== m.checksum) {
+        // Same file, hashed under the old rule. Record the normalised value so
+        // the next run compares like with like.
+        await client.query('UPDATE schema_migrations SET checksum = $2 WHERE filename = $1', [
+          m.filename,
+          m.checksum,
+        ]);
+        continue;
+      }
       if (previous !== m.checksum) {
         throw new Error(
           `Migration ${m.filename} changed after being applied ` +
@@ -107,7 +131,7 @@ async function status() {
   const done = await applied();
   for (const m of readMigrations()) {
     const state = done.has(m.filename)
-      ? done.get(m.filename) === m.checksum
+      ? done.get(m.filename) === m.checksum || done.get(m.filename) === m.legacy
         ? 'applied'
         : 'CHANGED SINCE APPLIED'
       : 'pending';

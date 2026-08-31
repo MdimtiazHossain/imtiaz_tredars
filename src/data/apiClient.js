@@ -160,10 +160,15 @@ export class ApiClient {
     return this.request('PATCH', path, { body });
   }
 
+  /** Replace a set outright, rather than patching fields of a record. */
+  put(path, body) {
+    return this.request('PUT', path, { body });
+  }
+
   /**
-   * DELETE never removes a row in this API -- the master routes deactivate.
-   * The verb is here because that is what the route declares; what it means is
-   * "retire", and the server keeps the record for the documents that cite it.
+   * DELETE removes a row only where nothing cites it -- a role nobody holds.
+   * On the master routes it means "retire": the record stays, because the
+   * documents that name it still do.
    */
   delete(path) {
     return this.request('DELETE', path);

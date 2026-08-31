@@ -13,6 +13,7 @@
         <div role="alert" style="margin:14px 18px 0;padding:9px 12px;border-radius:7px;background:#FBEEF0;color:#B3261E;font-size:12.5px">{{ t.error }}</div>
       </sc-if>
 
+      <sc-if value="{{ t.hasFields }}">
       <div style="padding:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:13px">
         <sc-for list="{{ t.fields }}" as="f" hint-placeholder-count="6">
           <label style="display:block;grid-column:{{ f.span }}">
@@ -36,6 +37,29 @@
           </label>
         </sc-for>
       </div>
+      </sc-if>
+
+      <sc-if value="{{ t.toggles }}">
+        <div style="margin:18px 18px 14px;border:1px solid #E3E0DA;border-radius:9px;overflow:hidden">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 13px;background:#FAF9F7;border-bottom:1px solid #E3E0DA">
+            <span style="font-size:12.5px;font-weight:700">{{ t.toggles.title }}</span>
+            <span style="font-size:11.5px;color:#8C877F">{{ t.toggles.note }}</span>
+          </div>
+          <sc-for list="{{ t.toggles.rows }}" as="r" hint-placeholder-count="4">
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 13px;border-bottom:1px solid #F0EEE9">
+              <span style="flex:1;min-width:0">
+                <span style="display:block;font-size:12.5px;font-weight:600">{{ r.label }}</span>
+                <sc-if value="{{ r.description }}">
+                  <span style="display:block;font-size:11px;color:#8C877F;margin-top:2px">{{ r.description }}</span>
+                </sc-if>
+              </span>
+              <button onClick="{{ r.onToggle }}" title="{{ r.title }}" style="width:38px;height:21px;border:0;padding:0;border-radius:11px;background:{{ r.tone }};position:relative;flex:none;cursor:{{ r.cursor }}">
+                <span style="position:absolute;top:2px;left:{{ r.knob }};width:17px;height:17px;border-radius:50%;background:#fff"></span>
+              </button>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
 
       <sc-if value="{{ t.allocation }}">
         <div style="margin:0 18px 14px;border:1px solid #E3E0DA;border-radius:9px;overflow:hidden">

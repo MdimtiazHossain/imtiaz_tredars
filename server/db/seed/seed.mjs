@@ -55,7 +55,17 @@ const PERMISSIONS = [
   ['audit.view', 'View the audit trail'],
 ];
 
-/** Role -> permissions, mirroring the permission matrix on the Settings screen. */
+/**
+ * Role -> permissions, mirroring the permission matrix on the Settings screen.
+ *
+ * The codes listed here are the ones this file also creates. Later migrations
+ * add more -- master-data maintenance, payment methods, role administration --
+ * and grant them to the roles that should have them. A fresh database runs
+ * every migration before this seed, so those rows already exist by the time
+ * this runs: Admin is granted the whole `permissions` table rather than this
+ * list, and the extras each other role is meant to hold are named below, so a
+ * database built from scratch ends up where a migrated one is.
+ */
 const ROLE_PERMISSIONS = {
   Admin: PERMISSIONS.map(([code]) => code),
   Management: [
@@ -88,6 +98,37 @@ const ROLE_PERMISSIONS = {
     'inventory.transfer', 'dealer.purchase.view', 'crop.purchase.view',
     'dealer.sale.view', 'crop.sale.view',
   ],
+};
+
+/** What each role is for, shown on the roles panel of the Settings screen. */
+const ROLE_DESCRIPTIONS = {
+  Admin: 'Everything, including roles, logins and settings',
+  Management: 'Sees the whole business and decides approvals',
+  Sales: 'Raises sales, collects payment, keeps the customer list',
+  Purchase: 'Raises purchases and keeps the procurement master',
+  Accounts: 'Money in, money out, and the books behind it',
+  Warehouse: 'Stock in the godowns, and the movements between them',
+};
+
+/**
+ * Grants the later migrations make, restated for a database built from
+ * scratch. Migrations 010 to 013 add these codes and hand them out; on a fresh
+ * install they run before any role exists, so the handing out has to happen
+ * here instead.
+ */
+const MIGRATED_ROLE_PERMISSIONS = {
+  Management: ['crop.view', 'warehouse.create', 'warehouse.edit', 'employee.create', 'employee.edit'],
+  Sales: ['crop.view'],
+  Purchase: [
+    'crop.view', 'supplier.edit', 'company.create', 'company.edit',
+    'crop.create', 'crop.edit', 'product.create', 'product.edit',
+  ],
+  Accounts: [
+    'crop.view', 'account.create', 'account.edit',
+    'expense.category.create', 'expense.category.edit',
+    'payment.method.create', 'payment.method.edit',
+  ],
+  Warehouse: ['crop.view'],
 };
 
 /* ------------------------------------------------------------------ masters */
@@ -251,27 +292,46 @@ async function seed() {
     );
 
     /* ---- roles and permissions ---- */
-    const permissions = await insertMany(
+
+    // Migrations have already inserted the permissions they introduced, so
+    // these go in beside them rather than over them.
+    await insertMany(
       client,
-      'INSERT INTO permissions (code, description) VALUES ($1,$2) RETURNING id, code',
+      `INSERT INTO permissions (code, description) VALUES ($1,$2)
+       ON CONFLICT (code) DO NOTHING`,
       PERMISSIONS
     );
-    const permissionByCode = new Map(permissions.map((p) => [p.code, Number(p.id)]));
 
+    // These six are the roles the system is set up around: `is_system` is what
+    // stops one being deleted from the Settings screen, leaving a user holding
+    // a role that no longer exists.
     const roles = await insertMany(
       client,
-      'INSERT INTO roles (code, name) VALUES ($1,$2) RETURNING id, code',
-      Object.keys(ROLE_PERMISSIONS).map((r) => [r, r])
+      `INSERT INTO roles (code, name, description, is_system)
+       VALUES ($1,$2,$3,true) RETURNING id, code`,
+      Object.keys(ROLE_PERMISSIONS).map((r) => [r, r, ROLE_DESCRIPTIONS[r] || null])
     );
     const roleByCode = new Map(roles.map((r) => [r.code, Number(r.id)]));
 
+    // Admin holds the whole table, whatever is in it. Written as a join rather
+    // than as a list so a permission added by a migration after this file was
+    // last touched is still held by somebody -- which is the difference
+    // between an Admin who can administer and one who cannot.
+    await client.query(
+      `INSERT INTO role_permissions (role_id, permission_id)
+       SELECT $1, p.id FROM permissions p ON CONFLICT DO NOTHING`,
+      [roleByCode.get('Admin')]
+    );
+
     for (const [roleCode, codes] of Object.entries(ROLE_PERMISSIONS)) {
-      for (const code of codes) {
-        await client.query(
-          'INSERT INTO role_permissions (role_id, permission_id) VALUES ($1,$2)',
-          [roleByCode.get(roleCode), permissionByCode.get(code)]
-        );
-      }
+      if (roleCode === 'Admin') continue;
+      const wanted = codes.concat(MIGRATED_ROLE_PERMISSIONS[roleCode] || []);
+      await client.query(
+        `INSERT INTO role_permissions (role_id, permission_id)
+         SELECT $1, p.id FROM permissions p WHERE p.code = ANY($2::text[])
+         ON CONFLICT DO NOTHING`,
+        [roleByCode.get(roleCode), wanted]
+      );
     }
 
     /* ---- employees and users ---- */

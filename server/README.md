@@ -143,6 +143,8 @@ totalPages, hasNext, hasPrev } }`.
 | Approvals | `GET /api/approvals`, `GET /api/approvals/:id/history`, `POST /api/approvals/:id/decide`, `GET /api/approvals/rules` |
 | Reports | `GET /api/dashboard/dashboard`, `GET /api/reports/catalogue`, `GET /api/reports/:reportId`, `GET /api/reports/:reportId/export?format=xlsx\|pdf` |
 | Audit | `GET /api/audit` |
+| Roles | `GET /api/roles` — the matrix, the roles and the permission catalogue; `POST /api/roles`, `PATCH /api/roles/:id`, `DELETE /api/roles/:id`, `PUT /api/roles/:id/permissions` |
+| Logins | `GET /api/users`, `POST /api/users`, `PATCH /api/users/:id`, `POST /api/users/:id/password` |
 | Settings | `GET /api/settings` — the whole screen in one call; `PATCH /api/settings/organization`, `POST /api/settings/fiscal-years`, `PATCH /api/settings/fiscal-years/:id`, `PATCH /api/settings/numbering/:docType`, `PATCH /api/settings/approval-rules/:id`, `PATCH /api/settings/notification-rules/:id` |
 
 Every list endpoint accepts `page`, `pageSize`, `sort`, `dir`, `q`, `from`, `to`
@@ -174,10 +176,33 @@ them renders যুক্তাক্ষর as separate letters with a visible h
 
 ### Roles
 
-`Admin`, `Management`, `Sales`, `Purchase`, `Accounts`, `Warehouse`. Roles grant
-permission codes (`dealer.sale.post`, `report.profit`, `approval.decide`, …) and
-every route declares what it needs. Profit figures are stripped from responses
-for roles without `report.profit` rather than merely hidden in the UI.
+`Admin`, `Management`, `Sales`, `Purchase`, `Accounts`, `Warehouse` as seeded.
+Roles grant permission codes (`dealer.sale.post`, `report.profit`,
+`approval.decide`, …) and every route declares what it needs. Permissions are
+loaded from the database on every request rather than read out of the token, so
+a grant moved now applies to the next request an already-signed-in user makes.
+Profit figures are stripped from responses for roles without `report.profit`
+rather than merely hidden in the UI.
+
+None of this is fixed at install time. `role.edit` maintains the roles and their
+grants; `user.manage` maintains the logins that hold them. Both start with Admin
+alone, and both can be granted to another role from the Settings screen.
+
+Two rules stop the business locking itself out, and both are enforced inside the
+transaction that would break them:
+
+- **Somebody must always be able to change it back.** After every role, grant
+  and login write, the API checks that an active user still holds `role.edit`
+  and `settings.edit`, and rolls back with `WOULD_LOCK_EVERYONE_OUT` if not.
+- **The seeded roles stay.** They carry `is_system`, so they can be re-granted
+  and described but not deleted; a role anyone still holds cannot be deleted
+  either. An administrator cannot disable their own login.
+
+Disabling a login revokes its sessions, so an access token issued to it stops
+working immediately rather than at its half-hour expiry. A password an
+administrator sets is flagged `must_change_pw` and every session on the account
+is ended, so the password they know is replaced by one they do not at the next
+sign-in.
 
 ## Operations
 

@@ -133,6 +133,7 @@ export class BusinessApp extends Component {
       // Configuration, fetched when Settings is opened; the audit trail, when
       // its screen is. Neither belongs in the workspace every screen boots from.
       settings:null, settingsForm:null, auditRows:null, expenses:null,
+      roleMatrix:null, userAccounts:null,
       newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'', district:'Bogura', upazila:'', limit:500000, days:15, opening:0},
       cs:{buyer:'PRAN Agro Business Ltd.', crop:'Maize', date:'2026-08-28', rate:34500, transport:15000, other:5000, target:40, alloc:{}},
       ds:{cust:'CUS-002', date:'2026-08-28', sp:'Shamim Reza', wh:'Bogura Depot', terms:'Credit 15 days', paid:150000,
@@ -161,7 +162,8 @@ export class BusinessApp extends Component {
       if (id === 'accounts') {
         this.loadMasterList('account'); this.loadMasterList('category'); this.loadExpenses();
       }
-      if (id === 'settings') { this.loadSettings(); this.loadMasterList('method'); }
+      if (id === 'settings') { this.loadSettings(); this.loadMasterList('method'); this.loadAccessControl(); }
+      if (id === 'employees') this.loadAccessControl();
       if (id === 'audit') this.loadAudit();
     };
   }
@@ -173,7 +175,48 @@ export class BusinessApp extends Component {
   componentWillUnmount() { clearTimeout(this._t); }
 
   role() { return this.props.role || 'Admin'; }
-  canProfit() { const p = this.props.showProfit; return (p === undefined ? true : !!p) && ['Admin', 'Management', 'Accounts'].indexOf(this.role()) > -1; }
+
+  /**
+   * Whether the signed-in user holds a permission.
+   *
+   * With no permission list -- the in-memory fixture, or a demo with no
+   * backend -- everything is allowed, because there is no server behind it to
+   * be the real check. With one, this decides only what to draw: the API
+   * checks the same code on the route regardless.
+   */
+  may(code) {
+    const held = this.props.permissions;
+    return !held ? true : held.indexOf(code) > -1;
+  }
+
+  /**
+   * What the current role grants, where there is no session to ask.
+   *
+   * The design's role switch has to go on working without a server, and the
+   * roles carry their grants either way -- so the question is still asked of
+   * the permission rather than of a list of role names.
+   */
+  roleGrants() {
+    const found = (this.permissionData().roleList || []).filter(r => r.code === this.role())[0];
+    return found ? found.granted : null;
+  }
+
+  /**
+   * Whether profit is shown.
+   *
+   * It used to be a list of role names written here, which meant a role newly
+   * granted `report.profit` on the Settings screen went on seeing dashes. The
+   * permission is the answer -- the session's where there is one, the role's
+   * where there is not -- and the server strips the figures from its side
+   * regardless. `showProfit` is the design's own tweak, kept for the demo.
+   */
+  canProfit() {
+    const p = this.props.showProfit;
+    if (p !== undefined && !p) return false;
+    if (this.props.permissions) return this.may('report.profit');
+    const granted = this.roleGrants();
+    return !granted || granted.indexOf('report.profit') > -1;
+  }
   limit() { return Number(this.props.approvalLimit || 500000); }
 
   bizOf(v) { const b = this.state.biz; return b === 'dealer' ? v.d : b === 'crop' ? v.c : v.d + v.c; }
@@ -530,16 +573,55 @@ export class BusinessApp extends Component {
     );
   }
 
+  /**
+   * Load the roles, their grants and the logins holding them.
+   *
+   * The matrix also arrives inside the settings payload, but the Employees
+   * screen needs the roles without needing `settings.view`, so it is fetched
+   * on its own and whichever copy is fresher is the one the screens read.
+   */
+  loadAccessControl() {
+    if (this.repository && typeof this.repository.roles === 'function') {
+      this.repository.roles().then(
+        roleMatrix => this.setState({ roleMatrix }),
+        () => {}
+      );
+    }
+    if (this.mayUsers() && this.repository && typeof this.repository.userAccounts === 'function') {
+      this.repository.userAccounts().then(
+        userAccounts => this.setState({ userAccounts }),
+        () => {}
+      );
+    }
+  }
+
   /** The settings in hand: the server's once fetched, the bundled ones until then. */
   settingsData() {
     return this.state.settings || SETTINGS;
   }
 
-  /** Whether the signed-in user may change configuration. */
-  maySettings() {
-    const held = this.props.permissions;
-    return !held ? true : held.indexOf('settings.edit') > -1;
+  /** The roles and their grants, from whichever call brought them last. */
+  permissionData() {
+    return this.state.roleMatrix || this.settingsData().permissions;
   }
+
+  /** The logins, once they have been fetched; the team stands in until then. */
+  accountsData() {
+    if (this.state.userAccounts) return this.state.userAccounts;
+    const team = this.state.masterRows.employee || this.data.employees || [];
+    return team.map(e => ({
+      id: e.id, employeeId: e.id, employeeCode: e.code, name: e.name,
+      designation: e.designation, username: '', roles: e.role && e.role !== '\u2014' ? [e.role] : [],
+      role: e.role, active: e.status !== 'Retired', status: e.status === 'Retired' ? 'Disabled' : 'Active',
+    }));
+  }
+
+  /** Whether the signed-in user may change configuration. */
+  maySettings() { return this.may('settings.edit'); }
+
+  /** Whether they may cut the roles themselves, and maintain the logins. */
+  mayRoles() { return this.may('role.edit'); }
+  mayUsers() { return this.may('user.manage'); }
 
   /**
    * Open one of the settings forms.
@@ -563,6 +645,21 @@ export class BusinessApp extends Component {
     this.setState({ settingsForm: null });
   }
 
+  /**
+   * Flip one entry of a set the form is holding -- a permission, a role.
+   *
+   * The form keeps the set rather than the switch positions, so the payload is
+   * what it says it is: the codes that should end up granted.
+   */
+  onSettingsToggle(key, value) {
+    this.setState(s => {
+      if (!s.settingsForm) return null;
+      const held = s.settingsForm.form[key] || [];
+      const next = held.indexOf(value) > -1 ? held.filter(v => v !== value) : held.concat([value]);
+      return { settingsForm: { ...s.settingsForm, form: { ...s.settingsForm.form, [key]: next }, error: '' } };
+    });
+  }
+
   onSettingsField(key) {
     return e => {
       const value = e.target.value;
@@ -583,6 +680,43 @@ export class BusinessApp extends Component {
     notification: 'updateNotificationRule',
   };
 
+  /**
+   * The repository call one settings form makes, and its arguments.
+   *
+   * Most panels edit one record addressed by an id, which the table above
+   * covers. Roles and logins do not fit that: a grant is a role and a set of
+   * codes, a new role has no id yet, and a password reset takes neither a
+   * record nor a patch. Rather than bend those into a shape they are not, the
+   * kinds that differ say what they call.
+   */
+  settingsCall(kind, row, payload) {
+    if (kind === 'role') {
+      return row.id
+        ? { method: 'updateRole', args: [row.id, payload] }
+        : { method: 'createRole', args: [payload] };
+    }
+    if (kind === 'grants') {
+      return { method: 'setRolePermissions', args: [row.roleId, payload.scope, payload.permissions] };
+    }
+    if (kind === 'login') return { method: 'createUserAccount', args: [payload] };
+    if (kind === 'roleAssign') return { method: 'updateUserAccount', args: [row.id, payload] };
+    if (kind === 'password') {
+      return { method: 'resetUserPassword', args: [row.id, payload.password] };
+    }
+
+    const method = BusinessApp.SETTINGS_WRITE[kind];
+    // The company profile and a new financial year are addressed by nothing;
+    // numbering is addressed by its document type, a rule by its id.
+    const target =
+      kind === 'numbering' ? row.docType
+        : kind === 'limit' || kind === 'notification' ? row.id
+          : null;
+    return { method, args: target === null ? [payload] : [target, payload] };
+  }
+
+  /** Whether this kind changed access rather than configuration. */
+  static ACCESS_KINDS = ['role', 'grants', 'login', 'roleAssign', 'password'];
+
   submitSettings() {
     const state = this.state.settingsForm;
     if (!state || state.busy) return;
@@ -596,23 +730,14 @@ export class BusinessApp extends Component {
     const payload = settingsPayload(state.kind, state.form, state.row);
     this.setState({ settingsForm: { ...state, busy: true, error: '' } });
 
-    const method = BusinessApp.SETTINGS_WRITE[state.kind];
-    // The company profile and a new financial year are addressed by nothing;
-    // numbering is addressed by its document type, a rule by its id.
-    const target =
-      state.kind === 'numbering' ? state.row.docType
-        : state.kind === 'limit' || state.kind === 'notification' ? state.row.id
-          : null;
+    const { method, args } = this.settingsCall(state.kind, state.row, payload);
 
-    const write = target === null
-      ? this.persist(method, payload)
-      : this.persist(method, target, payload);
-
-    write.then(
+    this.persist(method, ...args).then(
       () => {
         this.setState({ settingsForm: null });
-        this.fire(this.settingsSavedText(state.kind, state.row), 'ok');
-        this.afterSettingsChange();
+        this.fire(this.settingsSavedText(state.kind, state.row, state.form), 'ok');
+        if (BusinessApp.ACCESS_KINDS.indexOf(state.kind) > -1) this.afterAccessChange();
+        else this.afterSettingsChange();
       },
       err => {
         if (err.silent) return;
@@ -623,12 +748,55 @@ export class BusinessApp extends Component {
     );
   }
 
-  settingsSavedText(kind, row) {
+  settingsSavedText(kind, row, form) {
     if (kind === 'company') return 'Company profile updated';
     if (kind === 'fiscalYear') return 'Financial year added';
     if (kind === 'numbering') return `${row.label} numbering updated`;
     if (kind === 'limit') return `${row.entityLabel} limit updated`;
+    if (kind === 'role') return row.id ? `${form.name} updated` : `Role ${form.name} added`;
+    if (kind === 'grants') {
+      const held = form.granted.length;
+      return held
+        ? `${row.roleName} now has ${held} of ${row.permissions.length} on ${row.moduleLabel.toLowerCase()}`
+        : `${row.roleName} no longer has access to ${row.moduleLabel.toLowerCase()}`;
+    }
+    if (kind === 'login') return `Login created for ${row.nameOf?.[form.employee] || form.username}`;
+    if (kind === 'roleAssign') return `${row.name} is now ${form.roles.join(', ')}`;
+    if (kind === 'password') return `Password reset — ${row.name} is signed out everywhere`;
     return `${row.name} updated`;
+  }
+
+  /**
+   * A change to access moves what the signed-in user themselves may do.
+   *
+   * The roles, the logins and the settings copy of the matrix all have to be
+   * re-read; so does the workspace, because a permission just granted or taken
+   * away changes which screens and figures the session is entitled to.
+   */
+  afterAccessChange() {
+    this.loadAccessControl();
+    this.loadSettings();
+    this.reloadWorkspace();
+  }
+
+  /** Delete a role nobody holds, after asking. */
+  removeRole(role) {
+    if (!window.confirm(`Delete the role ${role.name}? Nobody holds it.`)) return;
+    this.persist('deleteRole', role.id).then(
+      () => { this.fire(`Role ${role.name} deleted`, 'ok'); this.afterAccessChange(); },
+      err => { if (!err.silent) this.fire(err.message, 'danger'); }
+    );
+  }
+
+  /** Switch a login on or off from the row it sits on. */
+  toggleLogin(account) {
+    this.persist('updateUserAccount', account.id, { active: !account.active }).then(
+      () => {
+        this.fire(`Login ${account.username} ${account.active ? 'disabled' : 'enabled'}`, 'ok');
+        this.afterAccessChange();
+      },
+      err => { if (!err.silent) this.fire(err.message, 'danger'); }
+    );
   }
 
   /**
@@ -784,9 +952,34 @@ export class BusinessApp extends Component {
     const active = rows.filter(e => e.status !== 'Retired');
     const departments = new Set(active.map(e => e.department).filter(Boolean));
 
+    // The logins, keyed by the employee they belong to, so each row knows
+    // whether this person can sign in and as what.
+    const accounts = this.accountsData();
+    const loginFor = new Map(
+      accounts.filter(a => a.employeeId != null).map(a => [a.employeeId, a])
+    );
+    const roles = this.permissionData().roleList || [];
+    const withoutLogin = active.filter(e => !loginFor.has(e.id));
+
     return {
       ...this.masterControls('employee', null),
       addLabel: 'Add employee',
+      // Giving someone a login is a different act from adding them to the
+      // directory, and needs a different permission, so it is its own control.
+      login:{
+        canAdd: this.mayUsers() && withoutLogin.length > 0,
+        label: 'Give a login',
+        note: withoutLogin.length
+          ? `${withoutLogin.length} without a login`
+          : 'Everyone has a login',
+        onAdd: () => this.openSettings('login', {
+          employeeOptions: withoutLogin.map(e => `${e.name} (${e.code})`),
+          employeeIds: Object.fromEntries(withoutLogin.map(e => [`${e.name} (${e.code})`, e.id])),
+          nameOf: Object.fromEntries(withoutLogin.map(e => [`${e.name} (${e.code})`, e.name])),
+          roleOptions: roles,
+          roles: [],
+        }),
+      },
       table: table(
         [
           column('ID'),
@@ -806,12 +999,15 @@ export class BusinessApp extends Component {
             cell(e.department || '—', { color: C.mut }),
             cell(e.mobile || '—', { mono: true }),
             // Someone with no login is not a lesser employee, so it reads as a
-            // plain dash rather than an empty badge.
-            e.role && e.role !== '—'
-              ? cell(e.role, { badge: true, badgeBg: C.dealBg, badgeFg: C.deal })
-              : cell('—', { color: C.mut }),
+            // plain dash rather than an empty badge. A disabled login says so,
+            // because "Sales" beside an account that cannot sign in is a lie.
+            this.roleCell(loginFor.get(e.id), e),
             cell(e.joined || '—', { color: C.mut }),
-            cell('', { align: 'right', actions: this.masterRowActions('employee', e) }),
+            cell('', {
+              align: 'right',
+              actions: this.masterRowActions('employee', e)
+                .concat(this.loginActions(loginFor.get(e.id), roles)),
+            }),
           ],
         })),
         {
@@ -822,6 +1018,39 @@ export class BusinessApp extends Component {
         }
       ),
     };
+  }
+
+  /**
+   * What the System role column shows for one person.
+   *
+   * The roles a login holds, or a dash where there is no login: someone
+   * without one is not a lesser employee. A login that has been switched off
+   * says so rather than showing the role it would have had.
+   */
+  roleCell(account, employee) {
+    const held = account ? account.roles : employee.role && employee.role !== '—' ? [employee.role] : [];
+    if (!held.length) return cell('—', { color: C.mut });
+    if (account && account.active === false) {
+      return cell(`${held.join(', ')} · disabled`, { badge: true, badgeBg: '#F0EEE9', badgeFg: C.mut });
+    }
+    return cell(held.join(', '), { badge: true, badgeBg: C.dealBg, badgeFg: C.deal });
+  }
+
+  /** The login controls on one employee row, for whoever may maintain logins. */
+  loginActions(account, roles) {
+    if (!this.mayUsers() || !account) return [];
+    return [
+      {
+        label: 'Change role',
+        onClick: () => this.openSettings('roleAssign', { ...account, roleOptions: roles }),
+      },
+      { label: 'Reset password', onClick: () => this.openSettings('password', account) },
+      {
+        label: account.active ? 'Disable login' : 'Enable login',
+        danger: account.active,
+        onClick: () => this.toggleLogin(account),
+      },
+    ];
   }
 
   /** The products screen: the dealer catalogue, with what each line is holding. */
@@ -1964,6 +2193,7 @@ export class BusinessApp extends Component {
 
     return buildSettingsModal(state.kind, state, {
       onField: key => this.onSettingsField(key),
+      onToggle: (key, value) => this.onSettingsToggle(key, value),
       onSubmit: () => this.submitSettings(),
       onCancel: () => this.closeSettings(),
     }, districts);
@@ -2025,7 +2255,18 @@ export class BusinessApp extends Component {
     // Configuration in hand, and the organisation inside it. Every Settings
     // panel reads from these two, so nothing on that screen is written twice.
     const cfg = this.settingsData(), org = cfg.organization;
-    const nav = this.data.nav.map(g => ({g:g.g, items:g.items.filter(i => i.roles === '*' || i.roles.indexOf(role) > -1).map(i => ({
+    // Roles come from their own call where one has been made, so the Employees
+    // screen has them without needing the Settings payload.
+    const perms = this.permissionData();
+    // A screen is offered when the user holds the permission behind it. The
+    // role names are the fallback for a demo with no server to ask, where the
+    // role is a tweak rather than something a session actually holds -- and
+    // they are what the design's role switch goes on driving.
+    const allowed = i =>
+      this.props.permissions
+        ? i.perm === '*' || this.may(i.perm)
+        : i.roles === '*' || i.roles.indexOf(role) > -1;
+    const nav = this.data.nav.map(g => ({g:g.g, items:g.items.filter(allowed).map(i => ({
       label:i.label, icon:i.icon, on:S.screen === i.id, onClick:this.go(i.id),
       bg:S.screen === i.id ? C.accBg : 'transparent', color:S.screen === i.id ? C.acc : '#4A463F',
       weight:S.screen === i.id ? '600' : '450', barBg:S.screen === i.id ? C.acc : 'transparent'}))})).filter(g => g.items.length);
@@ -2050,6 +2291,12 @@ export class BusinessApp extends Component {
       notifs:S.notifs.map(n => ({t:n.t, d:n.d, ago:n.ago, onClick:this.go(n.go),
         c:n.tone === 'danger' ? C.dngr : n.tone === 'warn' ? C.warn : n.tone === 'ok' ? C.crop : C.acc})),
       userOpen:S.userOpen, onUser:() => this.setState(s => ({userOpen:!s.userOpen, notifOpen:false})),
+      // What this session actually holds, rather than a note about a design
+      // tweak: the sidebar lists the screens these permissions reach.
+      userNote:this.props.permissions
+        ? `${this.props.permissions.length} permissions from the ${role} role. ` +
+          'The sidebar lists only the screens they reach.'
+        : `Signed in as ${role}. The sidebar lists only the screens that role reaches.`,
       toast:S.toast, toastBg:S.toast ? (S.toast.tone === 'danger' ? '#B3261E' : S.toast.tone === 'warn' ? '#8A5A00' : '#1F4D2E') : '#1F4D2E',
       onCloseToast:() => this.setState({toast:null}),
       pend:pendCount, pendText:pendCount + ' pending',
@@ -2077,15 +2324,45 @@ export class BusinessApp extends Component {
       setIs:{company:S.setSec === 'company', fy:S.setSec === 'fy', numbering:S.setSec === 'numbering', units:S.setSec === 'units',
         pay:S.setSec === 'pay', limits:S.setSec === 'limits', valuation:S.setSec === 'valuation', roles:S.setSec === 'roles', notif:S.setSec === 'notif'},
       // The grants actually held, not a description of what they were meant to
-      // be: with a backend this is computed from `role_permissions`.
+      // be: computed from `role_permissions`, and editable in place. A cell is
+      // one role against one module, so clicking it opens that module's
+      // permissions for that role.
       matrix:{
-        cols:['Module'].concat(cfg.permissions.roles),
-        rows:cfg.permissions.modules.map(m => ({cells:[{t:m.label, w:'600', color:'#3D3A36', align:'left'}].concat(
-          cfg.permissions.roles.map(role => {
+        cols:['Module'].concat(perms.roles),
+        rows:perms.modules.map(m => ({cells:[{t:m.label, w:'600', color:'#3D3A36', align:'left', plain:true}].concat(
+          perms.roles.map(role => {
             const level = m.levels[role] || '—';
+            const held = perms.roleList.filter(r => r.code === role)[0];
+            const editable = this.mayRoles() && !!held;
             return {t:level, w:'400', align:'center',
-              color:level === 'Full' ? C.crop : level === '—' || level === 'Hidden' ? '#B6B0A6' : '#3D3A36'};
+              color:level === 'Full' ? C.crop : level === '—' || level === 'Hidden' ? '#B6B0A6' : '#3D3A36',
+              plain:!editable,
+              title:editable ? `Change what ${role} may do with ${m.label.toLowerCase()}` : '',
+              onClick:editable ? () => this.openSettings('grants', {
+                roleId:held.id, roleName:held.name, moduleLabel:m.label,
+                permissions:m.permissions,
+                granted:m.permissions.filter(x => held.granted.indexOf(x.code) > -1).map(x => x.code),
+              }) : null};
           }))}))},
+
+      // The roles themselves, under the table: what each is for, how many
+      // people hold it, and the controls to rename or remove one.
+      roleRows:perms.roleList.map(r => ({
+        k:r.name,
+        d:(r.description || 'No description yet') + ' · ' + r.granted.length + ' permissions',
+        tag:r.users === 1 ? '1 user' : r.users + ' users',
+        tagBg:r.users ? C.dealBg : '#F0EEE9', tagFg:r.users ? C.deal : C.mut,
+        canEdit:this.mayRoles(),
+        onEdit:() => this.openSettings('role', r),
+        // A role the system is set up around stays; one nobody holds can go.
+        canRemove:this.mayRoles() && !r.system && !r.users,
+        onRemove:() => this.removeRole(r),
+      })),
+      addRole:{canAdd:this.mayRoles(), label:'Add role',
+        onAdd:() => this.openSettings('role', {})},
+      rolesNote:this.mayRoles()
+        ? 'Click a cell to change what that role may do. The server checks these on every request, so a change applies at once — including to anyone already signed in.'
+        : 'What each role may do. The server checks these on every request, so the table is the rule rather than a description of it.',
 
       audit:this.auditTable(),
       repFilters:[{k:'Period', v:'01–28 Aug 2026'}, {k:'Business type', v:S.biz === 'all' ? 'All' : S.biz === 'crop' ? 'Bulk Crop' : 'Dealer'},

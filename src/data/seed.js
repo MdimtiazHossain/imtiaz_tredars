@@ -10,30 +10,30 @@
 export const COMPANY = {name:'Meghna Agro Enterprise', sys:'Business Suite', fy:'FY 2026-27', user:'Rakib Hasan', init:'RH'};
 
 export const NAV = [
-    {g:'Overview', items:[{id:'dashboard', label:'Dashboard', icon:'M2.5 2.5h4.5v4.5H2.5zM9 2.5h4.5v3H9zM9 7.5h4.5v6H9zM2.5 9.5h4.5v4H2.5z', roles:'*'}]},
+    {g:'Overview', items:[{id:'dashboard', perm:'dashboard.view', label:'Dashboard', icon:'M2.5 2.5h4.5v4.5H2.5zM9 2.5h4.5v3H9zM9 7.5h4.5v6H9zM2.5 9.5h4.5v4H2.5z', roles:'*'}]},
     {g:'Bulk Crop Trading', items:[
-      {id:'crop-purchase', label:'Crop Purchase', icon:'M8 2v6m0 0 2.5-2.5M8 8 5.5 5.5M2.5 10v3.5h11V10', roles:['Admin','Management','Purchase','Warehouse']},
-      {id:'crop-sales', label:'Crop Sales', icon:'M8 8V2m0 0 2.5 2.5M8 2 5.5 4.5M2.5 10v3.5h11V10', roles:['Admin','Management','Sales']}]},
+      {id:'crop-purchase', perm:'crop.purchase.view', label:'Crop Purchase', icon:'M8 2v6m0 0 2.5-2.5M8 8 5.5 5.5M2.5 10v3.5h11V10', roles:['Admin','Management','Purchase','Warehouse']},
+      {id:'crop-sales', perm:'crop.sale.view', label:'Crop Sales', icon:'M8 8V2m0 0 2.5 2.5M8 2 5.5 4.5M2.5 10v3.5h11V10', roles:['Admin','Management','Sales']}]},
     {g:'Dealer Business', items:[
-      {id:'dealer-purchase', label:'Dealer Purchase', icon:'M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3zM2.5 5.5 8 8.5l5.5-3M8 8.5v5', roles:['Admin','Management','Purchase','Warehouse']},
-      {id:'dealer-sales', label:'Dealer Sales', icon:'M8.5 2H13v4.5L7 12.5 2.5 8zM10.6 4.4h.01', roles:['Admin','Management','Sales']}]},
+      {id:'dealer-purchase', perm:'dealer.purchase.view', label:'Dealer Purchase', icon:'M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3zM2.5 5.5 8 8.5l5.5-3M8 8.5v5', roles:['Admin','Management','Purchase','Warehouse']},
+      {id:'dealer-sales', perm:'dealer.sale.view', label:'Dealer Sales', icon:'M8.5 2H13v4.5L7 12.5 2.5 8zM10.6 4.4h.01', roles:['Admin','Management','Sales']}]},
     {g:'Operations', items:[
-      {id:'inventory', label:'Inventory', icon:'M2.5 4h11v9.5h-11zM2.5 7h11M6 4V2.5h4V4', roles:['Admin','Management','Purchase','Warehouse','Sales']},
-      {id:'customers', label:'Customers', icon:'M6 7.5a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5zM1.75 13.5c0-2.3 1.9-3.75 4.25-3.75s4.25 1.45 4.25 3.75M11 3.5a2.25 2.25 0 010 4.25M12.25 13.5c0-1.4-.4-2.4-1.2-3', roles:['Admin','Management','Sales','Accounts']},
-      {id:'suppliers', label:'Suppliers / Farmers', icon:'M13.5 2.5C7 2.5 3.5 5.5 3.5 10c0 1 .3 1.7.3 1.7 4.7 0 9.7-3.2 9.7-9.2zM3.8 11.7 2 13.5', roles:['Admin','Management','Purchase','Accounts']},
-      {id:'companies', label:'Companies', icon:'M3 13.5V3h6v10.5M9 6.5h4v7M5 5.5h2M5 8h2M5 10.5h2M1.5 13.5h13', roles:['Admin','Management','Purchase','Accounts']},
-      {id:'warehouses', label:'Warehouses', icon:'M2.5 6.5 8 3l5.5 3.5v7h-11zM6 13.5V9h4v4.5', roles:['Admin','Management','Purchase','Warehouse','Accounts']},
-      {id:'products', label:'Products', icon:'M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3zM2.5 5.5 8 8.5l5.5-3M8 8.5v5', roles:['Admin','Management','Purchase','Sales','Warehouse','Accounts']},
-      {id:'crops', label:'Crops', icon:'M8 14V7.5M8 7.5C8 5 6.2 3 3.5 2.5 3 5.2 5 7.3 8 7.5zM8 9.2c.2-2.2 2-4 4.5-4.4.4 2.4-1.4 4.3-4.5 4.4z', roles:['Admin','Management','Purchase','Sales','Warehouse','Accounts']}]},
+      {id:'inventory', perm:'inventory.view', label:'Inventory', icon:'M2.5 4h11v9.5h-11zM2.5 7h11M6 4V2.5h4V4', roles:['Admin','Management','Purchase','Warehouse','Sales']},
+      {id:'customers', perm:'customer.view', label:'Customers', icon:'M6 7.5a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5zM1.75 13.5c0-2.3 1.9-3.75 4.25-3.75s4.25 1.45 4.25 3.75M11 3.5a2.25 2.25 0 010 4.25M12.25 13.5c0-1.4-.4-2.4-1.2-3', roles:['Admin','Management','Sales','Accounts']},
+      {id:'suppliers', perm:'supplier.view', label:'Suppliers / Farmers', icon:'M13.5 2.5C7 2.5 3.5 5.5 3.5 10c0 1 .3 1.7.3 1.7 4.7 0 9.7-3.2 9.7-9.2zM3.8 11.7 2 13.5', roles:['Admin','Management','Purchase','Accounts']},
+      {id:'companies', perm:'company.view', label:'Companies', icon:'M3 13.5V3h6v10.5M9 6.5h4v7M5 5.5h2M5 8h2M5 10.5h2M1.5 13.5h13', roles:['Admin','Management','Purchase','Accounts']},
+      {id:'warehouses', perm:'inventory.view', label:'Warehouses', icon:'M2.5 6.5 8 3l5.5 3.5v7h-11zM6 13.5V9h4v4.5', roles:['Admin','Management','Purchase','Warehouse','Accounts']},
+      {id:'products', perm:'product.view', label:'Products', icon:'M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3zM2.5 5.5 8 8.5l5.5-3M8 8.5v5', roles:['Admin','Management','Purchase','Sales','Warehouse','Accounts']},
+      {id:'crops', perm:'crop.view', label:'Crops', icon:'M8 14V7.5M8 7.5C8 5 6.2 3 3.5 2.5 3 5.2 5 7.3 8 7.5zM8 9.2c.2-2.2 2-4 4.5-4.4.4 2.4-1.4 4.3-4.5 4.4z', roles:['Admin','Management','Purchase','Sales','Warehouse','Accounts']}]},
     {g:'Finance', items:[
-      {id:'accounts', label:'Accounts & Outstanding', icon:'M2 4.5h11.5v9H2zM2 4.5 11 2v2.5M10 9h2.5', roles:['Admin','Management','Accounts']},
-      {id:'approvals', label:'Approvals', icon:'M8 14A6 6 0 108 2a6 6 0 000 12zM5.5 8.2l1.9 1.9 3.3-3.8', roles:['Admin','Management','Accounts']}]},
-    {g:'Insight', items:[{id:'reports', label:'Reports Centre', icon:'M2.5 13.5h11M4.5 11V6.5M8 11V3M11.5 11V8', roles:'*'}]},
+      {id:'accounts', perm:'payment.view', label:'Accounts & Outstanding', icon:'M2 4.5h11.5v9H2zM2 4.5 11 2v2.5M10 9h2.5', roles:['Admin','Management','Accounts']},
+      {id:'approvals', perm:'approval.view', label:'Approvals', icon:'M8 14A6 6 0 108 2a6 6 0 000 12zM5.5 8.2l1.9 1.9 3.3-3.8', roles:['Admin','Management','Accounts']}]},
+    {g:'Insight', items:[{id:'reports', perm:'report.view', label:'Reports Centre', icon:'M2.5 13.5h11M4.5 11V6.5M8 11V3M11.5 11V8', roles:'*'}]},
     {g:'System', items:[
-      {id:'settings', label:'Settings', icon:'M8 10.2a2.2 2.2 0 100-4.4 2.2 2.2 0 000 4.4zM8 1.8v1.8M8 12.4v1.8M2.2 8h1.8M12 8h1.8M3.9 3.9l1.3 1.3M10.8 10.8l1.3 1.3M12.1 3.9l-1.3 1.3M5.2 10.8 3.9 12.1', roles:['Admin','Management']},
-      {id:'employees', label:'Employees', icon:'M8 7.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM3 13.5c0-2.5 2.2-4 5-4s5 1.5 5 4', roles:['Admin','Management']},
-      {id:'audit', label:'Audit Trail', icon:'M4 2h8v12H4zM6 5h4M6 8h4M6 11h2.5', roles:['Admin','Management','Accounts']},
-      {id:'mobile', label:'Mobile Screens', icon:'M5 1.5h6v13H5zM7 12.8h2', roles:'*'}]}
+      {id:'settings', perm:'settings.view', label:'Settings', icon:'M8 10.2a2.2 2.2 0 100-4.4 2.2 2.2 0 000 4.4zM8 1.8v1.8M8 12.4v1.8M2.2 8h1.8M12 8h1.8M3.9 3.9l1.3 1.3M10.8 10.8l1.3 1.3M12.1 3.9l-1.3 1.3M5.2 10.8 3.9 12.1', roles:['Admin','Management']},
+      {id:'employees', perm:'employee.view', label:'Employees', icon:'M8 7.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM3 13.5c0-2.5 2.2-4 5-4s5 1.5 5 4', roles:['Admin','Management']},
+      {id:'audit', perm:'audit.view', label:'Audit Trail', icon:'M4 2h8v12H4zM6 5h4M6 8h4M6 11h2.5', roles:['Admin','Management','Accounts']},
+      {id:'mobile', perm:'*', label:'Mobile Screens', icon:'M5 1.5h6v13H5zM7 12.8h2', roles:'*'}]}
   ];
 
 export const TITLES = {dashboard:['Business Overview','Consolidated position across both business models'],

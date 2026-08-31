@@ -1,4 +1,4 @@
-import { field, formModal } from '../components/formModal.js';
+import { field, formModal, toggle } from '../components/formModal.js';
 
 /**
  * Settings forms: the company profile, financial years, document numbering,
@@ -18,6 +18,11 @@ const KINDS = {
   numbering: ['numbering', 'Documents numbered from here on take the new pattern'],
   limit: ['approval limit', 'Crossing the limit routes the transaction for approval'],
   notification: ['notification rule', 'When this alert fires, and to whom it matters'],
+  role: ['role', 'A role is a set of permissions; people hold roles, not permissions'],
+  grants: ['permissions', 'The server checks these on every request, not only this screen'],
+  login: ['login', 'The person picks their own password when they first sign in'],
+  roleAssign: ['roles', 'What this person may do, from the moment it is saved'],
+  password: ['password', 'A reset signs the account out everywhere it is open'],
 };
 
 /** The empty form for this kind, or the values of the record being edited. */
@@ -49,6 +54,39 @@ export function defaultsFor(kind, row) {
 
   if (kind === 'limit') {
     return { threshold: row.threshold ?? '', active: row.active ? 'yes' : 'no' };
+  }
+
+  if (kind === 'role') {
+    // A code is what the rest of the system calls the role, so an existing one
+    // never moves; a new one starts as the name, tidied.
+    return { code: row.code || '', name: row.name || '', description: row.description || '' };
+  }
+
+  if (kind === 'grants') {
+    // The codes inside this module the role already holds. The form works on
+    // the set, and the payload sends the module as the scope, so nothing
+    // outside it is touched by the save.
+    return { granted: (row.granted || []).slice() };
+  }
+
+  if (kind === 'login') {
+    return {
+      // The select shows its first option whether or not the form holds one,
+      // so the form holds it: otherwise it reads as chosen and saves as blank.
+      employee: row.employee || (row.employeeOptions || [])[0] || '',
+      username: row.username || '',
+      email: '',
+      password: '',
+      roles: row.roles ? row.roles.slice() : [],
+    };
+  }
+
+  if (kind === 'roleAssign') {
+    return { roles: (row.roles || []).slice() };
+  }
+
+  if (kind === 'password') {
+    return { password: '' };
   }
 
   return { threshold: row.threshold ?? '', active: row.active ? 'yes' : 'no' };
@@ -143,6 +181,76 @@ export function fieldsFor(kind, form, row, on, districts) {
     ];
   }
 
+  if (kind === 'role') {
+    return [
+      field('name', 'Role name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'Branch manager',
+        wide: true,
+      }),
+      // The code is fixed once anything refers to it -- a user holds it, the
+      // sidebar prints it -- so an existing role shows it rather than offering
+      // it. A new one is free to be named.
+      field('code', 'Code', {
+        value: form.code,
+        onChange: on('code'),
+        mono: true,
+        placeholder: 'BranchManager',
+        hint: row.id
+          ? 'A role keeps the code it was created with'
+          : 'What the rest of the system calls this role',
+      }),
+      field('description', 'What it is for', {
+        value: form.description,
+        onChange: on('description'),
+        placeholder: 'Runs one branch: sells, collects, sees no profit',
+        wide: true,
+      }),
+    ];
+  }
+
+  if (kind === 'login') {
+    return [
+      field('employee', 'Employee', {
+        options: row.employeeOptions || [],
+        value: form.employee,
+        onChange: on('employee'),
+        wide: true,
+        hint: 'Only team members without a login are listed',
+      }),
+      field('username', 'Username', {
+        value: form.username,
+        onChange: on('username'),
+        mono: true,
+        hint: 'Lowercase letters, digits, dots, dashes',
+      }),
+      field('email', 'Email', { value: form.email, onChange: on('email') }),
+      field('password', 'Temporary password', {
+        type: 'password',
+        value: form.password,
+        onChange: on('password'),
+        wide: true,
+        hint: 'At least 10 characters. They are asked to change it at first sign-in.',
+      }),
+    ];
+  }
+
+  if (kind === 'password') {
+    return [
+      field('password', 'Temporary password', {
+        type: 'password',
+        value: form.password,
+        onChange: on('password'),
+        wide: true,
+        hint: 'At least 10 characters. They are asked to change it at first sign-in.',
+      }),
+    ];
+  }
+
+  // Grants and role assignment are lists of switches rather than fields.
+  if (kind === 'grants' || kind === 'roleAssign') return [];
+
   if (kind === 'limit') {
     const isPercent = row.condition === 'DISCOUNT_PCT_ABOVE';
     return [
@@ -218,6 +326,46 @@ export function validate(kind, form, row) {
     return null;
   }
 
+  if (kind === 'role') {
+    if (!String(form.name || '').trim()) return 'Give the role a name.';
+    const code = String(form.code || '').trim();
+    if (!/^[A-Za-z][A-Za-z0-9 _-]{1,39}$/.test(code)) {
+      return 'A code starts with a letter and uses letters, digits, spaces, dashes or underscores.';
+    }
+    return null;
+  }
+
+  if (kind === 'login') {
+    if (!form.employee) return 'Choose the person this login belongs to.';
+    if (!/^[a-z0-9._-]{3,40}$/.test(String(form.username || '').trim())) {
+      return 'A username is 3 to 40 lowercase letters, digits, dots, dashes or underscores.';
+    }
+    if (String(form.password || '').length < 10) {
+      return 'Choose a temporary password of at least 10 characters.';
+    }
+    if (!form.roles.length) return 'Give the login at least one role.';
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(form.email).trim())) {
+      return 'That email address does not look right.';
+    }
+    return null;
+  }
+
+  if (kind === 'password') {
+    if (String(form.password || '').length < 10) {
+      return 'Choose a temporary password of at least 10 characters.';
+    }
+    return null;
+  }
+
+  if (kind === 'roleAssign') {
+    if (!form.roles.length) {
+      return 'A login holds at least one role. Disable the account instead of leaving it with none.';
+    }
+    return null;
+  }
+
+  if (kind === 'grants') return null;
+
   if (kind === 'limit') {
     if (form.threshold === '' || form.threshold === null) return 'Give the limit this rule uses.';
     if (Number(form.threshold) < 0) return 'A limit cannot be negative.';
@@ -269,6 +417,40 @@ export function payloadFor(kind, form, row) {
     return { threshold: Number(form.threshold), active: form.active === 'yes' };
   }
 
+  if (kind === 'role') {
+    return {
+      code: text(form.code),
+      name: text(form.name),
+      description: text(form.description),
+    };
+  }
+
+  if (kind === 'grants') {
+    // The whole module is the scope; the granted set is what should survive.
+    return {
+      scope: (row.permissions || []).map((p) => p.code),
+      permissions: form.granted.slice(),
+    };
+  }
+
+  if (kind === 'login') {
+    return {
+      employeeId: row.employeeIds ? row.employeeIds[form.employee] : undefined,
+      username: text(form.username).toLowerCase(),
+      email: text(form.email),
+      password: form.password,
+      roles: form.roles.slice(),
+    };
+  }
+
+  if (kind === 'roleAssign') {
+    return { roles: form.roles.slice() };
+  }
+
+  if (kind === 'password') {
+    return { password: form.password };
+  }
+
   return {
     ...(row.threshold === null ? {} : { threshold: Number(form.threshold) }),
     active: form.active === 'yes',
@@ -286,6 +468,11 @@ export function buildSettingsModal(kind, state, handlers, districts) {
     numbering: `${row.label} numbering`,
     limit: `${row.entityLabel} limit`,
     notification: row.name,
+    role: row.id ? row.name : 'New role',
+    grants: `${row.moduleLabel} · ${row.roleName}`,
+    login: 'New login',
+    roleAssign: row.name,
+    password: `Reset password · ${row.name}`,
   };
 
   const subtitles = {
@@ -294,6 +481,28 @@ export function buildSettingsModal(kind, state, handlers, districts) {
     numbering: `Currently ${row.pattern}${row.issued ? ` · ${row.issued} issued this period` : ''}`,
     limit: blurb,
     notification: blurb,
+    role: row.system
+      ? 'One of the roles the system is set up around: it can be described and re-granted, not removed'
+      : blurb,
+    grants: `What ${row.roleName} may do with ${String(row.moduleLabel || '').toLowerCase()}`,
+    login: blurb,
+    roleAssign: `${row.designation || 'Team member'} · signs in as ${row.username}`,
+    password: blurb,
+  };
+
+  const submitLabels = {
+    fiscalYear: `Add ${noun}`,
+    role: row.id ? 'Save changes' : 'Add role',
+    login: 'Create login',
+    password: 'Reset password',
+  };
+
+  const notes = {
+    numbering: 'Documents already issued keep the numbers they were given',
+    company: 'Applies to documents produced from now on',
+    grants: 'Takes effect immediately, including for anyone already signed in',
+    roleAssign: 'Takes effect immediately, including if they are signed in now',
+    password: 'Every session on this account is signed out',
   };
 
   return formModal({
@@ -301,16 +510,57 @@ export function buildSettingsModal(kind, state, handlers, districts) {
     title: titles[kind],
     subtitle: subtitles[kind],
     fields: fieldsFor(kind, form, row, handlers.onField, districts),
+    toggles: togglesFor(kind, form, row, handlers.onToggle),
     error,
     busy,
-    submitLabel: kind === 'fiscalYear' ? `Add ${noun}` : 'Save changes',
-    note:
-      kind === 'numbering'
-        ? 'Documents already issued keep the numbers they were given'
-        : kind === 'company'
-          ? 'Applies to documents produced from now on'
-          : '',
+    submitLabel: submitLabels[kind] || 'Save changes',
+    note: notes[kind] || '',
     onSubmit: handlers.onSubmit,
     onCancel: handlers.onCancel,
   });
+}
+
+/**
+ * The switch list a form shows, where it has one.
+ *
+ * Permissions and role assignment are both "which of these does it hold",
+ * which is a list of switches rather than a grid of fields -- and the same
+ * control the Settings panels already use for units and payment methods.
+ */
+export function togglesFor(kind, form, row, onToggle) {
+  if (kind === 'grants') {
+    return {
+      title: `${row.moduleLabel} permissions`,
+      note: `${form.granted.length} of ${(row.permissions || []).length} granted`,
+      rows: (row.permissions || []).map((permission) =>
+        toggle({
+          key: permission.code,
+          label: permission.label,
+          description: permission.description || permission.code,
+          on: form.granted.includes(permission.code),
+          onToggle: () => onToggle('granted', permission.code),
+        })
+      ),
+    };
+  }
+
+  if (kind === 'roleAssign' || kind === 'login') {
+    return {
+      title: 'Roles',
+      note: form.roles.length
+        ? form.roles.join(', ')
+        : 'None yet — a login needs at least one',
+      rows: (row.roleOptions || []).map((role) =>
+        toggle({
+          key: role.code,
+          label: role.name,
+          description: role.description || `${role.granted.length} permissions`,
+          on: form.roles.includes(role.code),
+          onToggle: () => onToggle('roles', role.code),
+        })
+      ),
+    };
+  }
+
+  return null;
 }

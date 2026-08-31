@@ -18,7 +18,7 @@ import { C, MONO } from '../styles/tokens.js';
  * @param {string} key          identifies the field to the caller's onChange
  * @param {string} label
  * @param {object} [o]
- * @param {'text'|'number'|'date'} [o.type='text']
+ * @param {'text'|'number'|'date'|'password'} [o.type='text']
  * @param {Array}  [o.options]  present for a select: `{value, label}` or strings
  * @param {*}      [o.value]
  * @param {Function} [o.onChange]
@@ -52,6 +52,38 @@ export function field(key, label, o = {}) {
 }
 
 /**
+ * Build a switch row.
+ *
+ * The design already draws this control on the Settings panels -- a pill that
+ * slides, with a label and a quiet line under it -- for units and payment
+ * methods. Permissions and roles are the same question asked of a list, so
+ * they use the same control rather than a second kind of checkbox.
+ *
+ * @param {object} o
+ * @param {string} o.key
+ * @param {string} o.label
+ * @param {string} [o.description]
+ * @param {boolean} o.on
+ * @param {Function} o.onToggle
+ * @param {boolean} [o.locked]  drawn, but not changeable, with `lockNote` said
+ * @param {string} [o.lockNote]
+ */
+export function toggle(o) {
+  const on = !!o.on;
+  return {
+    key: o.key,
+    label: o.label,
+    description: o.locked && o.lockNote ? o.lockNote : o.description || '',
+    on,
+    tone: o.locked ? '#E3E0DA' : on ? C.crop : '#D6D2CA',
+    knob: on ? '19px' : '2px',
+    title: o.locked ? o.lockNote || 'Cannot be changed' : on ? 'Granted' : 'Not granted',
+    onToggle: o.locked ? null : o.onToggle,
+    cursor: o.locked ? 'not-allowed' : 'pointer',
+  };
+}
+
+/**
  * Build the modal model.
  *
  * @param {object} o
@@ -59,6 +91,7 @@ export function field(key, label, o = {}) {
  * @param {string}  o.title
  * @param {string}  [o.subtitle]
  * @param {Array}   o.fields        from `field()`
+ * @param {object}  [o.toggles]     `{title, rows}` switch list, see `toggle()`
  * @param {Array}   [o.summary]     `{k, v, good}` rows shown above the footer
  * @param {object}  [o.allocation]  invoice allocation block, see `allocation()`
  * @param {string}  [o.error]       validation message, shown in a banner
@@ -76,11 +109,23 @@ export function formModal(o) {
     title: o.title,
     subtitle: o.subtitle || '',
     fields: o.fields || [],
-    summary: (o.summary || []).map((s) => ({
-      k: s.k,
-      v: s.v,
-      color: s.good === false ? C.dngr : s.good === true ? C.crop : C.ink,
-    })),
+    // A form made entirely of switches has no fields, and the grid holding
+    // them would otherwise contribute its padding to an empty row.
+    hasFields: !!o.fields?.length,
+    toggles:
+      o.toggles && o.toggles.rows?.length
+        ? { title: o.toggles.title || '', note: o.toggles.note || '', rows: o.toggles.rows }
+        : null,
+    // Null rather than an empty array: an empty one is still truthy in the
+    // template, which drew the summary's border around nothing on every form
+    // that had no summary to show.
+    summary: o.summary?.length
+      ? o.summary.map((s) => ({
+          k: s.k,
+          v: s.v,
+          color: s.good === false ? C.dngr : s.good === true ? C.crop : C.ink,
+        }))
+      : null,
     allocation: o.allocation || null,
     error: o.error || '',
     busy,

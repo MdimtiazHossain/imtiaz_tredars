@@ -1608,6 +1608,233 @@ describe('settings', () => {
   });
 });
 
+describe('roles and permissions', () => {
+  /** Open the roles panel with the roles and logins loaded. */
+  async function openRoles(props = {}) {
+    const { app, root } = await mountApp(props);
+    app.setState({ screen: 'settings', setSec: 'roles' });
+    app.loadSettings();
+    app.loadAccessControl();
+    await new Promise((r) => setTimeout(r, 20));
+    flush(app);
+    return { app, root };
+  }
+
+  const moduleRow = (app, label) =>
+    app.renderVals().matrix.rows.find((r) => r.cells[0].t === label);
+
+  it('builds the matrix from the grants each role holds', async () => {
+    const { app } = await openRoles();
+    const vals = app.renderVals();
+
+    expect(vals.matrix.cols[0]).toBe('Module');
+    expect(vals.matrix.cols).toContain('Admin');
+
+    const admin = vals.matrix.cols.indexOf('Admin');
+    const sales = vals.matrix.cols.indexOf('Sales');
+    // Admin holds all of settings; Sales holds none of it, and not seeing
+    // profit is a state with a name rather than a blank.
+    expect(moduleRow(app, 'Settings').cells[admin].t).toBe('Full');
+    expect(moduleRow(app, 'Settings').cells[sales].t).toBe('—');
+    expect(moduleRow(app, 'Profit figures').cells[sales].t).toBe('Hidden');
+  });
+
+  it('lists the roles with what they are for and who holds them', async () => {
+    const { app } = await openRoles();
+    const rows = app.renderVals().roleRows;
+
+    const admin = rows.find((r) => r.k === 'Admin');
+    expect(admin.d).toContain('permissions');
+    expect(admin.tag).toBe('1 user');
+    // The roles the system is set up around cannot be deleted, held or not.
+    expect(admin.canRemove).toBe(false);
+  });
+
+  it('moves a grant from the cell it is shown in', async () => {
+    const { app } = await openRoles();
+    const sales = app.renderVals().matrix.cols.indexOf('Sales');
+
+    expect(moduleRow(app, 'Expenses').cells[sales].t).toBe('—');
+    moduleRow(app, 'Expenses').cells[sales].onClick();
+    expect(app.state.settingsForm.kind).toBe('grants');
+    expect(app.state.settingsForm.row.roleName).toBe('Sales');
+
+    // The switches are the module's permissions; grant both.
+    app.onSettingsToggle('granted', 'expense.view');
+    app.onSettingsToggle('granted', 'expense.create');
+    app.submitSettings();
+    await new Promise((r) => setTimeout(r, 30));
+    flush(app);
+
+    expect(app.state.settingsForm).toBeNull();
+    expect(moduleRow(app, 'Expenses').cells[sales].t).toBe('Full');
+  });
+
+  it('adds a role and offers it as a column of its own', async () => {
+    const { app } = await openRoles();
+    app.openSettings('role', {});
+    app.onSettingsField('name')({ target: { value: 'Branch manager' } });
+    app.onSettingsField('code')({ target: { value: 'BranchManager' } });
+    app.submitSettings();
+    await new Promise((r) => setTimeout(r, 30));
+    flush(app);
+
+    expect(app.renderVals().matrix.cols).toContain('BranchManager');
+    const added = app.renderVals().roleRows.find((r) => r.k === 'Branch manager');
+    expect(added.tag).toBe('0 users');
+    // Nobody holds it, so it can go again.
+    expect(added.canRemove).toBe(true);
+  });
+
+  it('names the role before it will save one', async () => {
+    const { app } = await openRoles();
+    app.openSettings('role', {});
+    app.submitSettings();
+
+    expect(app.state.settingsForm.error).toBe('Give the role a name.');
+  });
+
+  it('refuses a change that would leave nobody able to change roles back', async () => {
+    const { app } = await openRoles();
+    const admin = app.permissionData().roleList.find((r) => r.code === 'Admin');
+
+    app.openSettings('grants', {
+      roleId: admin.id,
+      roleName: admin.name,
+      moduleLabel: 'Roles and logins',
+      permissions: [
+        { code: 'user.manage', label: 'Logins' },
+        { code: 'role.edit', label: 'Roles' },
+      ],
+      granted: ['user.manage', 'role.edit'],
+    });
+    app.onSettingsToggle('granted', 'role.edit');
+    app.submitSettings();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(app.state.settingsForm.error).toContain('no active user able to change roles');
+    // And the refusal left nothing half-applied.
+    expect(app.permissionData().roleList.find((r) => r.code === 'Admin').granted)
+      .toContain('role.edit');
+  });
+
+  it('hides every control from a user who may not cut the roles', async () => {
+    const { app } = await openRoles({
+      // Enough to read the screen, not to change it.
+      permissions: ['dashboard.view', 'settings.view', 'employee.view'],
+    });
+    const vals = app.renderVals();
+
+    expect(vals.addRole.canAdd).toBe(false);
+    expect(vals.roleRows.every((r) => !r.canEdit && !r.canRemove)).toBe(true);
+    // The cells are text rather than buttons.
+    expect(moduleRow(app, 'Settings').cells[1].onClick).toBeNull();
+    expect(vals.rolesNote).toContain('the rule rather than a description');
+  });
+});
+
+describe('logins', () => {
+  async function openEmployees(props = {}) {
+    const { app, root } = await mountApp(props);
+    app.setState({ screen: 'employees' });
+    app.loadAccessControl();
+    await new Promise((r) => setTimeout(r, 20));
+    flush(app);
+    return { app, root };
+  }
+
+  const rowFor = (app, code) =>
+    app.employees().table.rows.find((r) => r.cells[0].text === code);
+
+  it('shows the roles a person actually signs in with', async () => {
+    const { app } = await openEmployees();
+    expect(rowFor(app, 'EMP-01').cells[5].text).toBe('Admin');
+  });
+
+  it('offers the login controls to whoever may maintain logins', async () => {
+    const { app } = await openEmployees();
+    const actions = rowFor(app, 'EMP-04').cells[7].actions.map((a) => a.label);
+
+    expect(actions).toContain('Change role');
+    expect(actions).toContain('Reset password');
+    expect(actions).toContain('Disable login');
+  });
+
+  it('withholds them from someone who may only read the directory', async () => {
+    const { app } = await openEmployees({ permissions: ['dashboard.view', 'employee.view'] });
+    const actions = rowFor(app, 'EMP-04').cells[7].actions.map((a) => a.label);
+
+    expect(actions).not.toContain('Change role');
+    expect(actions).not.toContain('Reset password');
+    expect(app.employees().login.canAdd).toBe(false);
+  });
+
+  it('changes the roles on a login', async () => {
+    const { app } = await openEmployees();
+    const account = app.accountsData().find((a) => a.employeeCode === 'EMP-09');
+
+    app.openSettings('roleAssign', {
+      ...account,
+      roleOptions: app.permissionData().roleList,
+    });
+    app.onSettingsToggle('roles', 'Sales');
+    app.onSettingsToggle('roles', 'Warehouse');
+    app.submitSettings();
+    await new Promise((r) => setTimeout(r, 30));
+    flush(app);
+
+    expect(app.state.settingsForm).toBeNull();
+    expect(rowFor(app, 'EMP-09').cells[5].text).toBe('Warehouse');
+  });
+
+  it('will not leave a login with no role at all', async () => {
+    const { app } = await openEmployees();
+    const account = app.accountsData().find((a) => a.employeeCode === 'EMP-09');
+
+    app.openSettings('roleAssign', { ...account, roleOptions: app.permissionData().roleList });
+    app.onSettingsToggle('roles', account.roles[0]);
+    app.submitSettings();
+
+    expect(app.state.settingsForm.error).toContain('at least one role');
+  });
+});
+
+describe('permission-driven navigation', () => {
+  /** The sidebar labels this set of permissions reaches. */
+  async function navFor(permissions) {
+    const { root } = await mountApp({ permissions });
+    return [...root.querySelectorAll('aside nav button')].map((b) => b.textContent.trim());
+  }
+
+  it('offers a screen when the permission behind it is held', async () => {
+    const labels = await navFor(['dashboard.view', 'dealer.sale.view', 'customer.view']);
+
+    expect(labels).toContain('Dashboard');
+    expect(labels).toContain('Dealer Sales');
+    expect(labels).toContain('Customers');
+    expect(labels).not.toContain('Settings');
+    expect(labels).not.toContain('Crop Purchase');
+  });
+
+  it('offers a screen the moment its permission is granted, whatever the role', async () => {
+    // A role the business cut itself: no name a hard-coded list could have
+    // anticipated, and the sidebar still follows what it holds.
+    const labels = await navFor(['dashboard.view', 'audit.view', 'settings.view']);
+
+    expect(labels).toContain('Audit Trail');
+    expect(labels).toContain('Settings');
+    expect(labels).not.toContain('Dealer Sales');
+  });
+
+  it('shows profit only to a session holding report.profit', async () => {
+    const { app: withIt } = await mountApp({ permissions: ['dashboard.view', 'report.profit'] });
+    const { app: without } = await mountApp({ permissions: ['dashboard.view'] });
+
+    expect(withIt.canProfit()).toBe(true);
+    expect(without.canProfit()).toBe(false);
+  });
+});
+
 describe('audit trail', () => {
   async function openAudit() {
     const { app } = await mountApp();
