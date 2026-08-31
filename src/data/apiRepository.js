@@ -32,6 +32,7 @@ const MASTER_PATHS = {
   customer: '/customers',
   supplier: '/suppliers',
   company: '/companies',
+  taxRate: '/tax-rates',
 };
 
 /** Which code -> id map a saved record belongs in, where one is kept. */

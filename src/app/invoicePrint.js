@@ -171,6 +171,7 @@ export function invoiceDocument(invoice) {
         ${customer.bn ? `<div>${e(customer.bn)}</div>` : ''}
         ${customer.address ? `<div class="sub">${e(customer.address)}</div>` : ''}
         ${customer.mobile ? `<div class="sub mono">${e(customer.mobile)}</div>` : ''}
+        ${customer.binNo ? `<div class="sub mono">BIN ${e(customer.binNo)}</div>` : ''}
       </div>
       <div class="meta">
         ${detail('Customer', customer.code)}
@@ -199,7 +200,9 @@ export function invoiceDocument(invoice) {
       <table class="totals">
         ${totalRow('Gross', totals.gross)}
         ${totals.discount ? totalRow('Discount', -totals.discount) : ''}
-        ${totalRow('Net payable', totals.net, 'net')}
+        ${totals.tax ? totalRow('Taxable value', totals.net) : ''}
+        ${totals.tax ? totalRow(totals.taxLabel || 'VAT', totals.tax) : ''}
+        ${totalRow('Net payable', totals.total ?? totals.net, 'net')}
         ${totals.paid ? totalRow('Paid', totals.paid) : ''}
         ${totalRow('Balance due', totals.due, 'due')}
       </table>

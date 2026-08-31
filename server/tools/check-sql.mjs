@@ -74,11 +74,20 @@ function readSchema() {
   // A later migration may add a column rather than recreate the table, so
   // apply ALTER TABLE ... ADD COLUMN too. Without this, every additive
   // migration makes the checker report the new column as non-existent.
-  const alterRe = /ALTER TABLE (?:ONLY\s+)?(\w+)[\s\S]*?ADD COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)/gi;
+  //
+  // One statement can add several columns, and it usually does -- the three
+  // that VAT puts on each document table arrive together. Each statement is
+  // therefore taken whole, up to its semicolon, and every ADD COLUMN inside it
+  // counted; matching one at a time silently kept only the first and reported
+  // the rest as missing.
+  const alterRe = /ALTER TABLE (?:ONLY\s+)?(\w+)([\s\S]*?);/gi;
   let a;
   while ((a = alterRe.exec(sql))) {
     const table = tables.get(a[1].toLowerCase());
-    if (table) table.add(a[2].toLowerCase());
+    if (!table) continue;
+    for (const column of a[2].matchAll(/ADD COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)/gi)) {
+      table.add(column[1].toLowerCase());
+    }
   }
 
   return { tables, views };

@@ -133,12 +133,18 @@ suite('chart of accounts', () => {
         WHERE org_id = $1 AND (total_debit > 0 OR total_credit > 0)`,
       [orgId]
     );
+    // The database subtracts two exact numerics; JavaScript subtracts two
+    // floats, and past a few lakh those two disagree in the last paisa. The
+    // comparison is rounded for the same reason every money figure in this
+    // system is: the question is whether the sign is right, not whether IEEE
+    // 754 agrees with PostgreSQL.
+    const paisa = (n) => Math.round(Number(n) * 100) / 100;
     for (const r of rows) {
       const debitNatured = ['ASSET', 'EXPENSE'].includes(r.account_class);
       const expected = debitNatured
-        ? Number(r.total_debit) - Number(r.total_credit)
-        : Number(r.total_credit) - Number(r.total_debit);
-      expect(Number(r.balance), r.account_class).toBe(expected);
+        ? paisa(Number(r.total_debit) - Number(r.total_credit))
+        : paisa(Number(r.total_credit) - Number(r.total_debit));
+      expect(paisa(r.balance), r.account_class).toBe(expected);
     }
   });
 

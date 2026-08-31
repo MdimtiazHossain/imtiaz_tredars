@@ -38,6 +38,8 @@ export function defaultsFor(kind, row) {
       email: row.email || '',
       currency: row.currency || 'BDT',
       defaultDistrict: row.defaultDistrict || '',
+      vatRegistered: row.vatRegistered ? 'yes' : 'no',
+      pricesIncludeTax: row.pricesIncludeTax ? 'yes' : 'no',
     };
   }
 
@@ -137,6 +139,26 @@ export function fieldsFor(kind, form, row, on, districts) {
         value: form.defaultDistrict,
         onChange: on('defaultDistrict'),
         placeholder: 'Bogura',
+      }),
+      field('vatRegistered', 'VAT registered', {
+        options: [
+          { value: 'no', label: 'No — nothing is charged' },
+          { value: 'yes', label: 'Yes — every document charges its rate' },
+        ],
+        value: form.vatRegistered,
+        onChange: on('vatRegistered'),
+        hint: 'Turns VAT on across every posted document',
+      }),
+      field('pricesIncludeTax', 'Prices quoted', {
+        options: [
+          { value: 'no', label: 'Before VAT — tax is added on top' },
+          { value: 'yes', label: 'Including VAT — tax is inside the rate' },
+        ],
+        value: form.pricesIncludeTax,
+        onChange: on('pricesIncludeTax'),
+        // Both are ordinary in Bangladesh: retail quotes what the customer
+        // pays, business-to-business quotes the goods value.
+        hint: 'How a rate on a document is read',
       }),
     ];
   }
@@ -398,6 +420,8 @@ export function payloadFor(kind, form, row) {
       email: text(form.email),
       currency: text(form.currency).toUpperCase(),
       defaultDistrict: text(form.defaultDistrict),
+      vatRegistered: form.vatRegistered === 'yes',
+      pricesIncludeTax: form.pricesIncludeTax === 'yes',
     };
   }
 

@@ -21,6 +21,8 @@ import {
   installOrganization,
   installFiscalYear,
   installChartOfAccounts,
+  installTaxRates,
+  exemptCrops,
   installNumbering,
   installApprovalRules,
   installNotificationRules,
@@ -145,6 +147,7 @@ async function seed() {
 
     await installBusinessTypes(client);
     await installChartOfAccounts(client, orgId);
+    await installTaxRates(client, orgId);
     await installNumbering(client, orgId);
     await installNotificationRules(client, orgId);
 
@@ -313,6 +316,9 @@ async function seed() {
        VALUES ($1,$2,$3,$4,$5) RETURNING id, code, name`,
       CROPS.map(([code, name, rate]) => [orgId, code, name, unitByCode.get('MT'), rate])
     );
+
+    // Unprocessed produce is exempt, which is every crop this business trades.
+    await exemptCrops(client, orgId);
 
     /* ---- approval rules ---- */
     await installApprovalRules(client, orgId);

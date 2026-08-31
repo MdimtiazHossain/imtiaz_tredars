@@ -6,6 +6,7 @@ import { query, closePool } from '../src/lib/db.js';
 import { HAS_DB } from './helpers/database.js';
 import { LEDGER } from '../src/services/financeService.js';
 import { profitAndLoss } from '../src/services/statementService.js';
+import { postDocument } from './helpers/documents.js';
 
 /**
  * The books, end to end.
@@ -137,33 +138,25 @@ suite('the books', () => {
     const PRICE = 1300;
 
     // Buy: inventory rises, a payable is created.
-    const purchase = await request(app)
-      .post('/api/dealer/purchases')
-      .set(auth())
-      .send({
-        txnDate: today,
-        companyId: companies[0].id,
-        warehouseId,
-        lines: [{ productId: products[0].id, quantity: QTY, rate: COST, discountPct: 0 }],
-        action: 'POST',
-      });
-    expect(purchase.status, JSON.stringify(purchase.body.error)).toBe(201);
+    await postDocument(app, auth, '/api/dealer/purchases', {
+      txnDate: today,
+      companyId: companies[0].id,
+      warehouseId,
+      lines: [{ productId: products[0].id, quantity: QTY, rate: COST, discountPct: 0 }],
+      action: 'POST',
+    });
 
     expect(await balanceOf(LEDGER.INVENTORY)).toBe(money(inventoryBefore + QTY * COST));
     expect(await ledgerDifference()).toBe(0);
 
     // Sell all of it: income earned, and the goods leave at what they cost.
-    const sale = await request(app)
-      .post('/api/dealer/sales')
-      .set(auth())
-      .send({
-        txnDate: today,
-        customerId: customers[0].id,
-        warehouseId,
-        lines: [{ productId: products[0].id, quantity: QTY, rate: PRICE, discountPct: 0 }],
-        action: 'POST',
-      });
-    expect(sale.status, JSON.stringify(sale.body.error)).toBe(201);
+    await postDocument(app, auth, '/api/dealer/sales', {
+      txnDate: today,
+      customerId: customers[0].id,
+      warehouseId,
+      lines: [{ productId: products[0].id, quantity: QTY, rate: PRICE, discountPct: 0 }],
+      action: 'POST',
+    });
 
     const revenue = money((await balanceOf(LEDGER.DEALER_SALES)) - salesBefore);
     const cogs = money((await balanceOf(LEDGER.COST_OF_SALES)) - cogsBefore);
@@ -229,19 +222,15 @@ suite('the books', () => {
     if (!customers.length || !products.length) return;
 
     const today = new Date().toISOString().slice(0, 10);
-    const sale = await request(app)
-      .post('/api/dealer/sales')
-      .set(auth())
-      .send({
-        txnDate: today,
-        customerId: customers[0].id,
-        warehouseId,
-        lines: [{ productId: products[0].id, quantity: 1, rate: 500, discountPct: 0 }],
-        action: 'POST',
-      });
-    if (sale.status !== 201) return; // out of stock in this dataset
+    const sale = await postDocument(app, auth, '/api/dealer/sales', {
+      txnDate: today,
+      customerId: customers[0].id,
+      warehouseId,
+      lines: [{ productId: products[0].id, quantity: 1, rate: 500, discountPct: 0 }],
+      action: 'POST',
+    });
 
-    const saleId = sale.body.data.id;
+    const saleId = sale.id;
     const revenueAfterSale = await balanceOf(LEDGER.DEALER_SALES);
     const cogsAfterSale = await balanceOf(LEDGER.COST_OF_SALES);
 

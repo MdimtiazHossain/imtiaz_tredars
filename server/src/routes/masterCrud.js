@@ -148,7 +148,13 @@ export function registerMasterCrud(router, entity) {
         }
 
         const resolved = entity.resolve ? await entity.resolve(client, body, req.orgId) : {};
-        const columns = { code, ...entity.columns(body), ...resolved };
+        // A column the descriptor did not supply is left to the table's own
+        // default, exactly as an update leaves it alone. Writing `undefined`
+        // instead sends null, which a NOT NULL column with a perfectly good
+        // default refuses -- so an optional field would break every create.
+        const columns = Object.fromEntries(
+          supplied({ code, ...entity.columns(body), ...resolved })
+        );
         if (entity.tracksUser) columns.created_by = req.user.id;
         if (scoped) columns.org_id = req.orgId;
 

@@ -242,6 +242,7 @@ router.get(
     );
     const { rows } = await query(
       `SELECT s.id, s.txn_no, s.txn_date, c.name AS customer, s.net_amount,
+              s.tax_amount, s.total_amount,
               s.paid_amount, s.profit_amount, s.status,
               COALESCE(r.balance, 0) AS due,
               (SELECT COUNT(*)::int FROM dealer_sale_items i WHERE i.sale_id = s.id) AS item_count
@@ -262,7 +263,9 @@ router.get(
         date: r.txn_date,
         customer: r.customer,
         items: Number(r.item_count),
-        amount: num(r.net_amount),
+        // What the invoice is worth to the customer, tax included.
+        amount: num(r.total_amount) || num(r.net_amount),
+        tax: num(r.tax_amount),
         paid: num(r.paid_amount),
         due: num(r.due),
         profit: showProfit ? num(r.profit_amount) : null,
@@ -338,9 +341,11 @@ router.get(
       `SELECT s.id, s.txn_no, to_char(s.txn_date, 'DD Mon YYYY') AS txn_date,
               to_char(s.txn_date, 'YYYY-MM-DD') AS txn_iso,
               s.payment_terms, s.gross_amount, s.discount_amount, s.net_amount,
+              s.tax_amount, s.total_amount, s.tax_inclusive,
               s.paid_amount, s.status,
               c.code AS customer_code, c.name AS customer, c.name_bn AS customer_bn,
-              c.mobile AS customer_mobile, c.district, c.upazila, c.credit_days,
+              c.mobile AS customer_mobile, c.bin_no AS customer_bin,
+              c.district, c.upazila, c.credit_days,
               w.name AS warehouse, e.name AS salesperson,
               COALESCE(r.balance, 0) AS due,
               to_char(r.due_date, 'DD Mon YYYY') AS due_date,
@@ -360,7 +365,8 @@ router.get(
 
     const { rows: lines } = await query(
       `SELECT i.line_no, p.code, p.name, u.code AS unit, b.name AS brand,
-              i.quantity, i.bonus_quantity, i.rate, i.discount_pct, i.line_net
+              i.quantity, i.bonus_quantity, i.rate, i.discount_pct, i.line_net,
+              i.tax_rate, i.tax_amount
          FROM dealer_sale_items i
          JOIN products p    ON p.id = i.product_id
          JOIN units u       ON u.id = p.unit_id
@@ -388,6 +394,9 @@ router.get(
         mobile: h.customer_mobile || '',
         address: [h.upazila, h.district].filter(Boolean).join(', '),
         creditDays: Number(h.credit_days) || 0,
+        // A registered buyer's BIN belongs on the challanpatra; it is what
+        // lets them claim the tax on it back.
+        binNo: h.customer_bin || '',
       },
       // Who issued it. An invoice without this is not an invoice.
       org: {
@@ -410,16 +419,31 @@ router.get(
         rate: num(l.rate),
         discountPct: num(l.discount_pct),
         amount: num(l.line_net),
+        taxRate: num(l.tax_rate),
+        tax: num(l.tax_amount),
       })),
       totals: {
         gross: num(h.gross_amount),
         discount: num(h.discount_amount),
+        // `net` is the taxable value and `total` is what is owed; before VAT
+        // was modelled they were the same number and every invoice still
+        // prints correctly when they are.
         net: num(h.net_amount),
+        tax: num(h.tax_amount),
+        total: num(h.total_amount) || num(h.net_amount),
+        // One rate reads as "VAT 15%" on the invoice; a mixed one cannot.
+        taxLabel: taxLabelFor(lines),
         paid: num(h.paid_amount),
         due: num(h.due),
       },
     });
   })
 );
+
+/** How the tax line reads: named where one rate applies, generic where several do. */
+function taxLabelFor(lines) {
+  const rates = new Set(lines.map((l) => num(l.tax_rate)).filter((r) => r > 0));
+  return rates.size === 1 ? `VAT ${[...rates][0]}%` : 'VAT';
+}
 
 export default router;

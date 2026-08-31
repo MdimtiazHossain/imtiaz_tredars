@@ -5,6 +5,7 @@ import { createApp } from '../src/app.js';
 import { query, closePool } from '../src/lib/db.js';
 import { HAS_DB } from './helpers/database.js';
 import { LEDGER } from '../src/services/financeService.js';
+import { postDocument } from './helpers/documents.js';
 
 /**
  * Goods coming back.
@@ -62,39 +63,31 @@ async function stockOf(warehouseId, productId) {
 async function buyThenSell({ quantity = 10, cost = 1000, price = 1300, paid = 0 } = {}) {
   const { warehouseId, companyId, customerId, productId } = context;
 
-  const purchase = await request(app)
-    .post('/api/dealer/purchases')
-    .set(auth())
-    .send({
-      txnDate: today(),
-      companyId,
-      warehouseId,
-      lines: [{ productId, quantity, rate: cost, discountPct: 0 }],
-      action: 'POST',
-    });
-  expect(purchase.status, JSON.stringify(purchase.body.error)).toBe(201);
+  const purchase = await postDocument(app, auth, '/api/dealer/purchases', {
+    txnDate: today(),
+    companyId,
+    warehouseId,
+    lines: [{ productId, quantity, rate: cost, discountPct: 0 }],
+    action: 'POST',
+  });
 
-  const sale = await request(app)
-    .post('/api/dealer/sales')
-    .set(auth())
-    .send({
-      txnDate: today(),
-      customerId,
-      warehouseId,
-      paidAmount: paid,
-      lines: [{ productId, quantity, rate: price, discountPct: 0 }],
-      action: 'POST',
-    });
-  expect(sale.status, JSON.stringify(sale.body.error)).toBe(201);
+  const sale = await postDocument(app, auth, '/api/dealer/sales', {
+    txnDate: today(),
+    customerId,
+    warehouseId,
+    paidAmount: paid,
+    lines: [{ productId, quantity, rate: price, discountPct: 0 }],
+    action: 'POST',
+  });
 
   const returnable = await request(app)
-    .get(`/api/returnable/dealer_sales/${sale.body.data.id}`)
+    .get(`/api/returnable/dealer_sales/${sale.id}`)
     .set(auth());
   expect(returnable.status, JSON.stringify(returnable.body.error)).toBe(200);
 
   return {
-    purchaseId: purchase.body.data.id,
-    saleId: sale.body.data.id,
+    purchaseId: purchase.id,
+    saleId: sale.id,
     line: returnable.body.data.lines[0],
     quantity,
     cost,
@@ -452,17 +445,13 @@ suite('returns', () => {
     // principal is what is physically on the shelf, not which purchase it came
     // from -- and here there is nothing on the shelf at all.
     const onHand = (await stockOf(warehouseId, productId)).quantity;
-    const sale = await request(app)
-      .post('/api/dealer/sales')
-      .set(auth())
-      .send({
-        txnDate: today(),
-        customerId,
-        warehouseId,
-        lines: [{ productId, quantity: onHand, rate: 1200, discountPct: 0 }],
-        action: 'POST',
-      });
-    expect(sale.status, JSON.stringify(sale.body.error)).toBe(201);
+    await postDocument(app, auth, '/api/dealer/sales', {
+      txnDate: today(),
+      customerId,
+      warehouseId,
+      lines: [{ productId, quantity: onHand, rate: 1200, discountPct: 0 }],
+      action: 'POST',
+    });
     expect((await stockOf(warehouseId, productId)).quantity).toBe(0);
 
     const source = await request(app)

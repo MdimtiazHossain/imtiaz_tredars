@@ -33,6 +33,7 @@ import {
   installOrganization,
   installFiscalYear,
   installChartOfAccounts,
+  installTaxRates,
   installNumbering,
   installApprovalRules,
   installNotificationRules,
@@ -177,6 +178,7 @@ async function main() {
     const year = fiscalYearFor(new Date());
     await installFiscalYear(client, orgId, year);
     await installChartOfAccounts(client, orgId);
+    await installTaxRates(client, orgId);
     await installNumbering(client, orgId);
     await installApprovalRules(client, orgId);
     await installNotificationRules(client, orgId);

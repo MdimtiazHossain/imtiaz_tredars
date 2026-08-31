@@ -530,6 +530,11 @@
                 <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
                   <span style="font-size:12.5px;color:#6E6A64">Discount</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;color:#A96A08">{{ ds.discText }}</span>
                 </div>
+                <sc-if value="{{ ds.showVat }}">
+                  <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                    <span style="font-size:12.5px;color:#6E6A64">{{ ds.vatLabel }}</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ ds.vatText }}</span>
+                  </div>
+                </sc-if>
                 <div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:2px solid #E3E0DA">
                   <span style="font-size:13px;font-weight:700">Net invoice</span><span style="font-family:'Roboto Mono',monospace;font-size:15px;font-weight:700">{{ ds.netText }}</span>
                 </div>
@@ -1458,6 +1463,60 @@
                       <sc-if value="{{ u.canToggle }}">
                         <button onClick="{{ u.onToggle }}" title="{{ u.toggleLabel }}" style="width:38px;height:21px;border:0;padding:0;border-radius:11px;background:{{ u.tone }};position:relative;flex:none;cursor:pointer">
                           <span style="position:absolute;top:2px;left:{{ u.knob }};width:17px;height:17px;border-radius:50%;background:#fff"></span>
+                        </button>
+                      </sc-if>
+                    </span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ setIs.tax }}">
+              <div style="max-width:560px;margin-bottom:20px">
+                <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">VAT registration</div>
+                <div style="font-size:12.5px;color:#6E6A64;margin-bottom:12px">{{ setVat.note }}</div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <sc-for list="{{ setVat.rows }}" as="r" hint-placeholder-count="3">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                      <div>
+                        <div style="font-size:13px;font-weight:600">{{ r.k }}</div>
+                        <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ r.d }}</div>
+                      </div>
+                      <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;font-weight:600;color:{{ r.color }};flex:none">{{ r.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <sc-if value="{{ setVat.canEdit }}">
+                  <div style="display:flex;justify-content:flex-end;margin-top:10px">
+                    <button onClick="{{ setVat.onEdit }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">{{ setVat.editLabel }}</button>
+                  </div>
+                </sc-if>
+              </div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;max-width:560px">
+                <div style="font-size:14.5px;font-weight:700">Tax rates</div>
+                <sc-if value="{{ addTaxRate.canAdd }}">
+                  <button onClick="{{ addTaxRate.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ addTaxRate.label }}</button>
+                </sc-if>
+              </div>
+              <div style="font-size:12.5px;color:#6E6A64;margin-bottom:12px;max-width:560px">{{ taxRatesNote }}</div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-width:560px">
+                <sc-if value="{{ taxRatesEmpty }}">
+                  <div style="padding:16px;border:1px dashed #E3E0DA;border-radius:8px;font-size:12.5px;color:#8C877F">No tax rates yet. Add one and products can be charged at it.</div>
+                </sc-if>
+                <sc-for list="{{ setTaxRates }}" as="t" hint-placeholder-count="6">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                    <div style="min-width:0">
+                      <div style="font-size:13px;font-weight:600">{{ t.k }}<span style="font-size:11px;font-weight:600;color:{{ t.tagFg }};background:{{ t.tagBg }};border-radius:4px;padding:1px 6px;margin-left:7px">{{ t.tag }}</span></div>
+                      <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ t.d }}</div>
+                    </div>
+                    <span style="display:flex;align-items:center;gap:10px;flex:none">
+                      <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ t.v }}</span>
+                      <sc-if value="{{ t.canEdit }}">
+                        <button onClick="{{ t.onEdit }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Edit</button>
+                      </sc-if>
+                      <sc-if value="{{ t.canToggle }}">
+                        <button onClick="{{ t.onToggle }}" title="{{ t.toggleLabel }}" style="width:38px;height:21px;border:0;padding:0;border-radius:11px;background:{{ t.tone }};position:relative;flex:none;cursor:pointer">
+                          <span style="position:absolute;top:2px;left:{{ t.knob }};width:17px;height:17px;border-radius:50%;background:#fff"></span>
                         </button>
                       </sc-if>
                     </span>

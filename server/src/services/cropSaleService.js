@@ -1,5 +1,6 @@
 import { num } from '../lib/db.js';
 import { nextDocumentNo } from '../lib/numbering.js';
+import { taxDocument } from './taxService.js';
 import { writeAudit } from '../lib/audit.js';
 import { badRequest, notFound, unprocessable } from '../lib/errors.js';
 import { recordMovement, reverseMovements } from './inventoryService.js';
@@ -124,12 +125,27 @@ export async function createCropSale(client, { orgId, user, actor, input }) {
 
   const grossAmount = input.lines.reduce((t, l) => t + num(l.quantity) * num(l.rate), 0);
 
+  // Unprocessed produce is exempt in Bangladesh, which is most of what this
+  // side of the business sells; the crop master says so per crop rather than
+  // this service assuming it.
+  const totals = await taxDocument(client, {
+    orgId,
+    input,
+    priced: {
+      lines: input.lines.map((l) => ({ ...l, lineNet: num(l.quantity) * num(l.rate) })),
+      net: grossAmount,
+    },
+    table: 'crops',
+    itemIdOf: (l) => l.cropId,
+  });
+  const byLine = new Map(totals.lines.map((l, i) => [i, l]));
+
   const { rows } = await client.query(
     `INSERT INTO crop_sales
        (org_id, txn_no, txn_date, business_type, buyer_company_id, warehouse_id,
         valuation_method, transport_cost, other_cost, gross_amount, net_amount,
-        paid_amount, status, created_by)
-     VALUES ($1,$2,$3,'BULK_CROP',$4,$5,$6,$7,$8,$9,$9,$10,'DRAFT',$11)
+        tax_amount, total_amount, tax_inclusive, paid_amount, status, created_by)
+     VALUES ($1,$2,$3,'BULK_CROP',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'DRAFT',$15)
      RETURNING id`,
     [
       orgId,
@@ -141,6 +157,10 @@ export async function createCropSale(client, { orgId, user, actor, input }) {
       num(input.transportCost),
       num(input.otherCost),
       grossAmount,
+      totals.net,
+      totals.tax,
+      totals.total,
+      totals.taxInclusive,
       num(input.paidAmount),
       user.id,
     ]
@@ -152,11 +172,15 @@ export async function createCropSale(client, { orgId, user, actor, input }) {
   const items = [];
   for (const line of input.lines) {
     lineNo += 1;
-    const lineValue = num(line.quantity) * num(line.rate);
+    const taxedLine = byLine.get(lineNo - 1);
+    const lineValue = num(taxedLine.lineNet);
     const { rows: item } = await client.query(
-      `INSERT INTO crop_sale_items (sale_id, line_no, crop_id, unit_id, quantity, rate, line_value)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [saleId, lineNo, line.cropId, line.unitId, num(line.quantity), num(line.rate), lineValue]
+      `INSERT INTO crop_sale_items
+         (sale_id, line_no, crop_id, unit_id, quantity, rate, line_value,
+          tax_rate_id, tax_rate, tax_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [saleId, lineNo, line.cropId, line.unitId, num(line.quantity), num(line.rate), lineValue,
+        taxedLine.taxRateId ?? null, num(taxedLine.taxRate), num(taxedLine.taxAmount)]
     );
     items.push({ id: Number(item[0].id), line, lineValue });
   }
@@ -292,10 +316,14 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
   }
 
   const netAmount = num(header.net_amount);
+  const taxAmount = num(header.tax_amount);
+  // The buyer owes the invoice including tax; the profit is on the goods,
+  // because the tax was never the business's to earn.
+  const totalAmount = num(header.total_amount) || netAmount;
   const expenses = num(header.transport_cost) + num(header.other_cost);
   const profit = netAmount - totalCogs - expenses;
   const paid = num(header.paid_amount);
-  const due = netAmount - paid;
+  const due = totalAmount - paid;
 
   if (due > 0) {
     await createReceivable(client, {
@@ -308,7 +336,7 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
       invoiceNo: header.txn_no,
       invoiceDate: header.txn_date,
       dueDate: addDays(header.txn_date, 14),
-      invoiceAmount: netAmount,
+      invoiceAmount: totalAmount,
       paidAmount: paid,
     });
   }
@@ -323,7 +351,7 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
     partyType: 'COMPANY',
     partyId: Number(header.buyer_company_id),
     narration: `Crop sale ${header.txn_no} to ${buyerName}`,
-    debit: netAmount,
+    debit: totalAmount,
     credit: 0,
     referenceType: 'crop_sales',
     referenceId: saleId,
@@ -341,6 +369,24 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
     referenceId: saleId,
     userId: user.id,
   });
+
+  // Tax charged is owed to the NBR, not earned. Crop is usually exempt, so
+  // this is normally nothing -- but a processed line is not, and the account
+  // has to be right for the month it happens in.
+  if (taxAmount > 0) {
+    await writeLedger(client, {
+      orgId,
+      entryDate: header.txn_date,
+      businessType: 'BULK_CROP',
+      coaId: await ledgerAccount(client, orgId, LEDGER.OUTPUT_VAT),
+      narration: `Output VAT on ${header.txn_no}`,
+      debit: 0,
+      credit: taxAmount,
+      referenceType: 'crop_sales',
+      referenceId: saleId,
+      userId: user.id,
+    });
+  }
 
   // Selling stock is two events, not one: income is earned, and goods leave.
   // Recording only the first is what left revenue on the books with no cost

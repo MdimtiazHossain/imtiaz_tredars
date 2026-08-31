@@ -4,6 +4,7 @@ import { writeAudit } from '../lib/audit.js';
 import { badRequest, notFound, unprocessable } from '../lib/errors.js';
 import { recordMovement, reverseMovements } from './inventoryService.js';
 import {
+  writeLedger,
   writeLedgerPair,
   reverseLedgerFor,
   ledgerAccount,
@@ -184,7 +185,7 @@ async function sourceLines(client, { sourceType, sourceId }) {
   if (sourceType === 'dealer_sales') {
     const { rows } = await client.query(
       `SELECT i.id, i.line_no, i.product_id, p.name AS product_name, p.code AS product_code,
-              i.quantity, i.rate, i.discount_pct, i.line_net, i.unit_cost
+              i.quantity, i.rate, i.discount_pct, i.line_net, i.unit_cost, i.tax_rate
          FROM dealer_sale_items i
          JOIN products p ON p.id = i.product_id
         WHERE i.sale_id = $1 ORDER BY i.line_no`,
@@ -204,6 +205,7 @@ async function sourceLines(client, { sourceType, sourceId }) {
       quantity: num(r.quantity),
       rate: num(r.rate),
       discountPct: num(r.discount_pct),
+      taxRate: num(r.tax_rate),
       unitCost: num(r.unit_cost),
     }));
   }
@@ -211,7 +213,7 @@ async function sourceLines(client, { sourceType, sourceId }) {
   if (sourceType === 'dealer_purchases') {
     const { rows } = await client.query(
       `SELECT i.id, i.line_no, i.product_id, p.name AS product_name, p.code AS product_code,
-              i.quantity, i.rate, i.discount_pct, i.line_net,
+              i.quantity, i.rate, i.discount_pct, i.line_net, i.tax_rate,
               COALESCE(s.quantity, 0) AS on_hand
          FROM dealer_purchase_items i
          JOIN products p ON p.id = i.product_id
@@ -235,6 +237,7 @@ async function sourceLines(client, { sourceType, sourceId }) {
       quantity: num(r.quantity),
       rate: num(r.rate),
       discountPct: num(r.discount_pct),
+      taxRate: num(r.tax_rate),
       // Goods go back at what we paid, which is this line's own net rate.
       unitCost: num(r.quantity) ? num(r.line_net) / num(r.quantity) : 0,
     }));
@@ -243,7 +246,7 @@ async function sourceLines(client, { sourceType, sourceId }) {
   if (sourceType === 'crop_sales') {
     const { rows } = await client.query(
       `SELECT a.id, i.line_no, a.batch_id, b.batch_no, b.warehouse_id, c.name AS crop_name,
-              a.quantity, i.rate, a.unit_cost
+              a.quantity, i.rate, a.unit_cost, i.tax_rate
          FROM crop_batch_allocations a
          JOIN crop_sale_items i ON i.id = a.sale_item_id
          JOIN crop_batches b ON b.id = a.batch_id
@@ -265,6 +268,7 @@ async function sourceLines(client, { sourceType, sourceId }) {
       quantity: num(r.quantity),
       rate: num(r.rate),
       discountPct: 0,
+      taxRate: num(r.tax_rate),
       unitCost: num(r.unit_cost),
     }));
   }
@@ -276,7 +280,7 @@ async function sourceLines(client, { sourceType, sourceId }) {
   const { rows } = await client.query(
     `SELECT i.line_no, b.id AS batch_id, b.batch_no, b.warehouse_id,
             b.quantity_received, b.quantity_remaining, c.name AS crop_name,
-            i.rate, b.cost_per_unit
+            i.rate, b.cost_per_unit, i.tax_rate
        FROM crop_purchase_items i
        JOIN crops c ON c.id = i.crop_id
        JOIN crop_batches b ON b.purchase_item_id = i.id
@@ -296,6 +300,7 @@ async function sourceLines(client, { sourceType, sourceId }) {
     quantity: num(r.quantity_received),
     rate: num(r.rate),
     discountPct: 0,
+    taxRate: num(r.tax_rate),
     unitCost: num(r.cost_per_unit),
   }));
 }
@@ -304,21 +309,38 @@ async function sourceLines(client, { sourceType, sourceId }) {
 
 /** What a set of return lines comes to, before anything is written down. */
 export function computeReturnTotals(lines) {
+  const paisa = (n) => Math.round(n * 100) / 100;
   let gross = 0;
   let discount = 0;
   let cost = 0;
+  let tax = 0;
 
   const computed = lines.map((l) => {
     const amount = num(l.quantity) * num(l.rate);
     const lineDiscount = (amount * num(l.discountPct)) / 100;
     const lineCost = num(l.quantity) * num(l.unitCost);
+    const lineNet = amount - lineDiscount;
+    // The rate the original document charged, not today's. A budget that moves
+    // the standard rate must not change what a returning customer is credited.
+    const lineTax = paisa((lineNet * num(l.taxRate)) / 100);
+
     gross += amount;
     discount += lineDiscount;
     cost += lineCost;
-    return { ...l, lineNet: amount - lineDiscount, lineCost };
+    tax += lineTax;
+    return { ...l, lineNet, lineCost, taxAmount: lineTax };
   });
 
-  return { lines: computed, gross, discount, net: gross - discount, cost };
+  const net = paisa(gross - discount);
+  return {
+    lines: computed,
+    gross: paisa(gross),
+    discount: paisa(discount),
+    net,
+    cost: paisa(cost),
+    tax: paisa(tax),
+    total: paisa(net + tax),
+  };
 }
 
 /* ------------------------------------------------------------------ create */
@@ -363,6 +385,7 @@ export async function createReturn(client, { orgId, user, actor, input }) {
       // was charged. Only the quantity is a decision.
       rate: original.rate,
       discountPct: original.discountPct,
+      taxRate: original.taxRate,
       unitCost: original.unitCost,
     });
   }
@@ -384,8 +407,9 @@ export async function createReturn(client, { orgId, user, actor, input }) {
     `INSERT INTO returns
        (org_id, txn_no, txn_date, business_type, source_type, source_id, source_no,
         party_type, party_id, warehouse_id, reason,
-        gross_amount, discount_amount, net_amount, cost_amount, status, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'DRAFT',$16)
+        gross_amount, discount_amount, net_amount, tax_amount, total_amount,
+        cost_amount, status, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'DRAFT',$18)
      RETURNING id`,
     [
       orgId,
@@ -402,6 +426,8 @@ export async function createReturn(client, { orgId, user, actor, input }) {
       totals.gross,
       totals.discount,
       totals.net,
+      totals.tax,
+      totals.total,
       totals.cost,
       user.id,
     ]
@@ -415,8 +441,9 @@ export async function createReturn(client, { orgId, user, actor, input }) {
     await client.query(
       `INSERT INTO return_items
          (return_id, line_no, source_item_id, item_type, product_id, batch_id,
-          quantity, rate, discount_pct, line_net, unit_cost, line_cost)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          quantity, rate, discount_pct, line_net, unit_cost, line_cost,
+          tax_rate, tax_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         returnId,
         lineNo,
@@ -430,6 +457,8 @@ export async function createReturn(client, { orgId, user, actor, input }) {
         line.lineNet,
         line.unitCost,
         line.lineCost,
+        num(line.taxRate),
+        num(line.taxAmount),
       ]
     );
   }
@@ -507,12 +536,14 @@ export async function postReturn(client, { orgId, user, actor, returnId }) {
     }
   }
 
+  // The party is credited what they were charged, tax included: a customer who
+  // paid VAT on goods they sent back gets the VAT back with them.
   const note = await raiseNote(client, {
     orgId,
     user,
     kind,
     header,
-    amount: num(header.net_amount),
+    amount: num(header.total_amount) || num(header.net_amount),
     reason: header.reason,
     returnId,
   });
@@ -747,6 +778,8 @@ export async function applyNote(client, { noteId, invoiceTable, invoiceType, inv
  */
 async function writeReturnJournal(client, { orgId, user, kind, header, returnId }) {
   const net = num(header.net_amount);
+  const tax = num(header.tax_amount);
+  const total = num(header.total_amount) || net;
   const cost = num(header.cost_amount);
   const shared = {
     orgId,
@@ -758,17 +791,34 @@ async function writeReturnJournal(client, { orgId, user, kind, header, returnId 
   };
 
   if (kind.inbound) {
-    if (net > 0) {
-      await writeLedgerPair(client, {
+    if (total > 0) {
+      // Three-sided, because a sale was: the revenue comes off, the VAT the
+      // business no longer owes the NBR comes off, and the customer is
+      // credited the two together.
+      await writeLedger(client, {
         ...shared,
-        amount: net,
+        coaId: await ledgerAccount(client, orgId, LEDGER.SALES_RETURNS),
         narration: `Return ${header.txn_no} against ${header.source_no}`,
-        debit: { coaId: await ledgerAccount(client, orgId, LEDGER.SALES_RETURNS) },
-        credit: {
-          coaId: await ledgerAccount(client, orgId, LEDGER.RECEIVABLE),
-          partyType: header.party_type,
-          partyId: Number(header.party_id),
-        },
+        debit: net,
+        credit: 0,
+      });
+      if (tax > 0) {
+        await writeLedger(client, {
+          ...shared,
+          coaId: await ledgerAccount(client, orgId, LEDGER.OUTPUT_VAT),
+          narration: `Output VAT credited back on ${header.txn_no}`,
+          debit: tax,
+          credit: 0,
+        });
+      }
+      await writeLedger(client, {
+        ...shared,
+        coaId: await ledgerAccount(client, orgId, LEDGER.RECEIVABLE),
+        partyType: header.party_type,
+        partyId: Number(header.party_id),
+        narration: `Credited to ${header.source_no}`,
+        debit: 0,
+        credit: total,
       });
     }
     if (cost > 0) {
@@ -783,18 +833,35 @@ async function writeReturnJournal(client, { orgId, user, kind, header, returnId 
     return;
   }
 
-  if (net > 0) {
-    await writeLedgerPair(client, {
+  if (total > 0) {
+    // Goods went back and so does the rebate: input VAT already claimed on
+    // them is no longer claimable, so it is credited out rather than left
+    // sitting as a receivable from the NBR.
+    await writeLedger(client, {
       ...shared,
-      amount: net,
+      coaId: await ledgerAccount(client, orgId, LEDGER.PAYABLE),
+      partyType: header.party_type,
+      partyId: Number(header.party_id),
       narration: `Return ${header.txn_no} against ${header.source_no}`,
-      debit: {
-        coaId: await ledgerAccount(client, orgId, LEDGER.PAYABLE),
-        partyType: header.party_type,
-        partyId: Number(header.party_id),
-      },
-      credit: { coaId: await ledgerAccount(client, orgId, LEDGER.INVENTORY) },
+      debit: total,
+      credit: 0,
     });
+    await writeLedger(client, {
+      ...shared,
+      coaId: await ledgerAccount(client, orgId, LEDGER.INVENTORY),
+      narration: `Stock sent back on ${header.txn_no}`,
+      debit: 0,
+      credit: net,
+    });
+    if (tax > 0) {
+      await writeLedger(client, {
+        ...shared,
+        coaId: await ledgerAccount(client, orgId, LEDGER.INPUT_VAT),
+        narration: `Input VAT reversed on ${header.txn_no}`,
+        debit: 0,
+        credit: tax,
+      });
+    }
   }
 }
 

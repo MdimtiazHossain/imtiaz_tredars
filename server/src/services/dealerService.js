@@ -15,6 +15,7 @@ import {
   reverseLedgerFor,
 } from './financeService.js';
 import { evaluateRules, requestApproval } from './approvalService.js';
+import { taxContext, taxDocument, reclaimableTax } from './taxService.js';
 
 /**
  * Dealer business: stock bought from principal companies and sold on credit to
@@ -72,7 +73,9 @@ export async function createDealerPurchase(client, { orgId, user, actor, input }
     }
   }
 
-  const totals = computePurchaseTotals(input);
+  const priced = computePurchaseTotals(input);
+  const totals = await taxDocument(client, { orgId, input, priced, table: 'products',
+    itemIdOf: (l) => l.productId });
   const txnNo =
     input.txnNo || (await nextDocumentNo(client, orgId, 'dealer_purchase', input.txnDate));
 
@@ -80,8 +83,9 @@ export async function createDealerPurchase(client, { orgId, user, actor, input }
     `INSERT INTO dealer_purchases
        (org_id, txn_no, txn_date, business_type, company_id, supplier_invoice_no,
         warehouse_id, payment_terms, transport_cost, other_cost,
-        gross_amount, discount_amount, net_amount, status, created_by)
-     VALUES ($1,$2,$3,'DEALER',$4,$5,$6,$7,$8,$9,$10,$11,$12,'DRAFT',$13)
+        gross_amount, discount_amount, net_amount, tax_amount, total_amount,
+        tax_inclusive, status, created_by)
+     VALUES ($1,$2,$3,'DEALER',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'DRAFT',$16)
      RETURNING id`,
     [
       orgId,
@@ -96,6 +100,9 @@ export async function createDealerPurchase(client, { orgId, user, actor, input }
       totals.gross,
       totals.discount,
       totals.net,
+      totals.tax,
+      totals.total,
+      totals.taxInclusive,
       user.id,
     ]
   );
@@ -107,8 +114,9 @@ export async function createDealerPurchase(client, { orgId, user, actor, input }
     lineNo += 1;
     await client.query(
       `INSERT INTO dealer_purchase_items
-         (purchase_id, line_no, product_id, quantity, free_quantity, rate, discount_pct, line_net)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+         (purchase_id, line_no, product_id, quantity, free_quantity, rate, discount_pct,
+          line_net, tax_rate_id, tax_rate, tax_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         purchaseId,
         lineNo,
@@ -118,6 +126,9 @@ export async function createDealerPurchase(client, { orgId, user, actor, input }
         num(line.rate),
         num(line.discountPct),
         line.lineNet,
+        line.taxRateId ?? null,
+        num(line.taxRate),
+        num(line.taxAmount),
       ]
     );
   }
@@ -182,8 +193,17 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
     [purchaseId]
   );
 
+  // Tax the business cannot claim back is part of what the goods cost, so it
+  // is landed onto the stock alongside transport rather than sitting in a
+  // receivable the NBR will never pay.
+  const context = await taxContext(orgId, client);
+  const { reclaimable: inputTax, embedded: embeddedTax } = reclaimableTax(
+    context,
+    items.map(i => ({ taxAmount: i.tax_amount, taxRateId: i.tax_rate_id }))
+  );
+
   const gross = num(header.gross_amount) - num(header.discount_amount);
-  const additional = num(header.transport_cost) + num(header.other_cost);
+  const additional = num(header.transport_cost) + num(header.other_cost) + embeddedTax;
 
   for (const item of items) {
     // Free issue arrives as stock too, so the effective unit cost spreads the
@@ -210,6 +230,10 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
   }
 
   const netAmount = num(header.net_amount);
+  // What the principal is owed is the invoice total; what the stock is worth
+  // is the goods plus whatever tax could not be reclaimed.
+  const totalAmount = num(header.total_amount) || netAmount;
+  const inventoryValue = netAmount + embeddedTax;
   const { rows: companyRows } = await client.query(
     'SELECT name, credit_days FROM companies WHERE id = $1',
     [header.company_id]
@@ -225,7 +249,7 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
     invoiceNo: header.txn_no,
     invoiceDate: header.txn_date,
     dueDate: addDays(header.txn_date, num(companyRows[0]?.credit_days) || 30),
-    invoiceAmount: netAmount,
+    invoiceAmount: totalAmount,
     paidAmount: 0,
   });
 
@@ -237,7 +261,7 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
     entryDate: header.txn_date,
     businessType: 'DEALER',
     narration: `Dealer purchase ${header.txn_no}`,
-    debit: netAmount,
+    debit: inventoryValue,
     credit: 0,
     referenceType: 'dealer_purchases',
     referenceId: purchaseId,
@@ -252,11 +276,27 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
     partyId: Number(header.company_id),
     narration: `Payable to ${companyRows[0]?.name} for ${header.txn_no}`,
     debit: 0,
-    credit: netAmount,
+    credit: totalAmount,
     referenceType: 'dealer_purchases',
     referenceId: purchaseId,
     userId: user.id,
   });
+
+  // VAT paid on an input is money the NBR owes back, not a cost of trading.
+  if (inputTax > 0) {
+    await writeLedger(client, {
+      orgId,
+      coaId: await ledgerAccount(client, orgId, LEDGER.INPUT_VAT),
+      entryDate: header.txn_date,
+      businessType: 'DEALER',
+      narration: `Input VAT on ${header.txn_no}`,
+      debit: inputTax,
+      credit: 0,
+      referenceType: 'dealer_purchases',
+      referenceId: purchaseId,
+      userId: user.id,
+    });
+  }
 
   await client.query(
     `UPDATE dealer_purchases SET status = 'POSTED', posted_at = now(), updated_by = $1 WHERE id = $2`,
@@ -279,6 +319,11 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
 /* ------------------------------------------------------------------ sales */
 
 export function computeSaleTotals({ lines, paidAmount }, costOf) {
+  // Money columns hold paisa. Rounding each line here rather than letting the
+  // database round on the way in is what keeps the header equal to the sum of
+  // its lines: a stock cost carries four decimals, and the sum of rounded line
+  // costs is not the rounded sum of unrounded ones.
+  const paisa = (n) => Math.round(n * 100) / 100;
   let gross = 0;
   let discount = 0;
   let cost = 0;
@@ -287,14 +332,17 @@ export function computeSaleTotals({ lines, paidAmount }, costOf) {
     const amount = num(l.quantity) * num(l.rate);
     const lineDiscount = (amount * num(l.discountPct)) / 100;
     const unitCost = costOf ? costOf(l.productId) : 0;
-    const lineCost = (num(l.quantity) + num(l.bonusQuantity)) * unitCost;
+    const lineCost = paisa((num(l.quantity) + num(l.bonusQuantity)) * unitCost);
 
     gross += amount;
     discount += lineDiscount;
     cost += lineCost;
 
-    return { ...l, lineNet: amount - lineDiscount, unitCost, lineCost };
+    return { ...l, lineNet: paisa(amount - lineDiscount), unitCost, lineCost };
   });
+  gross = paisa(gross);
+  discount = paisa(discount);
+  cost = paisa(cost);
 
   const net = gross - discount;
   const profit = net - cost;
@@ -353,16 +401,25 @@ export async function createDealerSale(client, { orgId, user, actor, input }) {
     [input.warehouseId, input.lines.map((l) => l.productId)]
   );
   const costMap = new Map(costRows.map((r) => [Number(r.product_id), num(r.avg_cost)]));
-  const totals = computeSaleTotals(input, (pid) => costMap.get(Number(pid)) || 0);
+  const priced = computeSaleTotals(input, (pid) => costMap.get(Number(pid)) || 0);
+  const totals = await taxDocument(client, { orgId, input, priced, table: 'products',
+    itemIdOf: (l) => l.productId });
+  // Profit is on the goods, not on the tax: VAT is collected for the NBR and
+  // was never the business's to earn. Inclusive pricing moves the taxable
+  // value, so the profit has to be restated against it.
+  totals.profit = totals.net - totals.cost;
+  totals.margin = totals.net ? (totals.profit / totals.net) * 100 : 0;
+  totals.due = totals.total - num(input.paidAmount);
 
   const txnNo = input.txnNo || (await nextDocumentNo(client, orgId, 'dealer_sale', input.txnDate));
 
   const { rows } = await client.query(
     `INSERT INTO dealer_sales
        (org_id, txn_no, txn_date, business_type, customer_id, warehouse_id, salesperson_id,
-        payment_terms, gross_amount, discount_amount, net_amount, cost_amount,
+        payment_terms, gross_amount, discount_amount, net_amount, tax_amount,
+        total_amount, tax_inclusive, cost_amount,
         profit_amount, paid_amount, status, created_by)
-     VALUES ($1,$2,$3,'DEALER',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'DRAFT',$14)
+     VALUES ($1,$2,$3,'DEALER',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'DRAFT',$17)
      RETURNING id`,
     [
       orgId,
@@ -375,6 +432,9 @@ export async function createDealerSale(client, { orgId, user, actor, input }) {
       totals.gross,
       totals.discount,
       totals.net,
+      totals.tax,
+      totals.total,
+      totals.taxInclusive,
       totals.cost,
       totals.profit,
       num(input.paidAmount),
@@ -390,8 +450,8 @@ export async function createDealerSale(client, { orgId, user, actor, input }) {
     await client.query(
       `INSERT INTO dealer_sale_items
          (sale_id, line_no, product_id, quantity, bonus_quantity, rate, discount_pct,
-          line_net, unit_cost, line_cost)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          line_net, unit_cost, line_cost, tax_rate_id, tax_rate, tax_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         saleId,
         lineNo,
@@ -403,6 +463,9 @@ export async function createDealerSale(client, { orgId, user, actor, input }) {
         line.lineNet,
         line.unitCost,
         line.lineCost,
+        line.taxRateId ?? null,
+        num(line.taxRate),
+        num(line.taxAmount),
       ]
     );
   }
@@ -495,8 +558,12 @@ export async function postDealerSale(client, { orgId, user, actor, saleId }) {
   }
 
   const netAmount = num(header.net_amount);
+  const taxAmount = num(header.tax_amount);
+  // The customer owes the invoice, tax included; the business earned only the
+  // goods. Every figure below picks one of those on purpose.
+  const totalAmount = num(header.total_amount) || netAmount;
   const paid = num(header.paid_amount);
-  const due = netAmount - paid;
+  const due = totalAmount - paid;
 
   const { rows: customerRows } = await client.query(
     'SELECT name, credit_days FROM customers WHERE id = $1',
@@ -514,7 +581,7 @@ export async function postDealerSale(client, { orgId, user, actor, saleId }) {
       invoiceNo: header.txn_no,
       invoiceDate: header.txn_date,
       dueDate: addDays(header.txn_date, num(customerRows[0]?.credit_days) || 15),
-      invoiceAmount: netAmount,
+      invoiceAmount: totalAmount,
       paidAmount: paid,
     });
   }
@@ -529,7 +596,7 @@ export async function postDealerSale(client, { orgId, user, actor, saleId }) {
     partyType: 'CUSTOMER',
     partyId: Number(header.customer_id),
     narration: `Dealer sale ${header.txn_no} to ${customerRows[0]?.name}`,
-    debit: netAmount,
+    debit: totalAmount,
     credit: 0,
     referenceType: 'dealer_sales',
     referenceId: saleId,
@@ -547,6 +614,24 @@ export async function postDealerSale(client, { orgId, user, actor, saleId }) {
     referenceId: saleId,
     userId: user.id,
   });
+
+  // VAT charged is owed to the NBR from the moment the invoice goes out. It is
+  // not income, and crediting sales with it would overstate the business by
+  // whatever it collects on the government's behalf.
+  if (taxAmount > 0) {
+    await writeLedger(client, {
+      orgId,
+      entryDate: header.txn_date,
+      businessType: 'DEALER',
+      coaId: await ledgerAccount(client, orgId, LEDGER.OUTPUT_VAT),
+      narration: `Output VAT on ${header.txn_no}`,
+      debit: 0,
+      credit: taxAmount,
+      referenceType: 'dealer_sales',
+      referenceId: saleId,
+      userId: user.id,
+    });
+  }
 
   // Goods leaving the shelf are a cost, and were not being recorded as one.
   // The amount is the stock cost the sale actually consumed -- the cost stored

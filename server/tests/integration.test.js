@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { pool, withTransaction, query, closePool, num } from '../src/lib/db.js';
 import { createCropPurchase, cancelCropPurchase } from '../src/services/cropPurchaseService.js';
 import { createCropSale } from '../src/services/cropSaleService.js';
-import { createDealerPurchase, createDealerSale } from '../src/services/dealerService.js';
+import {
+  createDealerPurchase,
+  createDealerSale,
+  postDealerPurchase,
+  postDealerSale,
+} from '../src/services/dealerService.js';
 import { allocatePayment } from '../src/services/financeService.js';
 import { createTransfer, cancelTransfer } from '../src/services/transferService.js';
 import { nextDocumentNo } from '../src/lib/numbering.js';
@@ -374,42 +379,52 @@ suite('posting integrity', () => {
   });
 });
 
+/**
+ * Raise a dealer document and post it, whatever the approval rules say.
+ *
+ * Asking for 'POST' means "post this if you may", and an approval rule may
+ * refuse -- which it increasingly does as the seeded customer's balance grows
+ * across runs. These tests are about what posting does to stock and to the
+ * ledger; whether a rule catches a large sale is tested on its own. So the
+ * document is drafted and then posted outright.
+ */
+async function postedDealerDocument(kind, input) {
+  return withTransaction(async (client) => {
+    const create = kind === 'sale' ? createDealerSale : createDealerPurchase;
+    const draft = await create(client, { ...ctx, input: { ...input, action: 'DRAFT' } });
+    if (kind === 'sale') {
+      await postDealerSale(client, { ...ctx, saleId: draft.id });
+    } else {
+      await postDealerPurchase(client, { ...ctx, purchaseId: draft.id });
+    }
+    return { ...draft, status: 'POSTED' };
+  });
+}
+
 suite('dealer flow', () => {
   it('reduces product stock and raises a receivable', async () => {
-    await withTransaction((client) =>
-      createDealerPurchase(client, {
-        ...ctx,
-        input: {
-          txnDate: '2026-08-28',
-          companyId: ctx.companyId,
-          warehouseId: ctx.warehouseId,
-          paymentTerms: 'Credit 30 days',
-          transportCost: 0,
-          otherCost: 0,
-          lines: [{ productId: ctx.productId, quantity: 50, freeQuantity: 0, rate: 2380, discountPct: 0 }],
-          action: 'POST',
-        },
-      })
-    );
+    await postedDealerDocument('purchase', {
+      txnDate: '2026-08-28',
+      companyId: ctx.companyId,
+      warehouseId: ctx.warehouseId,
+      paymentTerms: 'Credit 30 days',
+      transportCost: 0,
+      otherCost: 0,
+      lines: [{ productId: ctx.productId, quantity: 50, freeQuantity: 0, rate: 2380, discountPct: 0 }],
+    });
 
     const before = await query(
       "SELECT quantity FROM stock WHERE warehouse_id = $1 AND product_id = $2 AND item_type = 'PRODUCT'",
       [ctx.warehouseId, ctx.productId]
     );
 
-    const sale = await withTransaction((client) =>
-      createDealerSale(client, {
-        ...ctx,
-        input: {
-          txnDate: '2026-08-28',
-          customerId: ctx.customerId,
-          warehouseId: ctx.warehouseId,
-          paidAmount: 0,
-          lines: [{ productId: ctx.productId, quantity: 5, bonusQuantity: 0, rate: 2560, discountPct: 0 }],
-          action: 'POST',
-        },
-      })
-    );
+    const sale = await postedDealerDocument('sale', {
+      txnDate: '2026-08-28',
+      customerId: ctx.customerId,
+      warehouseId: ctx.warehouseId,
+      paidAmount: 0,
+      lines: [{ productId: ctx.productId, quantity: 5, bonusQuantity: 0, rate: 2560, discountPct: 0 }],
+    });
 
     expect(sale.status).toBe('POSTED');
 
@@ -427,19 +442,13 @@ suite('dealer flow', () => {
   });
 
   it('allocates one payment across an invoice and leaves the rest on account', async () => {
-    const sale = await withTransaction((client) =>
-      createDealerSale(client, {
-        ...ctx,
-        input: {
-          txnDate: '2026-08-28',
-          customerId: ctx.customerId,
-          warehouseId: ctx.warehouseId,
-          paidAmount: 0,
-          lines: [{ productId: ctx.productId, quantity: 2, bonusQuantity: 0, rate: 1000, discountPct: 0 }],
-          action: 'POST',
-        },
-      })
-    );
+    const sale = await postedDealerDocument('sale', {
+      txnDate: '2026-08-28',
+      customerId: ctx.customerId,
+      warehouseId: ctx.warehouseId,
+      paidAmount: 0,
+      lines: [{ productId: ctx.productId, quantity: 2, bonusQuantity: 0, rate: 1000, discountPct: 0 }],
+    });
 
     const result = await withTransaction(async (client) => {
       const { rows } = await client.query(
@@ -472,19 +481,13 @@ suite('dealer flow', () => {
   });
 
   it('refuses to allocate more than the invoice balance', async () => {
-    const sale = await withTransaction((client) =>
-      createDealerSale(client, {
-        ...ctx,
-        input: {
-          txnDate: '2026-08-28',
-          customerId: ctx.customerId,
-          warehouseId: ctx.warehouseId,
-          paidAmount: 0,
-          lines: [{ productId: ctx.productId, quantity: 1, bonusQuantity: 0, rate: 500, discountPct: 0 }],
-          action: 'POST',
-        },
-      })
-    );
+    const sale = await postedDealerDocument('sale', {
+      txnDate: '2026-08-28',
+      customerId: ctx.customerId,
+      warehouseId: ctx.warehouseId,
+      paidAmount: 0,
+      lines: [{ productId: ctx.productId, quantity: 1, bonusQuantity: 0, rate: 500, discountPct: 0 }],
+    });
 
     await expect(
       withTransaction(async (client) => {

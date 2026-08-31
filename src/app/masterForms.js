@@ -74,7 +74,16 @@ const TITLES = {
   unit: ['unit', 'How quantities are measured, and what they convert to'],
   productCategory: ['product category', 'What the dealer catalogue is grouped by'],
   brand: ['brand', 'Whose product it is — the maker, not the supplier'],
+  taxRate: ['tax rate', 'What a supply is charged at, and whether its input tax can be claimed back'],
 };
+
+/** A rate as it reads in a picker: what it charges, or why it charges nothing. */
+export function taxRateLabel(rate) {
+  if (!rate) return '';
+  if (rate.kind === 'EXEMPT') return `${rate.name} — exempt`;
+  if (rate.kind === 'ZERO') return `${rate.name} — zero-rated`;
+  return `${rate.name} — ${rate.rate}%`;
+}
 
 /** What one record of this kind is called, for a title or a message. */
 export function nounFor(kind) {
@@ -94,6 +103,7 @@ export function defaultsFor(kind, data, row) {
       name: row ? row.name : '',
       unit: row ? row.unit || (data.units || [])[0] : (data.units || [])[0] || 'MT',
       rate: row ? row.rate : '',
+      taxRateId: row && row.taxRateId ? String(row.taxRateId) : '',
     };
   }
 
@@ -122,6 +132,20 @@ export function defaultsFor(kind, data, row) {
       code: row ? row.code : '',
       name: row ? row.name : '',
       account: row ? row.account : '',
+    };
+  }
+
+  if (kind === 'taxRate') {
+    return {
+      code: row ? row.code : '',
+      name: row ? row.name : '',
+      nameBn: row ? row.nameBn || '' : '',
+      // Most rates a business adds are a truncated rate for one trade, which
+      // is what REDUCED is; the standard one already exists.
+      kind: row ? row.kind : 'REDUCED',
+      rate: row ? row.rate : '',
+      isReclaimable: row ? row.isReclaimable !== false : true,
+      isDefault: row ? !!row.isDefault : false,
     };
   }
 
@@ -155,6 +179,9 @@ export function defaultsFor(kind, data, row) {
       pur: row ? row.pur : '',
       sale: row ? row.sale : '',
       min: row ? row.min : '',
+      // Blank means the organisation's default rate, which is what most of a
+      // catalogue is charged at.
+      taxRateId: row && row.taxRateId ? String(row.taxRateId) : '',
     };
   }
 
@@ -167,6 +194,8 @@ export function defaultsFor(kind, data, row) {
       district: row ? row.district : firstDistrict,
       limit: row ? row.limit : '',
       days: row ? row.days : '',
+      bin: row ? row.bin || '' : '',
+      vatRegistered: row ? (row.vatRegistered ? 'yes' : 'no') : 'no',
     };
   }
 
@@ -180,6 +209,8 @@ export function defaultsFor(kind, data, row) {
       upazila: row ? row.upazila : '',
       bank: row ? row.bank : '',
       opening: row ? '' : '',
+      bin: row ? row.bin || '' : '',
+      vatRegistered: row ? (row.vatRegistered ? 'yes' : 'no') : 'no',
     };
   }
 
@@ -194,6 +225,8 @@ export function defaultsFor(kind, data, row) {
     limit: row ? row.limit : '',
     days: row ? row.days : '',
     opening: '',
+    bin: row ? row.bin || '' : '',
+    vatRegistered: row ? (row.vatRegistered ? 'yes' : 'no') : 'no',
   };
 }
 
@@ -225,6 +258,18 @@ export function fieldsFor(kind, form, data, on, row) {
         onChange: on('rate'),
         placeholder: '0',
         hint: 'Used as the opening suggestion on a purchase',
+      }),
+      field('taxRateId', 'VAT rate', {
+        options: [{ value: '', label: 'Default rate' }].concat(
+          (data.taxRates || [])
+            .filter((t) => t.active !== false)
+            .map((t) => ({ value: String(t.id), label: taxRateLabel(t) }))
+        ),
+        value: form.taxRateId,
+        onChange: on('taxRateId'),
+        // Unprocessed produce is exempt; a crop that is processed before sale
+        // is not, which is why this is a choice rather than a rule.
+        hint: 'Unprocessed produce is exempt; processed crop is not',
       }),
     ];
   }
@@ -291,6 +336,75 @@ export function fieldsFor(kind, form, data, on, row) {
         mono: true,
         placeholder: 'BKASH',
         hint: 'Optional — one is allocated if left blank',
+      }),
+    ];
+  }
+
+  if (kind === 'taxRate') {
+    // Zero-rated and exempt both charge nothing; the difference is whether tax
+    // paid on the way in can be claimed back, so the rate box is only asked
+    // for when there is a rate to give.
+    const charges = form.kind === 'STANDARD' || form.kind === 'REDUCED';
+    return [
+      field('name', 'Rate name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'VAT 7.5% truncated',
+        wide: true,
+      }),
+      field('nameBn', 'Name in Bangla', {
+        value: form.nameBn,
+        onChange: on('nameBn'),
+        placeholder: 'মূসক ৭.৫%',
+        wide: true,
+      }),
+      field('code', 'Short code', {
+        value: form.code,
+        onChange: on('code'),
+        mono: true,
+        placeholder: 'VAT7.5',
+        hint: row ? 'How the rate reads on a document' : 'Capitals, digits and dots',
+      }),
+      field('kind', 'Kind of supply', {
+        options: [
+          { value: 'STANDARD', label: 'Standard rate' },
+          { value: 'REDUCED', label: 'Truncated / reduced rate' },
+          { value: 'ZERO', label: 'Zero-rated — charges nothing, inputs reclaimable' },
+          { value: 'EXEMPT', label: 'Exempt — charges nothing, inputs not reclaimable' },
+        ],
+        value: form.kind,
+        onChange: on('kind'),
+      }),
+      ...(charges
+        ? [
+            field('rate', 'Rate', {
+              type: 'number',
+              value: form.rate,
+              onChange: on('rate'),
+              placeholder: '15',
+              hint: 'Percent of the taxable value',
+            }),
+          ]
+        : []),
+      field('isReclaimable', 'Input tax', {
+        options: [
+          { value: 'yes', label: 'Reclaimable from the NBR' },
+          { value: 'no', label: 'Not reclaimable — it is part of the cost' },
+        ],
+        // An exempt supply's input tax is never reclaimable, so the choice is
+        // made rather than offered.
+        value: form.kind === 'EXEMPT' ? 'no' : form.isReclaimable ? 'yes' : 'no',
+        onChange: on('isReclaimable'),
+        hint: form.kind === 'EXEMPT' ? 'Exempt supplies never reclaim' : '',
+      }),
+      field('isDefault', 'Default rate', {
+        options: [
+          { value: 'no', label: 'No' },
+          { value: 'yes', label: 'Yes — used where nothing else says' },
+        ],
+        value: form.isDefault ? 'yes' : 'no',
+        onChange: on('isDefault'),
+        hint: 'Exactly one rate is the default; setting this releases the last',
       }),
     ];
   }
@@ -458,6 +572,16 @@ export function fieldsFor(kind, form, data, on, row) {
         type: 'number', value: form.min, onChange: on('min'), placeholder: '0',
         hint: 'Below this the product is flagged as low stock',
       }),
+      field('taxRateId', 'VAT rate', {
+        options: [{ value: '', label: 'Default rate' }].concat(
+          (data.taxRates || [])
+            .filter((t) => t.active !== false)
+            .map((t) => ({ value: String(t.id), label: taxRateLabel(t) }))
+        ),
+        value: form.taxRateId,
+        onChange: on('taxRateId'),
+        hint: 'What this product is charged at; set the rates up under Settings › VAT',
+      }),
     ];
   }
 
@@ -582,6 +706,26 @@ export function fieldsFor(kind, form, data, on, row) {
     );
   }
 
+  // A BIN is what lets a registered party claim back the tax on an invoice, so
+  // it belongs on the party rather than being typed onto each document.
+  common.push(
+    field('bin', 'BIN', {
+      value: form.bin,
+      onChange: on('bin'),
+      mono: true,
+      placeholder: '004601573-0101',
+      hint: 'Printed on every invoice raised for them',
+    }),
+    field('vatRegistered', 'VAT registered', {
+      options: [
+        { value: 'no', label: 'No' },
+        { value: 'yes', label: 'Yes' },
+      ],
+      value: form.vatRegistered,
+      onChange: on('vatRegistered'),
+    })
+  );
+
   return common;
 }
 
@@ -609,6 +753,19 @@ export function validate(kind, form) {
   }
 
   if (kind === 'warehouse') return null;
+
+  if (kind === 'taxRate') {
+    if (!String(form.name || '').trim()) return 'Give the rate a name.';
+    if (form.code && !/^[A-Z0-9.]{1,12}$/.test(String(form.code).trim())) {
+      return 'A rate code is capitals, digits and dots, like VAT7.5.';
+    }
+    if (form.kind === 'STANDARD' || form.kind === 'REDUCED') {
+      const rate = Number(form.rate);
+      if (!(rate > 0)) return 'A standard or truncated rate charges something; enter the percent.';
+      if (rate > 100) return 'A rate cannot be more than 100%.';
+    }
+    return null;
+  }
 
   if (kind === 'unit') {
     if (!/^[A-Za-z][A-Za-z0-9 ]{0,15}$/.test(String(form.code || '').trim())) {
@@ -657,7 +814,12 @@ export function payloadFor(kind, form) {
   const number = (v) => Number(v) || 0;
 
   if (kind === 'crop') {
-    return { name: text(form.name), unit: form.unit, rate: number(form.rate) };
+    return {
+      name: text(form.name),
+      unit: form.unit,
+      rate: number(form.rate),
+      taxRateId: form.taxRateId ? Number(form.taxRateId) : null,
+    };
   }
 
   if (kind === 'warehouse') {
@@ -683,6 +845,21 @@ export function payloadFor(kind, form) {
       code: text(form.code) || undefined,
       name: text(form.name),
       account: text(form.account),
+    };
+  }
+
+  if (kind === 'taxRate') {
+    const charges = form.kind === 'STANDARD' || form.kind === 'REDUCED';
+    return {
+      code: text(form.code) || undefined,
+      name: text(form.name),
+      nameBn: text(form.nameBn),
+      kind: form.kind,
+      // Zero-rated and exempt carry no rate whatever was typed before the
+      // kind was changed.
+      rate: charges ? number(form.rate) : 0,
+      isReclaimable: form.kind === 'EXEMPT' ? false : form.isReclaimable === 'yes' || form.isReclaimable === true,
+      isDefault: form.isDefault === 'yes' || form.isDefault === true,
     };
   }
 
@@ -717,6 +894,9 @@ export function payloadFor(kind, form) {
       pur: number(form.pur),
       sale: number(form.sale),
       min: number(form.min),
+      // Null rather than absent, so clearing it really does put the product
+      // back on the default rather than leaving the last choice in place.
+      taxRateId: form.taxRateId ? Number(form.taxRateId) : null,
     };
   }
 
@@ -729,6 +909,8 @@ export function payloadFor(kind, form) {
       district: text(form.district),
       limit: number(form.limit),
       days: number(form.days),
+      bin: text(form.bin),
+      vatRegistered: form.vatRegistered === 'yes',
     };
   }
 
@@ -742,6 +924,8 @@ export function payloadFor(kind, form) {
       upazila: text(form.upazila),
       bank: text(form.bank),
       opening: number(form.opening),
+      bin: text(form.bin),
+      vatRegistered: form.vatRegistered === 'yes',
     };
   }
 
@@ -756,6 +940,8 @@ export function payloadFor(kind, form) {
     limit: number(form.limit),
     days: number(form.days),
     opening: number(form.opening),
+    bin: text(form.bin),
+    vatRegistered: form.vatRegistered === 'yes',
   };
 }
 

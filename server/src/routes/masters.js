@@ -71,6 +71,8 @@ router.get(
         code: r.code,
         name: r.name,
         bn: r.name_bn || '',
+    bin: r.bin_no || '',
+    vatRegistered: r.is_vat_registered,
         type: r.customer_type,
         person: r.contact_person || '',
         mobile: r.mobile,
@@ -88,6 +90,8 @@ router.get(
 );
 
 const customerSchema = z.object({
+  bin: z.string().trim().max(24).optional(),
+  vatRegistered: z.coerce.boolean().optional(),
   name: z.string().trim().min(1, 'Customer name is required').max(200),
   bn: z.string().trim().max(200).optional().default(''),
   type: z.string().trim().max(40).default('Dealer'),
@@ -212,6 +216,8 @@ router.get(
         code: r.code,
         name: r.name,
         bn: r.name_bn || '',
+    bin: r.bin_no || '',
+    vatRegistered: r.is_vat_registered,
         type: r.supplier_type,
         mobile: r.mobile,
         district: r.district || '',
@@ -296,7 +302,8 @@ router.get(
     );
     const { rows } = await query(
       `SELECT p.id, p.code, p.name, pc.name AS category, b.name AS brand, u.code AS unit,
-              p.purchase_rate, p.sale_rate, p.min_stock,
+              p.purchase_rate, p.sale_rate, p.min_stock, p.tax_rate_id,
+              t.code AS tax_code, t.rate AS tax_rate,
               COALESCE((SELECT SUM(s.quantity) FROM stock s
                          WHERE s.product_id = p.id AND s.item_type = 'PRODUCT'), 0) AS stock,
               -- What the stock is actually carried at. The catalogue purchase
@@ -307,6 +314,7 @@ router.get(
          FROM products p
          LEFT JOIN product_categories pc ON pc.id = p.category_id
          LEFT JOIN brands b ON b.id = p.brand_id
+         LEFT JOIN tax_rates t ON t.id = p.tax_rate_id
          JOIN units u ON u.id = p.unit_id
         WHERE ${where}
         ORDER BY ${orderBy(q.sort, q.dir, { code: 'p.code', name: 'p.name' }, 'p.code')}
@@ -328,6 +336,11 @@ router.get(
         pur: num(r.purchase_rate),
         sale: num(r.sale_rate),
         min: num(r.min_stock),
+        // Null means the organisation's default rate rather than none at all,
+        // which the form has to be able to tell apart.
+        taxRateId: r.tax_rate_id ? Number(r.tax_rate_id) : null,
+        taxCode: r.tax_code || '',
+        taxRate: r.tax_rate === null || r.tax_rate === undefined ? null : num(r.tax_rate),
       })),
       pageMeta(q.page, q.pageSize, countRows[0].total)
     );
@@ -510,6 +523,8 @@ router.get(
 const money = (n) => `Tk ${Math.round(n).toLocaleString('en-IN')}`;
 
 const supplierSchema = z.object({
+  bin: z.string().trim().max(24).optional(),
+  vatRegistered: z.coerce.boolean().optional(),
   name: z.string().trim().min(1, 'Supplier name is required').max(200),
   bn: z.string().trim().max(200).optional().default(''),
   type: z.string().trim().max(40).default('Farmer'),
@@ -521,6 +536,8 @@ const supplierSchema = z.object({
 });
 
 const companySchema = z.object({
+  bin: z.string().trim().max(24).optional(),
+  vatRegistered: z.coerce.boolean().optional(),
   name: z.string().trim().min(1, 'Company name is required').max(200),
   role: z
     .enum(['PRINCIPAL', 'SUPPLIER', 'BUYER', 'SUPPLIER_AND_BUYER'])
@@ -533,6 +550,7 @@ const companySchema = z.object({
 });
 
 const cropSchema = z.object({
+  taxRateId: z.coerce.number().int().positive().nullable().optional(),
   name: z.string().trim().min(1, 'Crop name is required').max(120),
   unit: z.string().trim().min(1, 'Choose a unit').max(20).default('MT'),
   rate: z.coerce.number().min(0).default(0),
@@ -557,6 +575,7 @@ const employeeSchema = z.object({
 
 const productSchema = z.object({
   name: z.string().trim().min(1, 'Product name is required').max(200),
+  taxRateId: z.coerce.number().int().positive().nullable().optional(),
   cat: z.string().trim().max(80).optional().default(''),
   brand: z.string().trim().max(80).optional().default(''),
   unit: z.string().trim().min(1, 'Choose a unit').max(20).default('Pcs'),
@@ -584,6 +603,8 @@ registerMasterCrud(router, {
     credit_limit: b.limit,
     credit_days: b.days,
     opening_balance: b.opening,
+    bin_no: b.bin,
+    is_vat_registered: b.vatRegistered,
   }),
   blockers: [
     {
@@ -599,6 +620,8 @@ registerMasterCrud(router, {
     code: r.code,
     name: r.name,
     bn: r.name_bn || '',
+    bin: r.bin_no || '',
+    vatRegistered: r.is_vat_registered,
     type: r.customer_type,
     person: r.contact_person || '',
     mobile: r.mobile,
@@ -635,6 +658,8 @@ registerMasterCrud(router, {
     upazila: b.upazila || null,
     bank_account: b.bank || null,
     opening_balance: b.opening,
+    bin_no: b.bin,
+    is_vat_registered: b.vatRegistered,
   }),
   blockers: [
     {
@@ -650,6 +675,8 @@ registerMasterCrud(router, {
     code: r.code,
     name: r.name,
     bn: r.name_bn || '',
+    bin: r.bin_no || '',
+    vatRegistered: r.is_vat_registered,
     type: r.supplier_type,
     mobile: r.mobile,
     district: r.district || '',
@@ -677,6 +704,8 @@ registerMasterCrud(router, {
     district: b.district || null,
     credit_limit: b.limit,
     credit_days: b.days,
+    bin_no: b.bin,
+    is_vat_registered: b.vatRegistered,
   }),
   blockers: [
     {
@@ -712,7 +741,7 @@ registerMasterCrud(router, {
   permissions: { create: 'crop.create', edit: 'crop.edit', remove: 'crop.delete' },
   code: { prefix: 'CROP', width: 2 },
   schema: cropSchema,
-  columns: (b) => ({ name: b.name, last_rate: b.rate }),
+  columns: (b) => ({ name: b.name, last_rate: b.rate, tax_rate_id: b.taxRateId }),
   // The screen knows unit codes, not the ids behind them.
   resolve: async (client, body) => {
     if (body.unit === undefined) return {};
@@ -801,6 +830,9 @@ registerMasterCrud(router, {
     purchase_rate: b.pur,
     sale_rate: b.sale,
     min_stock: b.min,
+    // Null is a real answer: it means this product is charged at whatever the
+    // organisation's default rate is, so a catalogue-wide change is one row.
+    tax_rate_id: b.taxRateId,
   }),
   // The screen works in unit codes and category and brand names; the ids
   // behind them are not its business.
@@ -1102,5 +1134,111 @@ for (const entity of [
     present: presentClassification,
   });
 }
+
+/* --------------------------------------------------------------- tax rates */
+
+/**
+ * VAT rates.
+ *
+ * Bangladesh has a standard rate, truncated rates for particular trades,
+ * zero-rating and exemption, and the standard rate itself moves at a budget.
+ * Every one of those is a row here rather than a number in a service, which is
+ * what lets a business that starts paying the truncated rate on one product
+ * line say so without anybody deploying anything.
+ */
+const taxRateSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Z0-9.]{1,12}$/, 'Use capitals, digits and dots, like VAT7.5.')
+    .optional(),
+  name: z.string().trim().min(1, 'A name is required').max(80),
+  nameBn: z.string().trim().max(80).optional(),
+  kind: z.enum(['STANDARD', 'REDUCED', 'ZERO', 'EXEMPT']),
+  rate: z.coerce.number().min(0).max(100).default(0),
+  isReclaimable: z.coerce.boolean().default(true),
+  isDefault: z.coerce.boolean().optional(),
+});
+
+const presentTaxRate = (r) => ({
+  id: Number(r.id),
+  code: r.code,
+  name: r.name,
+  nameBn: r.name_bn || '',
+  kind: r.kind,
+  rate: num(r.rate),
+  isReclaimable: r.is_reclaimable,
+  isDefault: r.is_default,
+  active: r.is_active,
+  status: r.is_active ? 'Active' : 'Retired',
+});
+
+router.get(
+  '/tax-rates',
+  requirePermission('tax.view'),
+  handler(async (req, res) => {
+    const { rows } = await query(
+      `SELECT t.*,
+              (SELECT COUNT(*)::int FROM products WHERE tax_rate_id = t.id) AS products,
+              (SELECT COUNT(*)::int FROM crops    WHERE tax_rate_id = t.id) AS crops
+         FROM tax_rates t
+        WHERE t.org_id = $1
+        ORDER BY t.is_default DESC, t.rate DESC, t.code`,
+      [req.orgId]
+    );
+    ok(
+      res,
+      rows.map((r) => ({ ...presentTaxRate(r), products: r.products, crops: r.crops }))
+    );
+  })
+);
+
+registerMasterCrud(router, {
+  path: 'tax-rates',
+  table: 'tax_rates',
+  label: 'Tax rate',
+  permissions: { create: 'tax.create', edit: 'tax.edit', remove: 'tax.delete' },
+  code: { prefix: 'TAX', width: 2, fromBody: true },
+  schema: taxRateSchema,
+  orgScoped: true,
+  columns: (b) => ({
+    name: b.name,
+    name_bn: b.nameBn,
+    kind: b.kind,
+    // Zero-rated and exempt supplies carry no rate whatever was typed. The
+    // table holds the same rule; saying it here turns a constraint violation
+    // into a rate that is simply right.
+    rate:
+      b.rate === undefined && b.kind === undefined
+        ? undefined
+        : b.kind === 'ZERO' || b.kind === 'EXEMPT'
+          ? 0
+          : b.rate,
+    // Tax paid on an exempt input is never reclaimable, whatever was ticked.
+    is_reclaimable: b.kind === 'EXEMPT' ? false : b.isReclaimable,
+  }),
+  resolve: async (client, body, orgId) => {
+    if (body.isDefault === undefined) return {};
+    if (!body.isDefault) return { is_default: false };
+    // Exactly one rate is the default, so claiming it releases the last one.
+    // Both statements are in the caller's transaction, so the partial unique
+    // index never sees two.
+    await client.query('UPDATE tax_rates SET is_default = false WHERE org_id = $1', [orgId]);
+    return { is_default: true };
+  },
+  blockers: [
+    {
+      // Retiring a rate a product still points at would leave that product
+      // falling back to the default, quietly changing what it charges.
+      sql: `SELECT (SELECT COUNT(*) FROM products WHERE tax_rate_id = $1 AND is_active)
+                 + (SELECT COUNT(*) FROM crops    WHERE tax_rate_id = $1 AND is_active)
+                 AS value, $2::bigint AS org_id`,
+      code: 'TAX_RATE_IN_USE',
+      message: (n) =>
+        `${n} product or crop is charged at this rate. Move them to another rate first.`,
+    },
+  ],
+  present: presentTaxRate,
+});
 
 export default router;

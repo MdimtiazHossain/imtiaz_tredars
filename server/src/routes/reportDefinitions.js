@@ -544,4 +544,182 @@ export const MORE_REPORTS = {
       };
     },
   },
+
+  /* -------------------------------------------------------------------- vat */
+
+  'vat-return': {
+    order: 19,
+    group: 'Finance',
+    label: 'VAT return',
+    permission: 'tax.view',
+    /**
+     * What is owed to the NBR for a period, in the shape a Mushak 9.1 asks it.
+     *
+     * Output tax less input tax, each net of what came back on a return. The
+     * figures are the documents' own -- what was actually charged and actually
+     * paid -- rather than a rate reapplied to a total, because a return credits
+     * at the rate its original invoice used and today's rate may not be it.
+     */
+    async run(req, q) {
+      // The return claims only what may be claimed. Tax at a non-reclaimable
+      // rate was paid, and belongs on the purchase register, but it went into
+      // the cost of the goods rather than into a rebate.
+      const read = async (view, taxColumn) => {
+        const params = [req.orgId];
+        const where = dateAndBusiness(q, params, 'v');
+        const { rows } = await query(
+          `SELECT COALESCE(SUM(v.taxable_value), 0) AS taxable,
+                  COALESCE(SUM(v.${taxColumn}), 0)  AS tax
+             FROM ${view} v WHERE v.org_id = $1 ${where}`,
+          params
+        );
+        return { taxable: num(rows[0].taxable), tax: num(rows[0].tax) };
+      };
+
+      const [output, input] = await Promise.all([
+        read('v_output_tax', 'tax_amount'),
+        read('v_input_tax', 'reclaimable_tax'),
+      ]);
+      const payable = Math.round((output.tax - input.tax) * 100) / 100;
+
+      return {
+        columns: [
+          col('line', 'Line'),
+          col('taxable', 'Value', 'money'),
+          col('tax', 'VAT', 'money'),
+        ],
+        rows: [
+          { line: 'Output tax — sales, less sale returns', taxable: output.taxable, tax: output.tax },
+          {
+            line: 'Input tax — purchases, less purchase returns',
+            taxable: input.taxable,
+            tax: -input.tax,
+          },
+          {
+            line: payable >= 0 ? 'Payable to the NBR' : 'Reclaimable from the NBR',
+            taxable: null,
+            tax: Math.abs(payable),
+          },
+        ],
+        totals: {
+          outputTax: output.tax,
+          inputTax: input.tax,
+          // Signed: negative is a rebate the business is owed, which happens in
+          // any month it buys more than it sells.
+          netPayable: payable,
+        },
+      };
+    },
+  },
+
+  'vat-sales-register': {
+    order: 20,
+    group: 'Finance',
+    label: 'VAT sales register',
+    permission: 'tax.view',
+    /** Every taxable supply made, which is what a Mushak 6.2 lists. */
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = dateAndBusiness(q, params, 'v');
+      const { rows } = await query(
+        `SELECT v.txn_date, v.txn_no, v.document_type, v.business_type,
+                v.taxable_value, v.tax_amount,
+                CASE v.party_type
+                  WHEN 'CUSTOMER' THEN (SELECT name FROM customers WHERE id = v.party_id)
+                  WHEN 'SUPPLIER' THEN (SELECT name FROM suppliers WHERE id = v.party_id)
+                  ELSE                 (SELECT name FROM companies WHERE id = v.party_id)
+                END AS party_name,
+                CASE v.party_type
+                  WHEN 'CUSTOMER' THEN (SELECT bin_no FROM customers WHERE id = v.party_id)
+                  WHEN 'SUPPLIER' THEN (SELECT bin_no FROM suppliers WHERE id = v.party_id)
+                  ELSE                 (SELECT bin_no FROM companies WHERE id = v.party_id)
+                END AS bin_no
+           FROM v_output_tax v
+          WHERE v.org_id = $1 ${where}
+          ORDER BY v.txn_date DESC, v.txn_no DESC`,
+        params
+      );
+
+      return {
+        columns: [
+          col('date', 'Date'),
+          col('no', 'Document', 'code'),
+          col('party', 'Buyer'),
+          col('bin', 'BIN', 'code'),
+          col('taxable', 'Taxable value', 'money'),
+          col('tax', 'VAT', 'money'),
+        ],
+        rows: rows.map((r) => ({
+          date: r.txn_date,
+          no: r.txn_no,
+          party: r.party_name || '—',
+          // A buyer with no BIN is an unregistered one, which is ordinary in
+          // this trade and is what the register should show.
+          bin: r.bin_no || 'Unregistered',
+          taxable: num(r.taxable_value),
+          tax: num(r.tax_amount),
+        })),
+        totals: {
+          taxableValue: rows.reduce((t, r) => t + num(r.taxable_value), 0),
+          tax: rows.reduce((t, r) => t + num(r.tax_amount), 0),
+        },
+      };
+    },
+  },
+
+  'vat-purchase-register': {
+    order: 21,
+    group: 'Finance',
+    label: 'VAT purchase register',
+    permission: 'tax.view',
+    /** Every taxable input taken, which is what a Mushak 6.1 lists. */
+    async run(req, q) {
+      const params = [req.orgId];
+      const where = dateAndBusiness(q, params, 'v');
+      const { rows } = await query(
+        `SELECT v.txn_date, v.txn_no, v.document_type, v.business_type,
+                v.taxable_value, v.tax_amount, v.reclaimable_tax,
+                CASE v.party_type
+                  WHEN 'CUSTOMER' THEN (SELECT name FROM customers WHERE id = v.party_id)
+                  WHEN 'SUPPLIER' THEN (SELECT name FROM suppliers WHERE id = v.party_id)
+                  ELSE                 (SELECT name FROM companies WHERE id = v.party_id)
+                END AS party_name,
+                CASE v.party_type
+                  WHEN 'CUSTOMER' THEN (SELECT bin_no FROM customers WHERE id = v.party_id)
+                  WHEN 'SUPPLIER' THEN (SELECT bin_no FROM suppliers WHERE id = v.party_id)
+                  ELSE                 (SELECT bin_no FROM companies WHERE id = v.party_id)
+                END AS bin_no
+           FROM v_input_tax v
+          WHERE v.org_id = $1 ${where}
+          ORDER BY v.txn_date DESC, v.txn_no DESC`,
+        params
+      );
+
+      return {
+        columns: [
+          col('date', 'Date'),
+          col('no', 'Document', 'code'),
+          col('party', 'Supplier'),
+          col('bin', 'BIN', 'code'),
+          col('taxable', 'Taxable value', 'money'),
+          col('tax', 'VAT paid', 'money'),
+          col('reclaimable', 'Reclaimable', 'money'),
+        ],
+        rows: rows.map((r) => ({
+          date: r.txn_date,
+          no: r.txn_no,
+          party: r.party_name || '—',
+          bin: r.bin_no || 'Unregistered',
+          taxable: num(r.taxable_value),
+          tax: num(r.tax_amount),
+          reclaimable: num(r.reclaimable_tax),
+        })),
+        totals: {
+          taxableValue: rows.reduce((t, r) => t + num(r.taxable_value), 0),
+          tax: rows.reduce((t, r) => t + num(r.tax_amount), 0),
+          reclaimable: rows.reduce((t, r) => t + num(r.reclaimable_tax), 0),
+        },
+      };
+    },
+  },
 };

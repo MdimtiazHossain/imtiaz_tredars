@@ -2995,3 +2995,282 @@ describe('returns and credit notes', () => {
     expect(list.emptyTitle).toBe('Nothing has come back');
   });
 });
+
+describe('vat', () => {
+  /** The rates as the settings payload reports them. */
+  const RATES = [
+    {
+      id: 1, code: 'VAT15', name: 'VAT 15%', nameBn: 'মূসক ১৫%', kind: 'STANDARD',
+      rate: 15, isReclaimable: true, isDefault: true, active: true, status: 'Active',
+      products: 12, crops: 0,
+    },
+    {
+      id: 4, code: 'VAT5', name: 'VAT 5% truncated', nameBn: '', kind: 'REDUCED',
+      rate: 5, isReclaimable: true, isDefault: false, active: true, status: 'Active',
+      products: 0, crops: 0,
+    },
+    {
+      id: 6, code: 'EXEMPT', name: 'Exempt', nameBn: '', kind: 'EXEMPT',
+      rate: 0, isReclaimable: false, isDefault: false, active: true, status: 'Active',
+      products: 0, crops: 7,
+    },
+  ];
+
+  /** A repository whose settings say the business is registered. */
+  function serving({ registered = true, inclusive = false, rates = RATES } = {}) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    const base = repository.settings.bind(repository);
+    repository.settings = async () => {
+      const settings = await base();
+      return {
+        ...settings,
+        organization: {
+          ...settings.organization,
+          binNo: '004601573-0101',
+          vatRegistered: registered,
+          pricesIncludeTax: inclusive,
+        },
+        taxRates: rates,
+      };
+    };
+    return repository;
+  }
+
+  async function openSettingsOn(section, repository, props = {}) {
+    const { app, root } = await mountApp({ repository, ...props });
+    app.setState({ screen: 'settings', setSec: section });
+    app.loadSettings();
+    await new Promise((r) => setTimeout(r, 30));
+    app.renderNow();
+    return { app, root };
+  }
+
+  /* ------------------------------------------------------------- the panel */
+
+  it('lists the rates with what each one is used on', async () => {
+    const { app, root } = await openSettingsOn('tax', serving());
+    const rows = app.renderVals().setTaxRates;
+
+    expect(rows).toHaveLength(3);
+    expect(rows[0].k).toBe('VAT 15%');
+    expect(rows[0].v).toBe('15%');
+    expect(rows[0].tag).toBe('Default');
+    // Counted from the masters, not described: 12 products are charged at it.
+    expect(rows[0].d).toContain('12 items');
+    expect(root.textContent).toContain('VAT 15%');
+  });
+
+  it('shows a rate that charges nothing as charging nothing', async () => {
+    const { app } = await openSettingsOn('tax', serving());
+    const exempt = app.renderVals().setTaxRates.find((r) => r.k === 'Exempt');
+
+    // Zero percent and exempt are both nothing, so a percentage would be a
+    // distinction without a difference; what matters is the reclaim.
+    expect(exempt.v).toBe('—');
+    expect(exempt.d).toContain('not reclaimable');
+    expect(exempt.tag).toBe('Exempt');
+  });
+
+  it('says plainly when nothing is being charged', async () => {
+    const { app, root } = await openSettingsOn('tax', serving({ registered: false }));
+    const vat = app.renderVals().setVat;
+
+    expect(vat.rows.find((r) => r.k === 'VAT registered').v).toBe('No');
+    expect(vat.note).toContain('nothing is charged');
+    // The rates are still there; they are simply not charging.
+    expect(root.textContent).toContain('VAT 15%');
+  });
+
+  it('states which way prices are quoted', async () => {
+    const before = await openSettingsOn('tax', serving({ inclusive: false }));
+    expect(before.app.renderVals().setVat.rows.find((r) => r.k === 'Prices quoted').v).toBe(
+      'Before VAT'
+    );
+
+    const inside = await openSettingsOn('tax', serving({ inclusive: true }));
+    expect(inside.app.renderVals().setVat.rows.find((r) => r.k === 'Prices quoted').v).toBe(
+      'Including VAT'
+    );
+  });
+
+  it('hides the rate controls from a role that may not touch them', async () => {
+    const { app } = await openSettingsOn('tax', serving(), { permissions: ['settings.view'] });
+    const vals = app.renderVals();
+
+    expect(vals.addTaxRate.canAdd).toBe(false);
+    expect(vals.setTaxRates.every((r) => !r.canEdit)).toBe(true);
+    expect(vals.setVat.canEdit).toBe(false);
+  });
+
+  /* -------------------------------------------------------------- the form */
+
+  it('asks for a rate only where there is one to give', async () => {
+    const { app } = await openSettingsOn('tax', serving());
+    app.openMaster('taxRate');
+    app.renderNow();
+
+    const keys = () => app.renderVals().modal.fields.map((f) => f.key);
+    expect(keys()).toContain('rate');
+
+    app.onMasterField('kind')({ target: { value: 'EXEMPT' } });
+    app.renderNow();
+    // Exempt charges nothing, so asking for a percentage would be asking for a
+    // number that cannot be used.
+    expect(keys()).not.toContain('rate');
+  });
+
+  it('will not save a charging rate with nothing to charge', async () => {
+    const { app } = await openSettingsOn('tax', serving());
+    app.openMaster('taxRate');
+    app.onMasterField('name')({ target: { value: 'VAT 7.5% truncated' } });
+    app.submitMaster();
+
+    expect(app.state.master.error).toContain('enter the percent');
+  });
+
+  it('sends an exempt rate as never reclaimable, whatever was ticked', async () => {
+    /** @type {any} */
+    let sent = null;
+    const repository = serving();
+    repository.createMaster = async (kind, body) => {
+      sent = { kind, body };
+      return { id: 9, code: 'EXEMPT2', name: body.name, kind: body.kind, rate: 0 };
+    };
+    const { app } = await openSettingsOn('tax', repository);
+
+    app.openMaster('taxRate');
+    app.onMasterField('name')({ target: { value: 'Exempt — seed' } });
+    app.onMasterField('kind')({ target: { value: 'EXEMPT' } });
+    app.onMasterField('isReclaimable')({ target: { value: 'yes' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(sent.kind).toBe('taxRate');
+    expect(sent.body.kind).toBe('EXEMPT');
+    expect(sent.body.rate).toBe(0);
+    // The NBR does not repay it, so the form cannot claim it will.
+    expect(sent.body.isReclaimable).toBe(false);
+  });
+
+  /* ------------------------------------------------------- what a sale says */
+
+  it('adds the tax on top of the goods when prices are quoted before VAT', async () => {
+    const { app } = await openSettingsOn('tax', serving({ inclusive: false }));
+    app.setState({
+      screen: 'dealer-sales',
+      ds: {
+        ...app.state.ds,
+        lines: [{ pid: app.data.products[0].code, qty: 10, rate: 1000, disc: 0, bonus: 0 }],
+        paid: 0,
+      },
+    });
+    app.data.products = app.data.products.map((p, i) => (i ? p : { ...p, taxRateId: 1 }));
+    app.renderNow();
+
+    const ds = app.renderVals().ds;
+    expect(ds.showVat).toBe(true);
+    expect(ds.vatLabel).toBe('VAT 15%');
+    expect(ds.vatText).toBe(money(1500));
+    // The customer owes the goods and the tax together.
+    expect(ds.netText).toBe(money(11500));
+  });
+
+  it('takes the tax out of a price that already contains it', async () => {
+    const { app } = await openSettingsOn('tax', serving({ inclusive: true }));
+    app.setState({
+      screen: 'dealer-sales',
+      ds: {
+        ...app.state.ds,
+        lines: [{ pid: app.data.products[0].code, qty: 10, rate: 1150, disc: 0, bonus: 0 }],
+        paid: 0,
+      },
+    });
+    app.data.products = app.data.products.map((p, i) => (i ? p : { ...p, taxRateId: 1 }));
+    app.renderNow();
+
+    const ds = app.renderVals().ds;
+    expect(ds.vatText).toBe(money(1500));
+    // What was quoted is what is owed; the tax came out of it.
+    expect(ds.netText).toBe(money(11500));
+  });
+
+  it('charges nothing at all while the business is unregistered', async () => {
+    const { app } = await openSettingsOn('tax', serving({ registered: false }));
+    app.setState({
+      screen: 'dealer-sales',
+      ds: {
+        ...app.state.ds,
+        lines: [{ pid: app.data.products[0].code, qty: 10, rate: 1000, disc: 0, bonus: 0 }],
+        paid: 0,
+      },
+    });
+    app.data.products = app.data.products.map((p, i) => (i ? p : { ...p, taxRateId: 1 }));
+    app.renderNow();
+
+    const ds = app.renderVals().ds;
+    expect(ds.showVat).toBe(false);
+    // Exactly what the invoice said before VAT was modelled.
+    expect(ds.netText).toBe(money(10000));
+  });
+
+  it('will not name one rate on an invoice charged at several', async () => {
+    const { app } = await openSettingsOn('tax', serving());
+    const [first, second] = app.data.products;
+    app.data.products = app.data.products.map((p) =>
+      p.code === first.code ? { ...p, taxRateId: 1 } : p.code === second.code ? { ...p, taxRateId: 4 } : p
+    );
+    app.setState({
+      screen: 'dealer-sales',
+      ds: {
+        ...app.state.ds,
+        lines: [
+          { pid: first.code, qty: 10, rate: 1000, disc: 0, bonus: 0 },
+          { pid: second.code, qty: 10, rate: 1000, disc: 0, bonus: 0 },
+        ],
+        paid: 0,
+      },
+    });
+    app.renderNow();
+
+    const ds = app.renderVals().ds;
+    expect(ds.vatText).toBe(money(2000));
+    // 15% and 5% together are not "VAT 15%".
+    expect(ds.vatLabel).toBe('VAT');
+  });
+
+  /* ------------------------------------------------------- what a product is */
+
+  it('offers the rates a product can be charged at, and a default', async () => {
+    const { app } = await openSettingsOn('tax', serving());
+    app.openMaster('product');
+    app.renderNow();
+
+    const field = app.renderVals().modal.fields.find((f) => f.key === 'taxRateId');
+    expect(field, 'a VAT rate on the product form').toBeTruthy();
+    expect(field.options[0].label).toBe('Default rate');
+    expect(field.options.map((o) => o.label)).toContain('VAT 15% — 15%');
+    expect(field.options.map((o) => o.label)).toContain('Exempt — exempt');
+  });
+
+  it('sends no rate as no rate rather than leaving the last one', async () => {
+    /** @type {any} */
+    let sent = null;
+    const repository = serving();
+    repository.updateMaster = async (kind, id, body) => {
+      sent = body;
+      return { id, ...body };
+    };
+    const { app } = await openSettingsOn('tax', repository);
+
+    app.openMaster('product', { id: 3, code: 'P-1001', name: 'Ridomil', unit: 'Pcs', taxRateId: 1 });
+    expect(app.state.master.form.taxRateId).toBe('1');
+
+    app.onMasterField('taxRateId')({ target: { value: '' } });
+    app.submitMaster();
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Null, not undefined: clearing it really does put the product back on the
+    // organisation's default.
+    expect(sent.taxRateId).toBeNull();
+  });
+});

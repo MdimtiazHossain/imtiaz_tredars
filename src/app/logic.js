@@ -243,6 +243,7 @@ export class BusinessApp extends Component {
       // fetched when the screen is actually opened rather than on every load.
       if (id === 'crops') this.loadMasterList('crop');
       if (id === 'products') { this.loadMasterList('product'); this.loadSettings(); }
+      if (id === 'crops') this.loadSettings();
       if (id === 'warehouses') this.loadMasterList('warehouse');
       if (id === 'employees') this.loadMasterList('employee');
       if (id === 'accounts') {
@@ -596,6 +597,7 @@ export class BusinessApp extends Component {
     category: 'expense.category',
     productCategory: 'product.category',
     method: 'payment.method',
+    taxRate: 'tax',
   };
 
   static FORM_METHOD = {
@@ -677,6 +679,10 @@ export class BusinessApp extends Component {
       // products happen to use -- which is what made the first one impossible.
       productCategories: this.classifications('categories'),
       brands: this.classifications('brands'),
+      // A product names the rate its supply attracts, and the rates are
+      // configuration rather than working data -- so they come from the
+      // settings payload, and from the master list once one has been loaded.
+      taxRates: rows.taxRate || this.settingsData().taxRates || [],
     };
   }
 
@@ -1270,6 +1276,64 @@ export class BusinessApp extends Component {
       }
     );
   }
+  /* --------------------------------------------------------------- vat */
+
+  /**
+   * What a set of lines is charged, before anything is posted.
+   *
+   * This is the screen showing its working, not the figure of record: the
+   * server recomputes it from the same masters when the document is posted,
+   * because a browser must never be the authority on what tax is owed. What it
+   * has to get right is agreeing with what the server will do, so it reads the
+   * same three things -- the organisation's registration, the rate each
+   * product attracts, and the default behind it.
+   *
+   * @param {Array} lines  {productId, lineNet}
+   */
+  taxOn(lines) {
+    const cfg = this.settingsData();
+    const org = cfg.organization || {};
+    const rates = cfg.taxRates || [];
+    const none = { amount: 0, label: 'VAT', inclusiveAdjustment: 0 };
+    if (!org.vatRegistered || !rates.length) return none;
+
+    const active = rates.filter(r => r.active !== false);
+    const fallback = active.filter(r => r.isDefault)[0] || null;
+    const byId = new Map(active.map(r => [Number(r.id), r]));
+    const products = this.state.masterRows.product || this.data.products || [];
+    const byCode = new Map(products.map(p => [p.code, p]));
+
+    let amount = 0;
+    let inclusiveAdjustment = 0;
+    const applied = new Set();
+
+    for (const line of lines) {
+      const product = byCode.get(line.productId);
+      const rate = (product && product.taxRateId ? byId.get(Number(product.taxRateId)) : null) || fallback;
+      if (!rate || !(Number(rate.rate) > 0)) continue;
+
+      const pct = Number(rate.rate);
+      applied.add(pct);
+      if (org.pricesIncludeTax) {
+        // The rate quoted is what the customer pays, so the tax comes out of
+        // it rather than being added to it.
+        const taxable = Math.round((Number(line.lineNet) / (1 + pct / 100)) * 100) / 100;
+        amount += Math.round((Number(line.lineNet) - taxable) * 100) / 100;
+        inclusiveAdjustment += Math.round((Number(line.lineNet) - taxable) * 100) / 100;
+      } else {
+        amount += Math.round((Number(line.lineNet) * pct) / 100 * 100) / 100;
+      }
+    }
+
+    return {
+      amount: Math.round(amount * 100) / 100,
+      inclusiveAdjustment: Math.round(inclusiveAdjustment * 100) / 100,
+      // One rate reads as "VAT 15%"; a mixed invoice cannot, and saying so is
+      // better than naming whichever rate happened to come first.
+      label: applied.size === 1 ? `VAT ${[...applied][0]}%` : 'VAT',
+    };
+  }
+
   /* --------------------------------------------------- returns and notes */
 
   /**
@@ -2033,15 +2097,25 @@ export class BusinessApp extends Component {
         onDisc:e => this.setLine('ds', i, 'disc', e.target.value), onBonus:e => this.setLine('ds', i, 'bonus', e.target.value),
         onDel:() => this.setState(s => ({ds:Object.assign({}, s.ds, {lines:s.ds.lines.filter((_, k) => k !== i)})}))};
     });
-    const vat = 0, net = gross - discAmt + vat, profit = net - cost, margin = net ? profit / net * 100 : 0;
-    const paid = +f.paid || 0, due = net - paid;
+    // What the goods come to, and what is charged on top of them. The rate is
+    // the one each product attracts rather than a figure typed here, and an
+    // unregistered business charges nothing -- which is why the row only
+    // appears once there is something in it.
+    const tax = this.taxOn(lines.map((l, i) => ({ productId:l.pid,
+      lineNet:(+f.lines[i].qty || 0) * (+f.lines[i].rate || 0) * (1 - (+f.lines[i].disc || 0) / 100) })));
+    const net = gross - discAmt - tax.inclusiveAdjustment;
+    const profit = net - cost, margin = net ? profit / net * 100 : 0;
+    const total = net + tax.amount;
+    const paid = +f.paid || 0, due = total - paid;
     const exposure = cust.out + due, avail = cust.limit - exposure;
     return {v:f, cust:cust, lines:lines, custs:all, whs:this.data.warehouses, invNo:'DS-2608-222',
       modal:this.state.custModal, nc:this.state.newCust,
       onNew:() => this.setState({custModal:true}), onCancel:() => this.setState({custModal:false}), onSave:() => this.saveCustomer(),
       types:this.optionsInUse(all, 'type', ['Dealer', 'Retailer', 'Corporate', 'Individual']),
       districts:this.optionsInUse(all.concat(this.data.suppliers, this.data.companies), 'district'),
-      grossText:money(gross), discText:'− ' + money(discAmt).slice(1), netText:money(net), netNum:net, costText:money(cost),
+      grossText:money(gross), discText:'− ' + money(discAmt).slice(1),
+      netText:money(total), netNum:total, costText:money(cost),
+      showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount),
       profitText:money(profit), marginText:margin.toFixed(2) + '%', profitColor:profit >= 0 ? C.crop : C.dngr,
       paidText:money(paid), dueText:money(due), limitText:money(cust.limit), outText:money(cust.out),
       availText:money(avail), availColor:avail < 0 ? C.dngr : C.crop, overLimit:avail < 0,
@@ -3135,12 +3209,12 @@ export class BusinessApp extends Component {
         bg:x.k === S.valuation ? C.accBg : '#fff', color:x.k === S.valuation ? C.acc : C.mut, bd:x.k === S.valuation ? C.acc : C.bd,
         onClick:() => this.setValuation(x.k)})),
       setSecs:[['company', 'Company profile'], ['fy', 'Financial year'], ['numbering', 'Numbering'], ['units', 'Units & conversion'], ['pay', 'Payment methods'],
-        ['classify', 'Categories & brands'],
+        ['classify', 'Categories & brands'], ['tax', 'VAT & tax rates'],
         ['limits', 'Approval limits'], ['valuation', 'Inventory valuation'], ['roles', 'Roles & permissions'], ['notif', 'Notification rules']].map(x => ({
         l:x[1], on:S.setSec === x[0], bg:S.setSec === x[0] ? C.accBg : 'transparent', color:S.setSec === x[0] ? C.acc : '#3D3A36',
         weight:S.setSec === x[0] ? '600' : '400', onClick:this.hs('setSec', x[0])})),
       setIs:{company:S.setSec === 'company', fy:S.setSec === 'fy', numbering:S.setSec === 'numbering', units:S.setSec === 'units',
-        pay:S.setSec === 'pay', classify:S.setSec === 'classify', limits:S.setSec === 'limits',
+        pay:S.setSec === 'pay', classify:S.setSec === 'classify', tax:S.setSec === 'tax', limits:S.setSec === 'limits',
         valuation:S.setSec === 'valuation', roles:S.setSec === 'roles', notif:S.setSec === 'notif'},
       // The grants actually held, not a description of what they were meant to
       // be: computed from `role_permissions`, and editable in place. A cell is
@@ -3220,6 +3294,54 @@ export class BusinessApp extends Component {
         canEdit:this.maySettings(), onEdit:() => this.openSettings('numbering', n),
       })),
 
+      // Whether the business charges VAT at all, and on what basis. Until it
+      // is registered the rates below are master data with nothing charging at
+      // them, which is what the note says rather than leaving the screen
+      // implying every invoice carries tax.
+      setVat:{
+        note:org.vatRegistered
+          ? 'Registered. Every posted document charges the rate its product or crop attracts.'
+          : 'Not registered. The rates below are kept but nothing is charged at them, and every document totals exactly what its goods are worth.',
+        rows:[
+          {k:'VAT registered', v:org.vatRegistered ? 'Yes' : 'No',
+            d:'Turns VAT on across every document',
+            color:org.vatRegistered ? C.crop : C.mut},
+          {k:'BIN', v:org.binNo || '—', d:'Printed on every challanpatra', color:C.ink},
+          {k:'Prices quoted', v:org.pricesIncludeTax ? 'Including VAT' : 'Before VAT',
+            d:org.pricesIncludeTax
+              ? 'A rate is what the customer pays; the tax is taken out of it'
+              : 'A rate is the goods value; the tax is added on top',
+            color:C.ink},
+        ],
+        canEdit:this.maySettings(),
+        editLabel:'Edit registration',
+        onEdit:() => this.openSettings('company', org),
+      },
+      taxRatesNote:'What each rate charges, and whether tax paid at it can be claimed back. A product or crop with no rate of its own is charged at the default.',
+      taxRatesEmpty:!(cfg.taxRates || []).length,
+      addTaxRate:{canAdd:this.mayMaster('taxRate', 'create'), label:'Add rate',
+        onAdd:() => this.openMaster('taxRate')},
+      setTaxRates:(cfg.taxRates || []).map(t => {
+        const on = t.active !== false;
+        return {
+          k:t.name,
+          v:t.kind === 'ZERO' || t.kind === 'EXEMPT' ? '—' : t.rate + '%',
+          // What it is used on, counted from the masters rather than described.
+          d:[t.code,
+            t.isReclaimable ? 'reclaimable' : 'not reclaimable',
+            (t.products || 0) + (t.crops || 0) > 0
+              ? (t.products || 0) + (t.crops || 0) + ' item' + ((t.products || 0) + (t.crops || 0) === 1 ? '' : 's')
+              : 'nothing charged at it yet'].join(' · '),
+          tag:t.isDefault ? 'Default' : t.kind === 'EXEMPT' ? 'Exempt' : t.kind === 'ZERO' ? 'Zero-rated' : '',
+          tagBg:t.isDefault ? C.cropBg : '#F0EEE9', tagFg:t.isDefault ? C.crop : C.mut,
+          tone:on ? C.crop : '#D9D5CD', knob:on ? '19px' : '2px',
+          canEdit:this.mayMaster('taxRate', 'edit'),
+          canToggle:on ? this.mayMaster('taxRate', 'delete') : this.mayMaster('taxRate', 'edit'),
+          toggleLabel:on ? 'Retire' : 'Restore',
+          onEdit:() => this.openMaster('taxRate', t),
+          onToggle:() => (on ? this.confirmRetire('taxRate', t) : this.restoreMaster('taxRate', t)),
+        };
+      }),
       setUnits:cfg.units.map(u => {
         const on = u.active !== false;
         return {

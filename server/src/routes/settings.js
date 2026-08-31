@@ -39,6 +39,10 @@ const organizationSchema = z.object({
   currency: z.string().trim().length(3).optional(),
   defaultDistrict: z.string().trim().max(80).optional(),
   valuation: z.enum(['FIFO', 'WEIGHTED_AVERAGE']).optional(),
+  // Registering turns VAT on across every document; until then the rates are
+  // master data with nothing charging at them.
+  vatRegistered: z.coerce.boolean().optional(),
+  pricesIncludeTax: z.coerce.boolean().optional(),
 });
 
 const ORGANIZATION_COLUMNS = {
@@ -52,6 +56,8 @@ const ORGANIZATION_COLUMNS = {
   currency: 'currency_code',
   defaultDistrict: 'default_district',
   valuation: 'valuation_method',
+  vatRegistered: 'is_vat_registered',
+  pricesIncludeTax: 'prices_include_tax',
 };
 
 router.patch(

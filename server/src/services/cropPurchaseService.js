@@ -1,5 +1,6 @@
 import { num } from '../lib/db.js';
 import { nextDocumentNo } from '../lib/numbering.js';
+import { taxContext, taxDocument, reclaimableTax } from './taxService.js';
 import { writeAudit } from '../lib/audit.js';
 import { badRequest, notFound, unprocessable } from '../lib/errors.js';
 import { recordMovement, reverseMovements } from './inventoryService.js';
@@ -107,12 +108,26 @@ export async function createCropPurchase(client, { orgId, user, actor, input }) 
 
   const txnNo = input.txnNo || (await nextDocumentNo(client, orgId, 'crop_purchase', input.txnDate));
 
+  // Buying unprocessed crop from a farmer is exempt, which is why the crop
+  // master carries the rate: the service does not need to know what a crop is,
+  // only what the master says its supply attracts.
+  const taxes = await taxDocument(client, {
+    orgId,
+    input,
+    priced: { lines: totals.lines.map((l) => ({ ...l, lineNet: l.lineValue })),
+      net: totals.purchaseValue },
+    table: 'crops',
+    itemIdOf: (l) => l.cropId,
+  });
+  const taxedLines = taxes.lines;
+
   const { rows } = await client.query(
     `INSERT INTO crop_purchases
        (org_id, txn_no, txn_date, business_type, supplier_id, warehouse_id,
         transport_cost, loading_cost, unloading_cost, other_cost,
-        purchase_value, net_amount, advance_paid, note, status, created_by)
-     VALUES ($1,$2,$3,'BULK_CROP',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'DRAFT',$14)
+        purchase_value, net_amount, tax_amount, total_amount, tax_inclusive,
+        advance_paid, note, status, created_by)
+     VALUES ($1,$2,$3,'BULK_CROP',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'DRAFT',$17)
      RETURNING id`,
     [
       orgId,
@@ -126,6 +141,9 @@ export async function createCropPurchase(client, { orgId, user, actor, input }) 
       num(input.otherCost),
       totals.purchaseValue,
       totals.netAmount,
+      taxes.tax,
+      Math.round((totals.netAmount + taxes.tax) * 100) / 100,
+      taxes.taxInclusive,
       num(input.advancePaid),
       input.note ?? null,
       user.id,
@@ -138,11 +156,13 @@ export async function createCropPurchase(client, { orgId, user, actor, input }) 
   const itemIds = [];
   for (const line of totals.lines) {
     lineNo += 1;
+    const taxLine = taxedLines[lineNo - 1];
     const { rows: item } = await client.query(
       `INSERT INTO crop_purchase_items
          (purchase_id, line_no, crop_id, grade_id, unit_id, gross_quantity, moisture_pct,
-          deduction_qty, net_quantity, rate, line_value, allocated_cost, landed_cost, cost_per_unit)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          deduction_qty, net_quantity, rate, line_value, allocated_cost, landed_cost, cost_per_unit,
+          tax_rate_id, tax_rate, tax_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        RETURNING id`,
       [
         purchaseId,
@@ -159,6 +179,9 @@ export async function createCropPurchase(client, { orgId, user, actor, input }) 
         line.allocatedCost,
         line.landedCost,
         line.costPerUnit,
+        taxLine.taxRateId ?? null,
+        num(taxLine.taxRate),
+        num(taxLine.taxAmount),
       ]
     );
     itemIds.push({ id: Number(item[0].id), line });
@@ -303,8 +326,22 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
 
   // Anything not paid as an advance becomes payable to the supplier.
   const netAmount = num(header.net_amount);
+  // Buying from a farmer is normally exempt, so this is normally nothing. It
+  // is read rather than assumed because a supplier who is registered charges
+  // VAT like anyone else.
+  const { rows: taxItems } = await client.query(
+    'SELECT tax_amount, tax_rate_id FROM crop_purchase_items WHERE purchase_id = $1',
+    [purchaseId]
+  );
+  const context = await taxContext(orgId, client);
+  const { reclaimable: inputTax, embedded: embeddedTax } = reclaimableTax(
+    context,
+    taxItems.map((i) => ({ taxAmount: i.tax_amount, taxRateId: i.tax_rate_id }))
+  );
+  const totalAmount = num(header.total_amount) || netAmount;
+  const inventoryValue = netAmount + embeddedTax;
   const advance = num(header.advance_paid);
-  const balance = netAmount - advance;
+  const balance = totalAmount - advance;
 
   if (balance > 0) {
     await createPayable(client, {
@@ -317,7 +354,7 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
       invoiceNo: header.txn_no,
       invoiceDate: header.txn_date,
       dueDate: addDays(header.txn_date, 30),
-      invoiceAmount: netAmount,
+      invoiceAmount: totalAmount,
       paidAmount: advance,
     });
   }
@@ -331,7 +368,7 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
     entryDate: header.txn_date,
     businessType: 'BULK_CROP',
     narration: `Crop purchase ${header.txn_no} from ${supplierName}`,
-    debit: netAmount,
+    debit: inventoryValue,
     credit: 0,
     referenceType: 'crop_purchases',
     referenceId: purchaseId,
@@ -346,11 +383,28 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
     partyId: Number(header.supplier_id),
     narration: `Payable to ${supplierName} for ${header.txn_no}`,
     debit: 0,
-    credit: netAmount,
+    credit: totalAmount,
     referenceType: 'crop_purchases',
     referenceId: purchaseId,
     userId: user.id,
   });
+
+  // VAT paid to a registered supplier is reclaimable from the NBR rather than
+  // part of what the crop cost.
+  if (inputTax > 0) {
+    await writeLedger(client, {
+      orgId,
+      coaId: await ledgerAccount(client, orgId, LEDGER.INPUT_VAT),
+      entryDate: header.txn_date,
+      businessType: 'BULK_CROP',
+      narration: `Input VAT on ${header.txn_no}`,
+      debit: inputTax,
+      credit: 0,
+      referenceType: 'crop_purchases',
+      referenceId: purchaseId,
+      userId: user.id,
+    });
+  }
 
   await client.query(
     `UPDATE crop_purchases

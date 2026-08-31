@@ -337,8 +337,10 @@ export const CHART_OF_ACCOUNTS = [
   ['1100', 'Cash and bank', 'ASSET', false],
   ['1200', 'Accounts receivable', 'ASSET', false],
   ['1300', 'Inventory', 'ASSET', false],
+  ['1400', 'Input VAT receivable', 'ASSET', false],
   ['2000', 'Liabilities', 'LIABILITY', true],
   ['2100', 'Accounts payable', 'LIABILITY', false],
+  ['2200', 'Output VAT payable', 'LIABILITY', false],
   ['3000', 'Equity', 'EQUITY', true],
   ['3100', 'Opening balance equity', 'EQUITY', false],
   ['3200', 'Retained earnings', 'EQUITY', false],
@@ -371,6 +373,52 @@ export async function installChartOfAccounts(client, orgId) {
         AND parent.code = left(child.code, 1) || '000'
         AND child.code <> parent.code
         AND child.parent_id IS NULL`,
+    [orgId]
+  );
+}
+
+/* --------------------------------------------------------------- tax rates */
+
+/**
+ * Bangladesh's VAT rates.
+ *
+ * The standard rate, the truncated rates particular trades pay, and the two
+ * ways of charging nothing -- zero-rated, whose inputs are still reclaimable,
+ * and exempt, whose are not. They are ordinary master data: rename them,
+ * change them, add the one a new trade uses.
+ *
+ * A business that is not VAT-registered charges at none of them, which is the
+ * default; registering is a settings change rather than a migration.
+ */
+export const TAX_RATES = [
+  ['VAT15', 'VAT 15%', 'মূসক ১৫%', 'STANDARD', 15, true, true],
+  ['VAT10', 'VAT 10% truncated', 'মূসক ১০%', 'REDUCED', 10, true, false],
+  ['VAT7.5', 'VAT 7.5% truncated', 'মূসক ৭.৫%', 'REDUCED', 7.5, true, false],
+  ['VAT5', 'VAT 5% truncated', 'মূসক ৫%', 'REDUCED', 5, true, false],
+  ['ZERO', 'Zero-rated', 'শূন্য হার', 'ZERO', 0, true, false],
+  ['EXEMPT', 'Exempt', 'অব্যাহতিপ্রাপ্ত', 'EXEMPT', 0, false, false],
+];
+
+export async function installTaxRates(client, orgId) {
+  for (const [code, name, nameBn, kind, rate, reclaimable, isDefault] of TAX_RATES) {
+    await client.query(
+      `INSERT INTO tax_rates (org_id, code, name, name_bn, kind, rate, is_reclaimable, is_default)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (org_id, code) DO NOTHING`,
+      [orgId, code, name, nameBn, kind, rate, reclaimable, isDefault]
+    );
+  }
+}
+
+/**
+ * Unprocessed agricultural produce is exempt, which is the whole bulk crop
+ * side of this business. Saying so on the crop means no service has to know
+ * what a crop is.
+ */
+export async function exemptCrops(client, orgId) {
+  await client.query(
+    `UPDATE crops SET tax_rate_id = (
+        SELECT id FROM tax_rates WHERE org_id = $1 AND code = 'EXEMPT'
+      ) WHERE org_id = $1 AND tax_rate_id IS NULL`,
     [orgId]
   );
 }

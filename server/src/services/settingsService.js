@@ -22,7 +22,8 @@ import { DOC_PREFIXES } from '../lib/numbering.js';
 export async function loadOrganization(orgId) {
   const { rows } = await query(
     `SELECT id, code, name, system_name, trade_licence_no, bin_no, head_office,
-            mobile, email, currency_code, default_district, valuation_method
+            mobile, email, currency_code, default_district, valuation_method,
+            is_vat_registered, prices_include_tax
        FROM organizations WHERE id = $1`,
     [orgId]
   );
@@ -41,6 +42,8 @@ export async function loadOrganization(orgId) {
     currency: r.currency_code,
     defaultDistrict: r.default_district || '',
     valuation: r.valuation_method,
+    vatRegistered: r.is_vat_registered,
+    pricesIncludeTax: r.prices_include_tax,
   };
 }
 
@@ -287,6 +290,36 @@ export async function loadNotificationRules(orgId) {
  * together in `roleService`, and this passes it through so the Settings screen
  * still arrives in one round trip.
  */
+/* ------------------------------------------------------------------ vat */
+
+/** The rates a document can be charged at, for the Settings panel. */
+export async function loadTaxRates(orgId) {
+  const { rows } = await query(
+    `SELECT t.id, t.code, t.name, t.name_bn, t.kind, t.rate, t.is_reclaimable,
+            t.is_default, t.is_active,
+            (SELECT COUNT(*)::int FROM products WHERE tax_rate_id = t.id) AS products,
+            (SELECT COUNT(*)::int FROM crops    WHERE tax_rate_id = t.id) AS crops
+       FROM tax_rates t
+      WHERE t.org_id = $1
+      ORDER BY t.is_default DESC, t.rate DESC, t.code`,
+    [orgId]
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    nameBn: r.name_bn || '',
+    kind: r.kind,
+    rate: num(r.rate),
+    isReclaimable: r.is_reclaimable,
+    isDefault: r.is_default,
+    active: r.is_active,
+    status: r.is_active ? 'Active' : 'Retired',
+    products: r.products,
+    crops: r.crops,
+  }));
+}
+
 export { loadPermissionMatrix } from './roleService.js';
 
 /* ------------------------------------------------------------------ the lot */
@@ -295,7 +328,7 @@ export { loadPermissionMatrix } from './roleService.js';
 export async function loadSettings(orgId) {
   const [
     organization, fiscalYears, numbering, units, approvalRules, notificationRules,
-    permissions, classifications,
+    permissions, classifications, taxRates,
   ] = await Promise.all([
     loadOrganization(orgId),
     loadFiscalYears(orgId),
@@ -305,6 +338,7 @@ export async function loadSettings(orgId) {
     loadNotificationRules(orgId),
     loadPermissionMatrix(),
     loadClassifications(),
+    loadTaxRates(orgId),
   ]);
 
   return {
@@ -312,5 +346,6 @@ export async function loadSettings(orgId) {
     permissions,
     categories: classifications.categories,
     brands: classifications.brands,
+    taxRates,
   };
 }
