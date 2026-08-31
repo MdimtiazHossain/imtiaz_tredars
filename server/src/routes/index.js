@@ -10,6 +10,7 @@ import financeRoutes from './finance.js';
 import approvalRoutes from './approvals.js';
 import reportRoutes from './reports.js';
 import auditRoutes from './audit.js';
+import settingsRoutes from './settings.js';
 
 /**
  * API surface.
@@ -32,5 +33,6 @@ router.use('/', financeRoutes);
 router.use('/approvals', approvalRoutes);
 router.use('/reports', reportRoutes);
 router.use('/audit', auditRoutes);
+router.use('/settings', settingsRoutes);
 
 export default router;

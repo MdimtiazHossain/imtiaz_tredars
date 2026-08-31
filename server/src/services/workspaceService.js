@@ -14,23 +14,35 @@ import { canSeeProfit } from '../middleware/auth.js';
 /** '26 Aug 2026' — the format the screens already display. */
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/**
+ * Formatted in the server's own timezone, not UTC.
+ *
+ * node-postgres turns a `date` column into local midnight, so reading it back
+ * with `getUTCDate()` moved every date a day earlier anywhere east of
+ * Greenwich -- a purchase made on 01 Jul was shown, and reported, as 30 Jun.
+ * The same applied to timestamps: a decision taken at 10:12 in Bogura was
+ * listed on the approval queue and the audit trail as 4:12 am.
+ *
+ * The API and the database run on the business's clock, so local getters are
+ * what these two formatters want.
+ */
 export function formatDate(value) {
   if (!value) return '—';
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return '—';
-  return `${String(d.getUTCDate()).padStart(2, '0')} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 /** '28 Aug, 10:12 am' — used by the approval queue. */
 export function formatDateTime(value) {
   if (!value) return '';
   const d = new Date(value);
-  const hours = d.getUTCHours();
+  const hours = d.getHours();
   const suffix = hours >= 12 ? 'pm' : 'am';
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
   return (
-    `${String(d.getUTCDate()).padStart(2, '0')} ${MONTHS[d.getUTCMonth()]}, ` +
-    `${hour12}:${String(d.getUTCMinutes()).padStart(2, '0')} ${suffix}`
+    `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}, ` +
+    `${hour12}:${String(d.getMinutes()).padStart(2, '0')} ${suffix}`
   );
 }
 
@@ -495,7 +507,13 @@ export async function loadWorkspace({ orgId, user }) {
     lookups,
   ] = await Promise.all([
     query(
-      `SELECT o.name, o.system_name, f.code AS fiscal_year
+      `SELECT o.name, o.system_name, o.currency_code, o.valuation_method,
+              f.code AS fiscal_year,
+              (SELECT MIN(threshold) FROM approval_rules r
+                WHERE r.org_id = o.id AND r.is_active
+                  AND r.condition_type = 'AMOUNT_ABOVE'
+                  AND r.entity_type IN ('crop_purchases', 'dealer_purchases')
+              ) AS purchase_approval_limit
          FROM organizations o
          LEFT JOIN fiscal_years f ON f.org_id = o.id AND f.is_current
         WHERE o.id = $1`,
@@ -535,6 +553,10 @@ export async function loadWorkspace({ orgId, user }) {
       name: org.rows[0]?.name || '',
       sys: org.rows[0]?.system_name || 'Business Suite',
       fy: org.rows[0]?.fiscal_year || '',
+      currency: org.rows[0]?.currency_code || 'BDT',
+      // The configured costing method, so the crop sales screen posts with
+      // what Settings says rather than with whatever the button last showed.
+      valuation: org.rows[0]?.valuation_method || 'FIFO',
       user: user.name,
       init: (user.name || '?')
         .split(' ')
@@ -561,5 +583,8 @@ export async function loadWorkspace({ orgId, user }) {
     accounts: finance.accounts,
     paymentMethods: finance.paymentMethods,
     expenseCategories: finance.expenseCategories,
+    // The lowest purchase limit in force. The approval banner and the Settings
+    // summary both read it, so neither has to name a figure of its own.
+    approvalLimit: num(org.rows[0]?.purchase_approval_limit) || null,
   };
 }

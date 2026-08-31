@@ -1,6 +1,6 @@
 import * as seed from './seed.js';
 import { ACCOUNTS, PAYMENT_METHOD_OPTIONS, EXPENSE_CATEGORIES } from './financeLookups.js';
-import { EMPLOYEES, EXPENSE_VOUCHERS } from './reference.js';
+import { EMPLOYEES, EXPENSE_VOUCHERS, SETTINGS, AUDIT_LOG } from './reference.js';
 
 /**
  * In-memory implementation of the repository contract.
@@ -59,6 +59,9 @@ export class InMemoryRepository {
       paymentMethods: clone(PAYMENT_METHOD_OPTIONS),
       expenseCategories: clone(EXPENSE_CATEGORIES),
     };
+    // Settings are configuration rather than working data, so they sit beside
+    // the store rather than in the payload the screens boot from.
+    this._settings = clone(SETTINGS);
     return settle(clone(this._store), this.latency);
   }
 
@@ -89,6 +92,12 @@ export class InMemoryRepository {
       company: 'companies', employee: 'employees',
       account: 'accounts', category: 'expenseCategories', method: 'paymentMethods',
     };
+    // Units live with the settings rather than the working set, but they are
+    // maintained through the same master routes.
+    if (kind === 'unit') {
+      if (!this._settings) this._settings = clone(SETTINGS);
+      return this._settings.units;
+    }
     const key = named[kind];
     if (!key) throw new Error(`Unknown master kind: ${kind}`);
     if (!this._store[key]) this._store[key] = [];
@@ -222,7 +231,9 @@ export class InMemoryRepository {
     const found = this._collection(kind).filter((r) => r.id === id || r.code === id)[0];
     if (!found) throw new Error('Record not found');
     // Retired, never removed: the fixture's transactions still point at it.
+    // Both flags, because some screens read the status and some the boolean.
     found.status = 'Retired';
+    found.active = false;
     return settle(clone(found), this.latency);
   }
 
@@ -331,6 +342,101 @@ export class InMemoryRepository {
     if (!this._counters) this._counters = {};
     this._counters[kind] = (this._counters[kind] || 0) + 1;
     return this._counters[kind];
+  }
+
+  /**
+   * The audit trail, without a backend.
+   *
+   * A fixture rather than a record of this session: nothing here writes to a
+   * ledger, so there is no history to report. It exists so the screen can be
+   * seen working, and matches the shape `GET /audit` returns.
+   */
+  async audit() {
+    const rows = clone(AUDIT_LOG);
+    return settle({ rows, total: rows.length }, this.latency);
+  }
+
+  /* --------------------------------------------------------------- settings */
+
+  /** The Settings screen's working set, in the shape the API returns. */
+  async settings() {
+    if (!this._settings) this._settings = clone(SETTINGS);
+    return settle(clone(this._settings), this.latency);
+  }
+
+  _settingsStore() {
+    if (!this._settings) this._settings = clone(SETTINGS);
+    return this._settings;
+  }
+
+  async updateOrganization(changes) {
+    const org = this._settingsStore().organization;
+    Object.assign(org, clone(changes));
+    return settle(clone(org), this.latency);
+  }
+
+  async createFiscalYear(year) {
+    const years = this._settingsStore().fiscalYears;
+    const record = {
+      ...clone(year),
+      id: Math.max(0, ...years.map((y) => y.id)) + 1,
+      span: `${year.startsOn} – ${year.endsOn}`,
+      current: !!year.current,
+      closed: false,
+      status: year.current ? 'Current' : 'Open',
+    };
+    if (record.current) years.forEach((y) => { y.current = false; y.status = y.closed ? 'Closed' : 'Open'; });
+    years.unshift(record);
+    return settle(clone(record), this.latency);
+  }
+
+  async updateFiscalYear(id, changes) {
+    const years = this._settingsStore().fiscalYears;
+    const found = years.filter((y) => y.id === id)[0];
+    if (!found) throw new Error('Financial year not found');
+    if (changes.closed === true && found.current) {
+      // The same refusal the server makes: something has to stay open.
+      throw new Error(
+        `${found.code} is the current financial year. Make another year current before closing it.`
+      );
+    }
+    if (changes.closed !== undefined) found.closed = changes.closed;
+    if (changes.current) {
+      years.forEach((y) => { y.current = false; });
+      found.current = true;
+    }
+    years.forEach((y) => { y.status = y.current ? 'Current' : y.closed ? 'Closed' : 'Open'; });
+    return settle(clone(found), this.latency);
+  }
+
+  async updateNumbering(docType, format) {
+    const row = this._settingsStore().numbering.filter((n) => n.docType === docType)[0];
+    if (!row) throw new Error('Unknown document type');
+    Object.assign(row, clone(format));
+    row.pattern = `${row.prefix}-YYMM-${'#'.repeat(row.padding)}`;
+    return settle(clone(row), this.latency);
+  }
+
+  async updateApprovalRule(id, changes) {
+    const rule = this._settingsStore().approvalRules.filter((r) => r.id === id)[0];
+    if (!rule) throw new Error('Approval rule not found');
+    if (changes.threshold !== undefined && rule.condition === 'ALWAYS') {
+      throw new Error(
+        `${rule.entityLabel} always requires approval, so there is no limit to set on it.`
+      );
+    }
+    Object.assign(rule, clone(changes));
+    return settle(clone(rule), this.latency);
+  }
+
+  async updateNotificationRule(id, changes) {
+    const rule = this._settingsStore().notificationRules.filter((r) => r.id === id)[0];
+    if (!rule) throw new Error('Notification rule not found');
+    if (changes.threshold !== undefined && rule.threshold === null) {
+      throw new Error(`${rule.name} fires on a condition rather than an amount.`);
+    }
+    Object.assign(rule, clone(changes));
+    return settle(clone(rule), this.latency);
   }
 
   /** Record an approve/reject decision against a pending request. */

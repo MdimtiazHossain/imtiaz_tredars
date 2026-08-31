@@ -27,6 +27,7 @@ import {
   cancelCropSale,
   previewAllocation,
 } from '../services/cropSaleService.js';
+import { orgValuationMethod } from '../services/settingsService.js';
 
 /** Bulk crop trading: farmer procurement and batch-wise sale to buyer companies. */
 const router = Router();
@@ -188,7 +189,9 @@ const saleSchema = z.object({
   txnDate: z.string().date(),
   buyerCompanyId: z.coerce.number().int().positive(),
   warehouseId: z.coerce.number().int().positive().optional(),
-  valuationMethod: z.enum(['FIFO', 'WEIGHTED_AVERAGE']).default('FIFO'),
+  // Omitted means "whatever Settings says"; the screen sends it explicitly,
+  // an integration need not know the business has a preference.
+  valuationMethod: z.enum(['FIFO', 'WEIGHTED_AVERAGE']).optional(),
   transportCost: z.coerce.number().min(0).default(0),
   otherCost: z.coerce.number().min(0).default(0),
   paidAmount: z.coerce.number().min(0).default(0),
@@ -219,15 +222,16 @@ router.post(
         warehouseId: z.coerce.number().int().positive().optional(),
         quantity: z.coerce.number().min(0),
         rate: z.coerce.number().min(0).default(0),
-        valuationMethod: z.enum(['FIFO', 'WEIGHTED_AVERAGE']).default('FIFO'),
+        valuationMethod: z.enum(['FIFO', 'WEIGHTED_AVERAGE']).optional(),
         transportCost: z.coerce.number().min(0).default(0),
         otherCost: z.coerce.number().min(0).default(0),
       }),
       req
     );
 
+    const valuationMethod = body.valuationMethod || (await orgValuationMethod(req.orgId));
     const result = await withTransaction((client) =>
-      previewAllocation(client, { orgId: req.orgId, ...body })
+      previewAllocation(client, { orgId: req.orgId, ...body, valuationMethod })
     );
 
     if (!canSeeProfit(req.user)) {
@@ -305,6 +309,7 @@ router.post(
   requirePermission('crop.sale.create'),
   handler(async (req, res) => {
     const input = parseBody(saleSchema, req);
+    input.valuationMethod = input.valuationMethod || (await orgValuationMethod(req.orgId));
     const result = await withTransaction((client) =>
       createCropSale(client, { orgId: req.orgId, user: req.user, actor: req.actor, input })
     );

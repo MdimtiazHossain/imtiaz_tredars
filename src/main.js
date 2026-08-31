@@ -20,7 +20,7 @@ const repository = createRepository();
 const needsAuth = repository instanceof ApiRepository;
 
 /** Props the design exposes as tweakable inputs, overridable via the query string. */
-function readProps(user) {
+function readProps(user, workspace) {
   const q = new URLSearchParams(window.location.search);
   const roles = ['Admin', 'Management', 'Sales', 'Purchase', 'Accounts', 'Warehouse'];
   const requested = q.get('role');
@@ -37,7 +37,11 @@ function readProps(user) {
         : showProfit === null
           ? true
           : showProfit !== 'false',
-    approvalLimit: Number.isFinite(limit) && limit > 0 ? limit : 500000,
+    // The limit the approval engine actually applies, from the rules table.
+    // The query string still overrides it for a no-backend demo, and 5 lakh is
+    // the last resort rather than the figure the app believes in.
+    approvalLimit:
+      Number.isFinite(limit) && limit > 0 ? limit : workspace?.approvalLimit || 500000,
     // What the signed-in user may do, used to decide which master-data
     // controls to draw. The server checks the same codes on every route.
     permissions: user?.permissions || null,
@@ -88,7 +92,7 @@ async function mountApp(root, user) {
   const data = await repository.load();
   root.replaceChildren();
 
-  const app = new BusinessApp(readProps(user), data);
+  const app = new BusinessApp(readProps(user, data), data);
   app.mount(root, appTemplate, {
     DataTable: dataTableTemplate,
     FormModal: formModalTemplate,

@@ -1319,7 +1319,12 @@
           </div>
           <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:18px">
             <sc-if value="{{ setIs.company }}" hint-placeholder-val="{{ true }}">
-              <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Company profile</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;max-width:760px">
+                <div style="font-size:14.5px;font-weight:700">Company profile</div>
+                <sc-if value="{{ companyEdit.canEdit }}">
+                  <button onClick="{{ companyEdit.onEdit }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">{{ companyEdit.label }}</button>
+                </sc-if>
+              </div>
               <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;max-width:760px">
                 <sc-for list="{{ setCompany }}" as="f" hint-placeholder-count="6">
                   <label style="display:block">
@@ -1330,7 +1335,12 @@
               </div>
             </sc-if>
             <sc-if value="{{ setIs.fy }}">
-              <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">Financial year</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;max-width:560px">
+                <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">Financial year</div>
+                <sc-if value="{{ addFy.canAdd }}">
+                  <button onClick="{{ addFy.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ addFy.label }}</button>
+                </sc-if>
+              </div>
               <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px">Bangladesh financial year runs July to June. Closing a year locks its transactions.</div>
               <div style="display:flex;flex-direction:column;gap:8px;max-width:520px">
                 <sc-for list="{{ setFy }}" as="f" hint-placeholder-count="3">
@@ -1339,29 +1349,64 @@
                       <div style="font-size:13px;font-weight:600">{{ f.k }}</div>
                       <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ f.d }}</div>
                     </div>
-                    <span style="padding:4px 10px;border-radius:5px;font-size:11.5px;font-weight:600;background:{{ f.tagBg }};color:{{ f.tagFg }}">{{ f.tag }}</span>
+                    <span style="display:flex;align-items:center;gap:8px;flex:none">
+                      <sc-if value="{{ f.canAdopt }}">
+                        <button onClick="{{ f.onAdopt }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Make current</button>
+                      </sc-if>
+                      <sc-if value="{{ f.canClose }}">
+                        <button onClick="{{ f.onClose }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Close</button>
+                      </sc-if>
+                      <sc-if value="{{ f.canReopen }}">
+                        <button onClick="{{ f.onReopen }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Reopen</button>
+                      </sc-if>
+                      <span style="padding:4px 10px;border-radius:5px;font-size:11.5px;font-weight:600;background:{{ f.tagBg }};color:{{ f.tagFg }}">{{ f.tag }}</span>
+                    </span>
                   </div>
                 </sc-for>
               </div>
             </sc-if>
             <sc-if value="{{ setIs.numbering }}">
-              <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Document numbering</div>
+              <div style="font-size:14.5px;font-weight:700;margin-bottom:6px">Document numbering</div>
+              <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px">Documents already issued keep the numbers they were given.</div>
               <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;max-width:760px">
                 <sc-for list="{{ setNum }}" as="f" hint-placeholder-count="6">
                   <label style="display:block">
-                    <span style="display:block;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">{{ f.k }}</span>
+                    <span style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;font-weight:600;color:#6E6A64;margin-bottom:5px">
+                      <span>{{ f.k }}</span>
+                      <sc-if value="{{ f.canEdit }}">
+                        <button onClick="{{ f.onEdit }}" style="border:0;background:none;padding:0;font-size:11.5px;font-weight:600;cursor:pointer;color:#8A2233">Edit</button>
+                      </sc-if>
+                    </span>
                     <input value="{{ f.v }}" readOnly="{{ true }}" style="width:100%;padding:9px 10px;border:1px solid #E3E0DA;border-radius:7px;background:#FBFAF8;font-family:'Roboto Mono',monospace" />
+                    <span style="display:block;font-size:11px;color:#8C877F;margin-top:4px">{{ f.d }}</span>
                   </label>
                 </sc-for>
               </div>
             </sc-if>
             <sc-if value="{{ setIs.units }}">
-              <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Units and conversion</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;max-width:560px">
+                <div style="font-size:14.5px;font-weight:700">Units and conversion</div>
+                <sc-if value="{{ addUnit.canAdd }}">
+                  <button onClick="{{ addUnit.onAdd }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;color:#8A2233" style-hover="border-color:#8A2233;background:#FBF3F4">+ {{ addUnit.label }}</button>
+                </sc-if>
+              </div>
               <div style="display:flex;flex-direction:column;gap:8px;max-width:560px">
                 <sc-for list="{{ setUnits }}" as="u" hint-placeholder-count="5">
-                  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
-                    <span style="font-size:13px;font-weight:600">{{ u.k }}</span>
-                    <span style="font-family:'Roboto Mono',monospace;font-size:12.5px;color:#6E6A64">{{ u.v }}</span>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                    <div>
+                      <div style="font-size:13px;font-weight:600">{{ u.k }}</div>
+                      <div style="font-family:'Roboto Mono',monospace;font-size:12px;color:#8C877F;margin-top:2px">{{ u.v }}</div>
+                    </div>
+                    <span style="display:flex;align-items:center;gap:10px;flex:none">
+                      <sc-if value="{{ u.canEdit }}">
+                        <button onClick="{{ u.onEdit }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Edit</button>
+                      </sc-if>
+                      <sc-if value="{{ u.canToggle }}">
+                        <button onClick="{{ u.onToggle }}" title="{{ u.toggleLabel }}" style="width:38px;height:21px;border:0;padding:0;border-radius:11px;background:{{ u.tone }};position:relative;flex:none;cursor:pointer">
+                          <span style="position:absolute;top:2px;left:{{ u.knob }};width:17px;height:17px;border-radius:50%;background:#fff"></span>
+                        </button>
+                      </sc-if>
+                    </span>
                   </div>
                 </sc-for>
               </div>
@@ -1399,9 +1444,19 @@
               <div style="font-size:12.5px;color:#6E6A64;margin-bottom:14px">Crossing a limit routes the transaction to the approval queue instead of posting it.</div>
               <div style="display:flex;flex-direction:column;gap:8px;max-width:560px">
                 <sc-for list="{{ setLimits }}" as="l" hint-placeholder-count="4">
-                  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1px solid #E3E0DA;border-radius:8px">
-                    <span style="font-size:13px">{{ l.k }}</span>
-                    <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:700">{{ l.v }}</span>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                    <div>
+                      <div style="font-size:13px">{{ l.k }}</div>
+                      <sc-if value="{{ l.d }}">
+                        <div style="font-size:11.5px;color:#B58900;margin-top:2px">{{ l.d }}</div>
+                      </sc-if>
+                    </div>
+                    <span style="display:flex;align-items:center;gap:10px;flex:none">
+                      <span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:700">{{ l.v }}</span>
+                      <sc-if value="{{ l.canEdit }}">
+                        <button onClick="{{ l.onEdit }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Edit</button>
+                      </sc-if>
+                    </span>
                   </div>
                 </sc-for>
               </div>
@@ -1443,12 +1498,19 @@
               <div style="font-size:14.5px;font-weight:700;margin-bottom:14px">Notification rules</div>
               <div style="display:flex;flex-direction:column;gap:8px;max-width:600px">
                 <sc-for list="{{ setNotif }}" as="n" hint-placeholder-count="6">
-                  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border:1px solid #E3E0DA;border-radius:8px">
                     <div>
                       <div style="font-size:13px;font-weight:600">{{ n.k }}</div>
                       <div style="font-size:11.5px;color:#8C877F;margin-top:2px">{{ n.d }}</div>
                     </div>
-                    <span style="padding:4px 10px;border-radius:5px;font-size:11.5px;font-weight:600;background:#EDF4EE;color:#2F6B3C;flex:none">On</span>
+                    <span style="display:flex;align-items:center;gap:10px;flex:none">
+                      <sc-if value="{{ n.canEdit }}">
+                        <button onClick="{{ n.onEdit }}" style="border:1px solid #E3E0DA;background:#fff;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;color:#6E6A64" style-hover="border-color:#8A2233;color:#8A2233">Edit</button>
+                      </sc-if>
+                      <sc-if value="{{ n.canToggle }}">
+                        <button onClick="{{ n.onToggle }}" title="{{ n.tag }}" style="padding:4px 10px;border:0;border-radius:5px;font-size:11.5px;font-weight:600;background:{{ n.tagBg }};color:{{ n.tagFg }};cursor:pointer">{{ n.tag }}</button>
+                      </sc-if>
+                    </span>
                   </div>
                 </sc-for>
               </div>

@@ -45,7 +45,7 @@ const COMPANY_ROLES = [
 
 export const MASTER_KINDS = [
   'crop', 'product', 'customer', 'supplier', 'company', 'warehouse', 'employee',
-  'account', 'category', 'method',
+  'account', 'category', 'method', 'unit',
 ];
 
 const TITLES = {
@@ -59,6 +59,7 @@ const TITLES = {
   account: ['account', 'Cash, bank and mobile money the business holds'],
   category: ['expense category', 'What spending is booked against'],
   method: ['payment method', 'How money is taken in and paid out'],
+  unit: ['unit', 'How quantities are measured, and what they convert to'],
 };
 
 /** What one record of this kind is called, for a title or a message. */
@@ -107,6 +108,17 @@ export function defaultsFor(kind, data, row) {
       code: row ? row.code : '',
       name: row ? row.name : '',
       account: row ? row.account : '',
+    };
+  }
+
+  if (kind === 'unit') {
+    return {
+      code: row ? row.code : '',
+      name: row ? row.name : '',
+      // A new unit is assumed to be a fraction of the base one, which is what
+      // every unit after the first has been.
+      base: row ? row.base || '' : (data.units || [])[0] || '',
+      factor: row ? row.factor : '',
     };
   }
 
@@ -265,6 +277,44 @@ export function fieldsFor(kind, form, data, on, row) {
         mono: true,
         placeholder: 'BKASH',
         hint: 'Optional — one is allocated if left blank',
+      }),
+    ];
+  }
+
+  if (kind === 'unit') {
+    // Only a unit that is a base itself can be another unit's base, so the
+    // list offers the ones with no base of their own.
+    const bases = (data.unitRecords || [])
+      .filter((u) => !u.base && u.code !== form.code)
+      .map((u) => u.code);
+    return [
+      field('name', 'Unit name', {
+        value: form.name,
+        onChange: on('name'),
+        placeholder: 'Quintal',
+        wide: true,
+      }),
+      field('code', 'Short code', {
+        value: form.code,
+        onChange: on('code'),
+        mono: true,
+        placeholder: 'Qtl',
+        hint: row ? 'This is how the unit reads on every document' : 'How it reads on a document',
+      }),
+      field('base', 'Measured against', {
+        options: [''].concat(bases),
+        value: form.base,
+        onChange: on('base'),
+        hint: 'Leave blank if this is a base unit in its own right',
+      }),
+      field('factor', 'One of these is', {
+        type: 'number',
+        value: form.factor,
+        onChange: on('factor'),
+        placeholder: '0.1',
+        hint: form.base
+          ? `How many ${form.base} one ${form.code || 'unit'} is worth — 1 Kg is 0.001 MT`
+          : 'A base unit is worth one of itself',
       }),
     ];
   }
@@ -518,6 +568,17 @@ export function validate(kind, form) {
 
   if (kind === 'warehouse') return null;
 
+  if (kind === 'unit') {
+    if (!/^[A-Za-z][A-Za-z0-9 ]{0,15}$/.test(String(form.code || '').trim())) {
+      return 'A unit code is letters and digits, like MT or Bag.';
+    }
+    if (form.base && !(Number(form.factor) > 0)) {
+      return `Give what one ${form.code || 'unit'} is worth in ${form.base}.`;
+    }
+    if (Number(form.factor) < 0) return 'A conversion cannot be negative.';
+    return null;
+  }
+
   if (kind === 'account' || kind === 'category' || kind === 'method') {
     // The server holds the same rule; saying it here means the operator finds
     // out while typing rather than after saving.
@@ -579,6 +640,16 @@ export function payloadFor(kind, form) {
       code: text(form.code) || undefined,
       name: text(form.name),
       account: text(form.account),
+    };
+  }
+
+  if (kind === 'unit') {
+    return {
+      code: text(form.code),
+      name: text(form.name),
+      base: text(form.base),
+      // A base unit is worth one of itself; anything else states its fraction.
+      factor: form.base ? number(form.factor) : 1,
     };
   }
 

@@ -36,16 +36,82 @@ import {
   REPORT_GROUPS,
 } from '../data/analytics.js';
 import {
-  PERMISSION_MATRIX,
   PHONE_SCREENS,
-  FINANCIAL_YEARS,
-  NUMBERING,
-  UNIT_CONVERSIONS,
   PAYMENT_METHODS,
   CASH_ACCOUNTS,
   EXPENSE_VOUCHERS,
-  NOTIFICATION_RULES,
+  SETTINGS,
 } from '../data/reference.js';
+import {
+  defaultsFor as settingsDefaults,
+  validate as validateSettings,
+  payloadFor as settingsPayload,
+  buildSettingsModal,
+} from './settingsForms.js';
+
+/** Currencies the app has words for; anything else reads as its own code. */
+const CURRENCY_NAMES = { BDT: 'Bangladeshi Taka (৳)', USD: 'US Dollar ($)', INR: 'Indian Rupee (₹)', EUR: 'Euro (€)' };
+
+const currencyName = (code) => CURRENCY_NAMES[code] || code || '—';
+
+/**
+ * What an approval rule does, in words, built from the rule itself.
+ *
+ * The seeded rules carry names like 'Purchase value above ৳5,00,000', which
+ * stop being true the moment somebody moves the limit. Composing the sentence
+ * from the entity and the condition means the panel cannot contradict the
+ * figure printed beside it.
+ */
+function approvalRuleLabel(rule) {
+  if (rule.condition === 'ALWAYS') return `${rule.entityLabel} always requires approval`;
+  if (rule.condition === 'DISCOUNT_PCT_ABOVE') return `${rule.entityLabel} discount ceiling`;
+  return `${rule.entityLabel} requiring approval above`;
+}
+
+/**
+ * Columns the audit trail does not report on.
+ *
+ * Every update touches its own timestamps and the id of whoever made it, and
+ * listing those alongside the change buries it: eight rows of "Updated at"
+ * beside the one line saying the rate moved.
+ */
+const AUDIT_BOOKKEEPING = new Set([
+  'updated_at', 'created_at', 'updatedAt', 'createdAt',
+  'updated_by', 'created_by', 'updatedBy', 'createdBy', 'id', 'org_id',
+]);
+
+/**
+ * Fields whose numbers are taka.
+ *
+ * A padding of 3, a credit term of 30 days and a line count of 1 are numbers
+ * too, and printing every number as money turned them into amounts of taka.
+ */
+const AUDIT_MONEY_FIELD = /(amount|rate|cost|balance|limit|profit|cogs|price|paid|advance|opening|threshold|payable|receivable)/i;
+
+/**
+ * One field out of an audit entry's before/after snapshot, printed.
+ *
+ * PostgreSQL numerics arrive as strings, so a taka figure needs grouping to be
+ * read at all; anything else numeric is grouped without the currency sign.
+ */
+function auditValue(snapshot, name) {
+  const value = snapshot ? snapshot[name] : null;
+  if (value === null || value === undefined || value === '') return '—';
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  if (typeof value === 'object') return JSON.stringify(value);
+  if (/^-?d+(.d+)?$/.test(String(value))) {
+    return AUDIT_MONEY_FIELD.test(name) ? money(Number(value)) : int(Number(value));
+  }
+  return String(value);
+}
+
+/** Turn a snake_case column name into something a person reads. */
+const humanField = (name) =>
+  String(name || '')
+    .split('_')
+    .join(' ')
+    .replace(/^./, (c) => c.toUpperCase());
 
 export class BusinessApp extends Component {
   /**
@@ -59,9 +125,14 @@ export class BusinessApp extends Component {
     this.state = {
       screen:'dashboard', biz:'all', q:'', qOpen:false, notifOpen:false, userOpen:false, toast:null,
       invTab:'all', invSort:'value', acctTab:'receivable', setSec:'company', repSel:'crop-batch-profit', repLoading:false,
-      custSel:'CUS-003', custTab:'purchases', supSel:'SUP-001', supTab:'purchases', valuation:'FIFO',
+      custSel:'CUS-003', custTab:'purchases', supSel:'SUP-001', supTab:'purchases',
+      // The configured costing method, not a default the screen decides on.
+      valuation:data.company && data.company.valuation === 'WEIGHTED_AVERAGE' ? 'Weighted Average' : 'FIFO',
       cp:{sup:'SUP-001', crop:'Maize', grade:'A (Premium)', wh:'Naogaon Central Godown', date:'2026-08-28', qty:100, unit:'MT', moist:1.5, rate:30000, transport:50000, loading:12000, unloading:8000, other:0, advance:1500000, note:''},
-      extraCusts:[], custModal:false, master:null, masterRows:{}, expenses:null,
+      extraCusts:[], custModal:false, master:null, masterRows:{},
+      // Configuration, fetched when Settings is opened; the audit trail, when
+      // its screen is. Neither belongs in the workspace every screen boots from.
+      settings:null, settingsForm:null, auditRows:null, expenses:null,
       newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'', district:'Bogura', upazila:'', limit:500000, days:15, opening:0},
       cs:{buyer:'PRAN Agro Business Ltd.', crop:'Maize', date:'2026-08-28', rate:34500, transport:15000, other:5000, target:40, alloc:{}},
       ds:{cust:'CUS-002', date:'2026-08-28', sp:'Shamim Reza', wh:'Bogura Depot', terms:'Credit 15 days', paid:150000,
@@ -90,7 +161,8 @@ export class BusinessApp extends Component {
       if (id === 'accounts') {
         this.loadMasterList('account'); this.loadMasterList('category'); this.loadExpenses();
       }
-      if (id === 'settings') this.loadMasterList('method');
+      if (id === 'settings') { this.loadSettings(); this.loadMasterList('method'); }
+      if (id === 'audit') this.loadAudit();
     };
   }
   h(g, k, num) { return e => { const v = num ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value; this.setState(s => { const o = Object.assign({}, s[g]); o[k] = v; return {[g]:o}; }); }; }
@@ -304,6 +376,9 @@ export class BusinessApp extends Component {
       ...this.data,
       employees: rows.employee || this.data.employees || [],
       products: rows.product || this.data.products || [],
+      // The unit form needs the records, not just the codes every other screen
+      // works in, so it can offer the base units and show the conversions.
+      unitRecords: rows.unit || this.settingsData().units || [],
     };
   }
 
@@ -417,6 +492,9 @@ export class BusinessApp extends Component {
   afterMasterChange(kind) {
     this.reloadWorkspace();
     this.loadMasterList(kind);
+    // Units and payment methods are maintained from the Settings screen, and
+    // that screen reads them out of the settings payload.
+    if (kind === 'unit' || kind === 'method') this.loadSettings();
   }
 
   /**
@@ -431,6 +509,194 @@ export class BusinessApp extends Component {
     this.repository.listMaster(kind).then(
       rows => this.setState(s => ({ masterRows: { ...s.masterRows, [kind]: rows } })),
       () => {}
+    );
+  }
+
+  /* ---------------------------------------------------------------- settings */
+
+  /**
+   * Load the Settings screen's working set.
+   *
+   * Configuration is not part of the workspace every screen boots from, so it
+   * is fetched when the screen is opened. Until it arrives -- and for good, with
+   * no backend -- the bundled fallback stands in, which is why the panels are
+   * never empty.
+   */
+  loadSettings() {
+    if (!this.repository || typeof this.repository.settings !== 'function') return;
+    this.repository.settings().then(
+      settings => this.setState({ settings }),
+      () => {}
+    );
+  }
+
+  /** The settings in hand: the server's once fetched, the bundled ones until then. */
+  settingsData() {
+    return this.state.settings || SETTINGS;
+  }
+
+  /** Whether the signed-in user may change configuration. */
+  maySettings() {
+    const held = this.props.permissions;
+    return !held ? true : held.indexOf('settings.edit') > -1;
+  }
+
+  /**
+   * Open one of the settings forms.
+   *
+   * `row` is the record the panel was showing, so the form opens on what is
+   * there rather than on a blank.
+   */
+  openSettings(kind, row) {
+    this.setState({
+      settingsForm: {
+        kind,
+        row: row || {},
+        form: settingsDefaults(kind, row || {}),
+        error: '',
+        busy: false,
+      },
+    });
+  }
+
+  closeSettings() {
+    this.setState({ settingsForm: null });
+  }
+
+  onSettingsField(key) {
+    return e => {
+      const value = e.target.value;
+      this.setState(s =>
+        s.settingsForm
+          ? { settingsForm: { ...s.settingsForm, form: { ...s.settingsForm.form, [key]: value }, error: '' } }
+          : null
+      );
+    };
+  }
+
+  /** Which repository call each settings form submits through. */
+  static SETTINGS_WRITE = {
+    company: 'updateOrganization',
+    fiscalYear: 'createFiscalYear',
+    numbering: 'updateNumbering',
+    limit: 'updateApprovalRule',
+    notification: 'updateNotificationRule',
+  };
+
+  submitSettings() {
+    const state = this.state.settingsForm;
+    if (!state || state.busy) return;
+
+    const problem = validateSettings(state.kind, state.form, state.row);
+    if (problem) {
+      this.setState({ settingsForm: { ...state, error: problem } });
+      return;
+    }
+
+    const payload = settingsPayload(state.kind, state.form, state.row);
+    this.setState({ settingsForm: { ...state, busy: true, error: '' } });
+
+    const method = BusinessApp.SETTINGS_WRITE[state.kind];
+    // The company profile and a new financial year are addressed by nothing;
+    // numbering is addressed by its document type, a rule by its id.
+    const target =
+      state.kind === 'numbering' ? state.row.docType
+        : state.kind === 'limit' || state.kind === 'notification' ? state.row.id
+          : null;
+
+    const write = target === null
+      ? this.persist(method, payload)
+      : this.persist(method, target, payload);
+
+    write.then(
+      () => {
+        this.setState({ settingsForm: null });
+        this.fire(this.settingsSavedText(state.kind, state.row), 'ok');
+        this.afterSettingsChange();
+      },
+      err => {
+        if (err.silent) return;
+        this.setState(s =>
+          s.settingsForm ? { settingsForm: { ...s.settingsForm, busy: false, error: err.message } } : null
+        );
+      }
+    );
+  }
+
+  settingsSavedText(kind, row) {
+    if (kind === 'company') return 'Company profile updated';
+    if (kind === 'fiscalYear') return 'Financial year added';
+    if (kind === 'numbering') return `${row.label} numbering updated`;
+    if (kind === 'limit') return `${row.entityLabel} limit updated`;
+    return `${row.name} updated`;
+  }
+
+  /**
+   * A settings change moves what the rest of the app does.
+   *
+   * The company name is in the sidebar, the current financial year is in the
+   * header and the valuation method decides how a sale is costed, so the
+   * workspace is refetched alongside the settings themselves.
+   */
+  afterSettingsChange() {
+    this.loadSettings();
+    this.reloadWorkspace();
+  }
+
+  /** Switch a notification rule on or off from the row it sits on. */
+  toggleNotification(rule) {
+    this.persist('updateNotificationRule', rule.id, { active: !rule.active }).then(
+      () => {
+        this.fire(`${rule.name} ${rule.active ? 'switched off' : 'switched on'}`, 'ok');
+        this.loadSettings();
+      },
+      err => { if (!err.silent) this.fire(err.message, 'danger'); }
+    );
+  }
+
+  /** Close, reopen or adopt a financial year. */
+  changeFiscalYear(year, changes, message) {
+    this.persist('updateFiscalYear', year.id, changes).then(
+      () => { this.fire(message, 'ok'); this.afterSettingsChange(); },
+      err => { if (!err.silent) this.fire(err.message, 'danger'); }
+    );
+  }
+
+  /**
+   * Choose how stock is costed.
+   *
+   * This used to change a value in browser memory that a reload put back and
+   * the server never saw. It is a property of the organisation, so it is saved
+   * as one, and the crop sales screen posts with whatever it says.
+   */
+  setValuation(label) {
+    const method = label === 'FIFO' ? 'FIFO' : 'WEIGHTED_AVERAGE';
+    if (label === this.state.valuation) return;
+    this.setState({ valuation: label });
+    this.persist('updateOrganization', { valuation: method }).then(
+      () => { this.fire(`Inventory valued ${label === 'FIFO' ? 'FIFO' : 'at weighted average'} from now on`, 'ok'); this.afterSettingsChange(); },
+      err => {
+        // Put the buttons back where they were: nothing was saved.
+        this.setState({ valuation: label === 'FIFO' ? 'Weighted Average' : 'FIFO' });
+        if (!err.silent) this.fire(err.message, 'danger');
+      }
+    );
+  }
+
+  /* ------------------------------------------------------------- audit trail */
+
+  /**
+   * Load the audit trail.
+   *
+   * Every write in the API writes an audit row inside the same transaction, so
+   * this has always been real; the screen was showing a fixture beside it.
+   */
+  loadAudit() {
+    if (!this.repository || typeof this.repository.audit !== 'function') return;
+    this.setState({ auditLoading: true });
+    this.repository.audit({ pageSize: 120 }).then(
+      result => this.setState({ auditRows: result.rows || [], auditLoading: false }),
+      () => this.setState({ auditRows: [], auditLoading: false })
     );
   }
 
@@ -1196,6 +1462,7 @@ export class BusinessApp extends Component {
     rows.sort((a, b) => sort === 'value' ? b.val - a.val : sort === 'age' ? (b.age || 0) - (a.age || 0) : sort === 'qty' ? b.qty - a.qty : a.name.localeCompare(b.name));
     const mark = k => sort === k ? '  ↓' : '';
     const total = rows.reduce((t2, r) => t2 + r.val, 0);
+
     // The KPIs describe all stock, not the tab in view, so they are built from
     // every line rather than from the filtered `rows` above.
     const crops = S.batches.map(b => ({ qty: b.rem, val: b.rem * b.cost }));
@@ -1658,8 +1925,106 @@ export class BusinessApp extends Component {
     return {open:true, groups:gs, q:this.state.q, empty:gs.length === 0};
   }
 
+  /**
+   * The next financial year, proposed from the latest one on file.
+   *
+   * Bangladesh runs July to June, so the next year almost always starts the day
+   * after the last one ended and runs a year. Proposing it rather than asking
+   * means the form is usually right as it opens.
+   */
+  nextFiscalYear() {
+    const years = this.settingsData().fiscalYears || [];
+    const latest = years.map(y => y.endsOn).sort().slice(-1)[0];
+    if (!latest) return {};
+
+    const end = new Date(latest);
+    const start = new Date(end.getTime() + 86400000);
+    const nextEnd = new Date(start.getFullYear() + 1, start.getMonth(), start.getDate() - 1);
+    const iso = d => [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
+
+    return {
+      nextCode: `FY ${start.getFullYear()}-${String(nextEnd.getFullYear()).slice(-2)}`,
+      nextStart: iso(start),
+      nextEnd: iso(nextEnd),
+    };
+  }
+
+  /** The open settings form. */
+  settingsModal() {
+    const state = this.state.settingsForm;
+    // The districts the business already deals in, so the company's default is
+    // chosen from them rather than typed afresh.
+    const districts = [...new Set(
+      (this.data.customers || [])
+        .concat(this.data.suppliers || [], this.data.companies || [])
+        .map(p => p.district)
+        .filter(Boolean)
+        .concat(state.form.defaultDistrict ? [state.form.defaultDistrict] : [])
+    )].sort((a, b) => a.localeCompare(b));
+
+    return buildSettingsModal(state.kind, state, {
+      onField: key => this.onSettingsField(key),
+      onSubmit: () => this.submitSettings(),
+      onCancel: () => this.closeSettings(),
+    }, districts);
+  }
+
+  /**
+   * The audit trail.
+   *
+   * Every write in the API records one of these inside the transaction that
+   * made the change, so this table is the history rather than an illustration
+   * of one. A row states which field moved and what it moved between; a change
+   * touching several fields becomes several rows, which is how it reads.
+   */
+  auditTable() {
+    const entries = this.state.auditRows;
+    const header = [column('When'), column('User'), column('Action'), column('Record'), column('Field'), column('Previous'), column('New')];
+
+    const rows = (entries || []).flatMap(entry => {
+      const changed = Object.keys(entry.newValue || entry.oldValue || {})
+        .filter(name => !AUDIT_BOOKKEEPING.has(name));
+      // An entry with no field-level diff -- a post, an approval -- is one row
+      // carrying its summary rather than nothing at all.
+      const fields = changed.length ? changed : [null];
+
+      return fields.map(name => ({
+        cells: [
+          cell(entry.when, { color: C.mut, mono: true, size: '12px' }),
+          cell(entry.user, { weight: '600' }),
+          cell(humanField(entry.action)),
+          cell(this.auditRecordOf(entry), { mono: true, color: C.mut }),
+          cell(name ? humanField(name) : entry.summary || '—'),
+          cell(name ? auditValue(entry.oldValue, name) : '—', { mono: true, color: C.mut }),
+          cell(name ? auditValue(entry.newValue, name) : '—', { mono: true, weight: '600' }),
+        ],
+      }));
+    });
+
+    return table(header, rows, {
+      maxH: '520px',
+      footNote: entries ? `${rows.length} change${rows.length === 1 ? '' : 's'} across ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}` : '',
+      emptyTitle: this.state.auditLoading ? 'Loading the trail…' : 'Nothing recorded yet',
+      emptyNote: this.state.auditLoading
+        ? ''
+        : 'Every create, edit, post and approval is written here as it happens.',
+    });
+  }
+
+  /** The document a log entry is about: its number where the summary names one. */
+  auditRecordOf(entry) {
+    const match = /\b[A-Z]{2,4}-[0-9]{3,4}-[0-9]+\b/.exec(entry.summary || '');
+    if (match) return match[0];
+    const code = /\b[A-Z]{2,6}-[0-9]{2,4}\b/.exec(entry.summary || '');
+    if (code) return code[0];
+    return humanField(entry.entity) + (entry.entityId ? ` #${entry.entityId}` : '');
+  }
+
   renderVals() {
     const S = this.state, role = this.role();
+    // Configuration in hand, and the organisation inside it. Every Settings
+    // panel reads from these two, so nothing on that screen is written twice.
+    const cfg = this.settingsData(), org = cfg.organization;
     const nav = this.data.nav.map(g => ({g:g.g, items:g.items.filter(i => i.roles === '*' || i.roles.indexOf(role) > -1).map(i => ({
       label:i.label, icon:i.icon, on:S.screen === i.id, onClick:this.go(i.id),
       bg:S.screen === i.id ? C.accBg : 'transparent', color:S.screen === i.id ? C.acc : '#4A463F',
@@ -1668,7 +2033,8 @@ export class BusinessApp extends Component {
     const is = {}; Object.keys(this.data.titles).forEach(k => { is[k.split('-').join('')] = S.screen === k; });
     const pendCount = S.approvals.filter(a => a.status === 'pending').length;
     return {
-      modal:this.state.master ? this.masterModal() : buildModal(this),
+      modal:this.state.settingsForm ? this.settingsModal()
+        : this.state.master ? this.masterModal() : buildModal(this),
       crop:this.crops(),
       prod:this.products(),
       wh:this.warehouses(),
@@ -1702,35 +2068,78 @@ export class BusinessApp extends Component {
       onDP:{co:this.h('dp', 'co'), inv:this.h('dp', 'inv'), date:this.h('dp', 'date'), wh:this.h('dp', 'wh'), terms:this.h('dp', 'terms'),
         transport:this.h('dp', 'transport', true), other:this.h('dp', 'other', true)},
       valTabs:[{k:'FIFO', l:'FIFO'}, {k:'Weighted Average', l:'Weighted average'}].map(x => ({l:x.l, on:x.k === S.valuation,
-        bg:x.k === S.valuation ? C.accBg : '#fff', color:x.k === S.valuation ? C.acc : C.mut, bd:x.k === S.valuation ? C.acc : C.bd, onClick:this.hs('valuation', x.k)})),
+        bg:x.k === S.valuation ? C.accBg : '#fff', color:x.k === S.valuation ? C.acc : C.mut, bd:x.k === S.valuation ? C.acc : C.bd,
+        onClick:() => this.setValuation(x.k)})),
       setSecs:[['company', 'Company profile'], ['fy', 'Financial year'], ['numbering', 'Numbering'], ['units', 'Units & conversion'], ['pay', 'Payment methods'],
         ['limits', 'Approval limits'], ['valuation', 'Inventory valuation'], ['roles', 'Roles & permissions'], ['notif', 'Notification rules']].map(x => ({
         l:x[1], on:S.setSec === x[0], bg:S.setSec === x[0] ? C.accBg : 'transparent', color:S.setSec === x[0] ? C.acc : '#3D3A36',
         weight:S.setSec === x[0] ? '600' : '400', onClick:this.hs('setSec', x[0])})),
       setIs:{company:S.setSec === 'company', fy:S.setSec === 'fy', numbering:S.setSec === 'numbering', units:S.setSec === 'units',
         pay:S.setSec === 'pay', limits:S.setSec === 'limits', valuation:S.setSec === 'valuation', roles:S.setSec === 'roles', notif:S.setSec === 'notif'},
-      matrix: PERMISSION_MATRIX,
+      // The grants actually held, not a description of what they were meant to
+      // be: with a backend this is computed from `role_permissions`.
+      matrix:{
+        cols:['Module'].concat(cfg.permissions.roles),
+        rows:cfg.permissions.modules.map(m => ({cells:[{t:m.label, w:'600', color:'#3D3A36', align:'left'}].concat(
+          cfg.permissions.roles.map(role => {
+            const level = m.levels[role] || '—';
+            return {t:level, w:'400', align:'center',
+              color:level === 'Full' ? C.crop : level === '—' || level === 'Hidden' ? '#B6B0A6' : '#3D3A36'};
+          }))}))},
 
-      audit:table([column('When'), column('User'), column('Action'), column('Record'), column('Field'), column('Previous'), column('New')],
-        [['28 Aug, 10:12 am', 'Sohel Rana', 'Created', 'PC-2608-014', 'Purchase', '—', '৳30,20,000'],
-         ['28 Aug, 9:58 am', 'Sohel Rana', 'Edited', 'PC-2608-014', 'Transport cost', '৳42,000', '৳50,000'],
-         ['28 Aug, 9:40 am', 'Shamim Reza', 'Changed rate', 'DS-2608-221', 'Sales rate — Ridomil', '৳295', '৳286'],
-         ['27 Aug, 6:05 pm', 'Jamal Uddin', 'Adjusted stock', 'BC-2607-014', 'Quantity', '92 MT', '88 MT'],
-         ['27 Aug, 3:22 pm', 'Nasrin Akter', 'Received payment', 'RC-2608-309', 'Amount', '—', '৳4,00,000'],
-         ['26 Aug, 12:15 pm', 'Rakib Hasan', 'Approved', 'SC-2608-051', 'Status', 'Pending approval', 'Approved'],
-         ['26 Aug, 11:50 am', 'Shamim Reza', 'Posted', 'SC-2608-051', 'Status', 'Draft', 'Pending approval'],
-         ['25 Aug, 5:02 pm', 'Rakib Hasan', 'Rejected', 'DS-2608-198', 'Discount', '8%', 'Rejected']].map(r => ({cells:[
-          cell(r[0], {color:C.mut, mono:true, size:'12px'}), cell(r[1], {weight:'600'}), cell(r[2]), cell(r[3], {mono:true, color:C.mut}),
-          cell(r[4]), cell(r[5], {mono:true, color:C.mut}), cell(r[6], {mono:true, weight:'600'})]})), {maxH:'520px'}),
+      audit:this.auditTable(),
       repFilters:[{k:'Period', v:'01–28 Aug 2026'}, {k:'Business type', v:S.biz === 'all' ? 'All' : S.biz === 'crop' ? 'Bulk Crop' : 'Dealer'},
         {k:'Warehouse', v:'All'}, {k:'Customer', v:'All'}, {k:'Supplier', v:'All'}, {k:'Crop / product', v:'All'}, {k:'Currency', v:'BDT ৳'}],
       skeleton:[{w:'92%'}, {w:'78%'}, {w:'85%'}, {w:'64%'}, {w:'88%'}, {w:'71%'}],
-      setCompany:[{k:'Company name', v:this.data.company.name}, {k:'Trade licence no', v:'BOG-TL-2019-04471'}, {k:'BIN / VAT registration', v:'003912847-0201'},
-        {k:'Head office', v:'Sherpur Road, Bogura Sadar, Bogura'}, {k:'Mobile', v:'01711-330099'}, {k:'Email', v:'accounts@meghnaagro.com.bd'},
-        {k:'Currency', v:'Bangladeshi Taka (৳)'}, {k:'Default district', v:'Bogura'}],
-      setFy: FINANCIAL_YEARS,
-      setNum: NUMBERING,
-      setUnits: UNIT_CONVERSIONS,
+      // Read from the organisation record rather than restated here: the
+      // trade licence and BIN go on invoices and cannot be a second copy.
+      setCompany:[{k:'Company name', v:org.name}, {k:'System name', v:org.systemName},
+        {k:'Trade licence no', v:org.tradeLicenceNo || '—'}, {k:'BIN / VAT registration', v:org.binNo || '—'},
+        {k:'Head office', v:org.headOffice || '—'}, {k:'Mobile', v:org.mobile || '—'}, {k:'Email', v:org.email || '—'},
+        {k:'Currency', v:currencyName(org.currency)}, {k:'Default district', v:org.defaultDistrict || '—'}],
+      companyEdit:{canEdit:this.maySettings(), label:'Edit profile',
+        onEdit:() => this.openSettings('company', org)},
+
+      setFy:cfg.fiscalYears.map(y => ({
+        k:y.code, d:y.span,
+        tag:y.status, bg:y.current ? '#FBFAF8' : '#fff',
+        tagBg:y.current ? C.cropBg : y.closed ? '#F0EEE9' : C.warnBg,
+        tagFg:y.current ? C.crop : y.closed ? '#3D3A36' : C.warn,
+        // A year that is neither current nor closed can be adopted; the current
+        // one cannot be closed while it is the only place documents can go.
+        canAdopt:this.maySettings() && !y.current && !y.closed,
+        canClose:this.maySettings() && !y.current && !y.closed,
+        canReopen:this.maySettings() && y.closed,
+        onAdopt:() => this.changeFiscalYear(y, {current:true}, y.code + ' is now the current financial year'),
+        onClose:() => this.changeFiscalYear(y, {closed:true}, y.code + ' closed — its transactions are locked'),
+        onReopen:() => this.changeFiscalYear(y, {closed:false}, y.code + ' reopened'),
+      })),
+      addFy:{canAdd:this.maySettings(), label:'Add year',
+        onAdd:() => this.openSettings('fiscalYear', this.nextFiscalYear())},
+
+      setNum:cfg.numbering.map(n => ({
+        k:n.label, v:n.pattern,
+        d:n.issued ? n.issued + ' issued' + (n.lastPeriod ? ' in ' + n.lastPeriod : '') : 'none issued yet',
+        canEdit:this.maySettings(), onEdit:() => this.openSettings('numbering', n),
+      })),
+
+      setUnits:cfg.units.map(u => {
+        const on = u.active !== false;
+        return {
+          // The name reads on its own; the code belongs with the conversion,
+          // which already names it — 'Bag (50 kg) (Bag)' helped nobody.
+          k:u.name, v:u.base ? u.conversion : u.code + ' · base unit',
+          tone:on ? C.crop : '#D9D5CD', knob:on ? '19px' : '2px',
+          canEdit:this.mayMaster('unit', 'edit'),
+          canToggle:on ? this.mayMaster('unit', 'delete') : this.mayMaster('unit', 'edit'),
+          toggleLabel:on ? 'Retire' : 'Restore',
+          onEdit:() => this.openMaster('unit', u),
+          onToggle:() => (on ? this.confirmRetire('unit', u) : this.restoreMaster('unit', u)),
+        };
+      }),
+      addUnit:{canAdd:this.mayMaster('unit', 'create'), label:'Add unit',
+        onAdd:() => this.openMaster('unit')},
+
       // Real methods once fetched; the bundled list is the no-backend
       // fallback. The switch used to be a picture -- it now retires or
       // restores the method it sits beside.
@@ -1752,10 +2161,33 @@ export class BusinessApp extends Component {
         }),
       addMethod:{canAdd:this.mayMaster('method', 'create'), label:'Add method',
         onAdd:() => this.openMaster('method')},
-      setLimits:[{k:'Purchase requiring approval above', v:money(this.limit())}, {k:'Sales discount ceiling', v:'5.00%'},
-        {k:'Expense requiring approval above', v:money(50000)}, {k:'Stock adjustment', v:'always requires approval'},
-        {k:'Credit sale above customer limit', v:'always requires approval'}],
-      setNotif: NOTIFICATION_RULES,
+
+      // The limits the approval engine actually applies. The label is built
+      // from the threshold rather than stored beside it, so the two can never
+      // disagree the way 'Purchase above ৳5,00,000' did once the figure moved.
+      setLimits:cfg.approvalRules.map(r => ({
+        k:approvalRuleLabel(r),
+        v:r.condition === 'ALWAYS' ? 'always' : r.condition === 'DISCOUNT_PCT_ABOVE'
+          ? Number(r.threshold).toFixed(2) + '%' : money(r.threshold),
+        d:r.active ? '' : 'switched off',
+        muted:!r.active,
+        canEdit:this.maySettings() && r.condition !== 'ALWAYS',
+        onEdit:() => this.openSettings('limit', r),
+      })),
+
+      setNotif:cfg.notificationRules.map(n => ({
+        k:n.name,
+        // The rule says where its own figure belongs, so a day count and a
+        // taka amount each read as a sentence rather than as a prefix.
+        d:n.threshold === null ? n.description
+          : n.description.replace('{value}', n.unit === 'days' ? n.threshold : money(n.threshold)),
+        on:n.active, tag:n.active ? 'On' : 'Off',
+        tagBg:n.active ? C.cropBg : '#F0EEE9', tagFg:n.active ? C.crop : '#8C877F',
+        canEdit:this.maySettings() && n.threshold !== null,
+        canToggle:this.maySettings(),
+        onEdit:() => this.openSettings('notification', n),
+        onToggle:() => this.toggleNotification(n),
+      })),
       phones: PHONE_SCREENS,
       companyAdd:{canAdd:this.mayMaster('company', 'create'), addLabel:'Add company', onAdd:() => this.openMaster('company')},
       companiesTable:table([column('Code'), column('Company'), column('Role'), column('Contact person'), column('Mobile'), column('Credit limit', 'right'), column('Balance', 'right'), column('Status', 'center'), column('', 'right')],

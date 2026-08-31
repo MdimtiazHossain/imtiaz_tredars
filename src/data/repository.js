@@ -25,6 +25,14 @@ import { ApiRepository } from './apiRepository.js';
  * | `postDealerPurchase(args)` | post a dealer purchase                        |
  * | `postDealerSale(args)`     | post a dealer sales invoice                   |
  * | `decideApproval(...)`      | approve or reject a pending request           |
+ * | `settings()`               | the Settings screen's working set             |
+ * | `updateOrganization(...)`  | the company profile, or the valuation method  |
+ * | `createFiscalYear(year)`   | open the next financial year                  |
+ * | `updateFiscalYear(...)`    | close, reopen or adopt one                    |
+ * | `updateNumbering(...)`     | the prefix and width of a document type       |
+ * | `updateApprovalRule(...)`  | move an approval limit, or switch a rule off  |
+ * | `updateNotificationRule()` | move or switch off an alert                   |
+ * | `audit(filters)`           | the recorded history of every change          |
  *
  * Both implementations resolve to the same shapes. The write methods accept an
  * `intent` — what the user did — rather than a finished row, so the server can

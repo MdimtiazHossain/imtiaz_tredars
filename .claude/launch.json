@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5290", "--strictPort"],
       "port": 5290
+    },
+    {
+      "name": "business-suite-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "server", "run", "dev"],
+      "port": 5310
     }
   ]
 }

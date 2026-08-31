@@ -1390,3 +1390,261 @@ describe('derived figures', () => {
     expect(kpi.s).toBe('margin 10.3%');
   });
 });
+
+describe('settings', () => {
+  /** Open Settings on one panel, with the configuration loaded. */
+  async function openSettings(section, props = {}) {
+    const { app, root } = await mountApp(props);
+    app.setState({ screen: 'settings', setSec: section });
+    app.loadSettings();
+    await new Promise((r) => setTimeout(r, 20));
+    flush(app);
+    return { app, root };
+  }
+
+  it('reads the company profile from the organisation record', async () => {
+    const { app } = await openSettings('company');
+    const vals = app.renderVals();
+    const org = app.settingsData().organization;
+
+    // Not one field restated in the screen: every row names the record it came
+    // from, so changing the record changes the panel.
+    expect(vals.setCompany.find((f) => f.k === 'Company name').v).toBe(org.name);
+    expect(vals.setCompany.find((f) => f.k === 'Trade licence no').v).toBe(org.tradeLicenceNo);
+    expect(vals.setCompany.find((f) => f.k === 'BIN / VAT registration').v).toBe(org.binNo);
+  });
+
+  it('saves an edited company profile through the repository', async () => {
+    const { app } = await openSettings('company');
+    app.openSettings('company', app.settingsData().organization);
+    app.onSettingsField('headOffice')({ target: { value: 'Station Road, Bogura' } });
+    app.submitSettings();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(app.state.settingsForm).toBeNull();
+    expect(app.settingsData().organization.headOffice).toBe('Station Road, Bogura');
+  });
+
+  it('refuses a currency that is not a three-letter code', async () => {
+    const { app } = await openSettings('company');
+    app.openSettings('company', app.settingsData().organization);
+    app.onSettingsField('currency')({ target: { value: 'TAKA' } });
+    app.submitSettings();
+
+    expect(app.state.settingsForm.error).toBe('The currency is a three-letter code, like BDT.');
+  });
+
+  it('offers only districts the business already deals in', async () => {
+    const { app } = await openSettings('company');
+    app.openSettings('company', app.settingsData().organization);
+    const districts = app
+      .settingsModal()
+      .fields.find((f) => f.key === 'defaultDistrict')
+      .options.map((o) => o.value);
+
+    const known = new Set(
+      app.data.customers.concat(app.data.suppliers, app.data.companies).map((p) => p.district)
+    );
+    expect(districts.length).toBeGreaterThan(0);
+    for (const d of districts) expect(known.has(d)).toBe(true);
+  });
+
+  it('lists the financial years on file and what can be done to each', async () => {
+    const { app } = await openSettings('fy');
+    const years = app.renderVals().setFy;
+    const current = years.find((y) => y.tag === 'Current');
+
+    expect(years).toHaveLength(app.settingsData().fiscalYears.length);
+    // The year being traded in cannot be closed out from under the business.
+    expect(current.canClose).toBe(false);
+    expect(years.filter((y) => y.tag === 'Closed').every((y) => y.canReopen)).toBe(true);
+  });
+
+  it('refuses to close the current financial year', async () => {
+    const { app } = await openSettings('fy');
+    const current = app.settingsData().fiscalYears.find((y) => y.current);
+    app.changeFiscalYear(current, { closed: true }, 'closed');
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(app.state.toast.tone).toBe('danger');
+    expect(app.state.toast.msg).toContain('current financial year');
+  });
+
+  it('proposes the next financial year from the latest one on file', async () => {
+    const { app } = await openSettings('fy');
+    const proposed = app.nextFiscalYear();
+    const latest = app
+      .settingsData()
+      .fiscalYears.map((y) => y.endsOn)
+      .sort()
+      .slice(-1)[0];
+
+    // The day after the last year ended, not a date typed into the code.
+    const next = new Date(new Date(latest).getTime() + 86400000);
+    const expected = [
+      String(next.getMonth() + 1).padStart(2, '0'),
+      String(next.getDate()).padStart(2, '0'),
+    ].join('-');
+    expect(proposed.nextStart.slice(5)).toBe(expected);
+  });
+
+  it('builds each numbering pattern from the prefix and width in force', async () => {
+    const { app } = await openSettings('numbering');
+    const rows = app.renderVals().setNum;
+    const configured = app.settingsData().numbering;
+
+    expect(rows).toHaveLength(configured.length);
+    for (const [i, row] of rows.entries()) {
+      expect(row.v).toBe(configured[i].prefix + '-YYMM-' + '#'.repeat(configured[i].padding));
+    }
+  });
+
+  it('refuses a numbering prefix that is not a short code', async () => {
+    const { app } = await openSettings('numbering');
+    app.openSettings('numbering', app.settingsData().numbering[0]);
+    app.onSettingsField('prefix')({ target: { value: 'crop purchase' } });
+    app.submitSettings();
+
+    expect(app.state.settingsForm.error).toContain('1 to 6 capitals');
+  });
+
+  it('derives unit conversions rather than printing them', async () => {
+    const { app } = await openSettings('units');
+    const rows = app.renderVals().setUnits;
+    const units = app.settingsData().units;
+
+    expect(rows).toHaveLength(units.length);
+    // A unit with a base states the conversion; a base states that it is one.
+    expect(rows[units.findIndex((u) => u.code === 'Kg')].v).toBe('1 MT = 1,000 Kg');
+    expect(rows[units.findIndex((u) => u.code === 'MT')].v).toBe('MT · base unit');
+  });
+
+  it('labels each approval limit from the rule rather than a stored sentence', async () => {
+    const { app } = await openSettings('limits');
+    const rows = app.renderVals().setLimits;
+    const rules = app.settingsData().approvalRules;
+
+    const purchase = rules.findIndex((r) => r.entityType === 'crop_purchases');
+    expect(rows[purchase].k).toBe('Crop purchase requiring approval above');
+    expect(rows[purchase].v).toBe(money(rules[purchase].threshold));
+
+    // A rule with nothing to compare against has no limit to edit.
+    const always = rules.findIndex((r) => r.condition === 'ALWAYS');
+    expect(rows[always].v).toBe('always');
+    expect(rows[always].canEdit).toBe(false);
+  });
+
+  it('moves an approval limit and shows the new figure', async () => {
+    const { app } = await openSettings('limits');
+    const rule = app.settingsData().approvalRules.find((r) => r.condition === 'AMOUNT_ABOVE');
+    app.openSettings('limit', rule);
+    app.onSettingsField('threshold')({ target: { value: '750000' } });
+    app.submitSettings();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const row = app.renderVals().setLimits.find((l) => l.k.startsWith(rule.entityLabel));
+    expect(row.v).toBe(money(750000));
+  });
+
+  it('reads each notification rule with its own threshold in place', async () => {
+    const { app } = await openSettings('notif');
+    const rows = app.renderVals().setNotif;
+    const rules = app.settingsData().notificationRules;
+
+    const large = rules.findIndex((r) => r.code === 'LARGE_TRANSACTION');
+    expect(rows[large].d).toBe('any single transaction above ' + money(rules[large].threshold));
+    // A rule with no threshold reads as its own condition.
+    const overdue = rules.findIndex((r) => r.code === 'CUSTOMER_OVERDUE');
+    expect(rows[overdue].d).toBe(rules[overdue].description);
+    expect(rows[overdue].canEdit).toBe(false);
+  });
+
+  it('switches a notification rule off', async () => {
+    const { app } = await openSettings('notif');
+    const rule = app.settingsData().notificationRules[0];
+    app.toggleNotification(rule);
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(app.settingsData().notificationRules[0].active).toBe(false);
+    expect(app.renderVals().setNotif[0].tag).toBe('Off');
+  });
+
+  it('draws the permission matrix from the grants, one column per role', async () => {
+    const { app } = await openSettings('roles');
+    const matrix = app.renderVals().matrix;
+    const permissions = app.settingsData().permissions;
+
+    expect(matrix.cols).toEqual(['Module'].concat(permissions.roles));
+    expect(matrix.rows).toHaveLength(permissions.modules.length);
+    // Every cell is a level the payload actually reported for that role.
+    for (const [i, row] of matrix.rows.entries()) {
+      expect(row.cells[0].t).toBe(permissions.modules[i].label);
+      permissions.roles.forEach((role, r) => {
+        expect(row.cells[r + 1].t).toBe(permissions.modules[i].levels[role]);
+      });
+    }
+  });
+
+  it('saves the valuation method rather than only colouring a button', async () => {
+    const { app } = await openSettings('valuation');
+    expect(app.renderVals().valTabs[0].on).toBe(true);
+
+    app.setValuation('Weighted Average');
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(app.settingsData().organization.valuation).toBe('WEIGHTED_AVERAGE');
+    expect(app.renderVals().valTabs[1].on).toBe(true);
+  });
+
+  it('hides every control from a user who may not change settings', async () => {
+    const { app } = await openSettings('company', { permissions: ['settings.view'] });
+    const vals = app.renderVals();
+
+    expect(vals.companyEdit.canEdit).toBe(false);
+    expect(vals.addFy.canAdd).toBe(false);
+    expect(vals.setNum.every((n) => !n.canEdit)).toBe(true);
+    expect(vals.setLimits.every((l) => !l.canEdit)).toBe(true);
+    expect(vals.setNotif.every((n) => !n.canToggle)).toBe(true);
+  });
+});
+
+describe('audit trail', () => {
+  async function openAudit() {
+    const { app } = await mountApp();
+    app.setState({ screen: 'audit' });
+    app.loadAudit();
+    await new Promise((r) => setTimeout(r, 30));
+    return app;
+  }
+
+  it('lists one row per field that changed, from the recorded entries', async () => {
+    const app = await openAudit();
+    const table = app.renderVals().audit;
+    const entries = app.state.auditRows;
+    expect(entries.length).toBeGreaterThan(0);
+
+    const expected = entries.reduce(
+      (t, e) => t + Math.max(1, Object.keys(e.newValue || e.oldValue || {}).length),
+      0
+    );
+    expect(table.rows).toHaveLength(expected);
+    expect(table.footNote).toContain(entries.length + ' entries');
+  });
+
+  it('names the document a change was made to', async () => {
+    const app = await openAudit();
+    // The summary names the document; the table shows that rather than a table
+    // name and a row id.
+    const records = app.renderVals().audit.rows.map((r) => r.cells[3].text);
+    expect(records).toContain('PC-2608-014');
+  });
+
+  it('says nothing has been recorded rather than showing a fixture', async () => {
+    const { app } = await mountApp();
+    app.setState({ screen: 'audit', auditRows: [] });
+
+    const table = app.renderVals().audit;
+    expect(table.rows).toHaveLength(0);
+    expect(table.emptyTitle).toBe('Nothing recorded yet');
+  });
+});

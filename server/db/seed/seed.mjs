@@ -208,6 +208,34 @@ async function seed() {
          ('BULK_CROP','Bulk Crop Business','Farmer to us to buyer company')`
     );
 
+    /* ---- settings the Settings screen maintains ---- */
+
+    // Migration 015 backfills these for an organisation that already exists.
+    // A fresh database is seeded after every migration has run, so the same
+    // rows are inserted here or a new install would open with an empty
+    // numbering panel and no notification rules.
+    await client.query(
+      `INSERT INTO document_number_formats (org_id, doc_type, prefix, padding) VALUES
+         ($1,'crop_purchase','PC',3), ($1,'crop_sale','SC',3),
+         ($1,'dealer_purchase','DP',3), ($1,'dealer_sale','DS',3),
+         ($1,'crop_batch','BC',3), ($1,'receipt','RC',3),
+         ($1,'payment','PY',3), ($1,'expense','EXP',3),
+         ($1,'adjustment','ADJ',3), ($1,'transfer','TRF',3),
+         ($1,'movement','MOV',3), ($1,'approval','AP',4)`,
+      [orgId]
+    );
+
+    await client.query(
+      `INSERT INTO notification_rules (org_id, code, name, description, threshold) VALUES
+         ($1,'CUSTOMER_OVERDUE','Customer payment overdue','daily 9:00 am for invoices past due date',NULL),
+         ($1,'SUPPLIER_DUE','Supplier payment due','fires {value} days before the due date',2),
+         ($1,'LOW_STOCK','Low stock','when quantity falls below minimum stock',NULL),
+         ($1,'DEAD_STOCK','Dead stock','a crop batch still held after {value} days',60),
+         ($1,'LARGE_TRANSACTION','Large transaction','any single transaction above {value}',2000000),
+         ($1,'EXPENSE_THRESHOLD','Expense threshold','an expense above {value}',50000)`,
+      [orgId]
+    );
+
     const warehouses = await insertMany(
       client,
       `INSERT INTO warehouses (org_id, code, name, district) VALUES ($1,$2,$3,$4)
@@ -289,6 +317,13 @@ async function seed() {
       ]
     );
     const unitByCode = new Map(units.map((u) => [u.code, Number(u.id)]));
+
+    // The crop units are fractions of a tonne; saying so on the row is what
+    // lets the Settings screen derive '1 MT = 1,000 Kg' rather than print it.
+    await client.query(
+      `UPDATE units SET base_unit_id = $1 WHERE code IN ('Maund','Kg','Bag')`,
+      [unitByCode.get('MT')]
+    );
 
     const categories = await insertMany(
       client,

@@ -112,6 +112,11 @@ const RAISED_MESSAGES = {
     'STOCK_LEDGER_IS_APPEND_ONLY',
     'Stock history cannot be changed. Post an adjustment instead.',
   ],
+  FISCAL_YEAR_CLOSED: [
+    422,
+    'FISCAL_YEAR_CLOSED',
+    'That financial year is closed, so nothing can be dated into it.',
+  ],
 };
 
 /**
@@ -122,7 +127,10 @@ export function translateDbError(err) {
   if (!err || typeof err !== 'object') return err;
 
   const raised = RAISED_MESSAGES[err.message];
-  if (raised) return new AppError(raised[0], raised[1], raised[2]);
+  // A raised code carries the wording; DETAIL carries the particulars where the
+  // rule has any -- which year is closed, which date was refused -- and those
+  // are what make the message act on rather than merely read.
+  if (raised) return new AppError(raised[0], raised[1], err.detail || raised[2]);
 
   switch (err.code) {
     case '23505': {

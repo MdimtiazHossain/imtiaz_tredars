@@ -112,7 +112,18 @@ of it happened.
 - **Document numbers cannot collide.** `next_document_no` takes the counter with
   a single `UPDATE … RETURNING` inside the caller's transaction.
 - **Permissions are read per request**, never trusted from the token, so
-  revoking a role takes effect immediately.
+  revoking a role takes effect immediately. The permission matrix on the
+  Settings screen is computed from `role_permissions`, so it states the grants
+  actually in force rather than describing what the seed intended.
+- **A closed financial year is closed.** `guard_closed_fiscal_year` refuses an
+  insert or a date change on any of the eight tables carrying `txn_date` when
+  the date falls inside a year marked closed, and the API answers with the year
+  and the date it refused. The rule lives in the database because a rule spread
+  over eight services is a rule with seven places to forget it.
+- **Configuration is data.** Approval limits, notification rules, document
+  number formats, units and the valuation method are rows, so changing what the
+  business approves or how it numbers a voucher is an afternoon decision rather
+  than a deployment. Every change is audited like any other write.
 
 ## API
 
@@ -124,7 +135,7 @@ totalPages, hasNext, hasPrev } }`.
 | --- | --- |
 | `/api/auth` | `POST /login`, `POST /refresh`, `POST /logout`, `GET /me`, `POST /change-password` |
 | `/api/workspace` | `GET /` — the whole working set the frontend boots from |
-| Masters | `GET/POST/PATCH /api/customers`, `GET /api/suppliers`, `/api/companies`, `/api/products`, `/api/warehouses`, `/api/employees`, `GET /api/search`, `GET /api/reference/context` |
+| Masters | `GET/POST/PATCH /api/customers`, `GET /api/suppliers`, `/api/companies`, `/api/products`, `/api/warehouses`, `/api/employees`, `/api/units`, `GET /api/search`, `GET /api/reference/context` |
 | Dealer | `GET/POST /api/dealer/purchases`, `POST /api/dealer/purchases/preview`, `POST /api/dealer/purchases/:id/post`, `.../cancel`, same shape for `/api/dealer/sales` |
 | Bulk crop | `GET/POST /api/crops/purchases`, `POST /api/crops/purchases/preview`, `.../:id/post`, `.../cancel`, same for `/api/crops/sales` plus `POST /api/crops/sales/preview` (FIFO preview), `GET /api/crops/batches` |
 | Inventory | `GET /api/inventory`, `GET /api/inventory/movements`, `POST /api/inventory/adjustments`, `GET /api/inventory/reconciliation` |
@@ -132,6 +143,7 @@ totalPages, hasNext, hasPrev } }`.
 | Approvals | `GET /api/approvals`, `GET /api/approvals/:id/history`, `POST /api/approvals/:id/decide`, `GET /api/approvals/rules` |
 | Reports | `GET /api/dashboard/dashboard`, `GET /api/reports/catalogue`, `GET /api/reports/:reportId`, `GET /api/reports/:reportId/export?format=xlsx\|pdf` |
 | Audit | `GET /api/audit` |
+| Settings | `GET /api/settings` — the whole screen in one call; `PATCH /api/settings/organization`, `POST /api/settings/fiscal-years`, `PATCH /api/settings/fiscal-years/:id`, `PATCH /api/settings/numbering/:docType`, `PATCH /api/settings/approval-rules/:id`, `PATCH /api/settings/notification-rules/:id` |
 
 Every list endpoint accepts `page`, `pageSize`, `sort`, `dir`, `q`, `from`, `to`
 and `businessType` (`DEALER` | `BULK_CROP` | `ALL`). Sorting maps a key onto an

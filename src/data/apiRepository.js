@@ -26,6 +26,7 @@ const MASTER_PATHS = {
   account: '/accounts',
   category: '/expense-categories',
   method: '/payment-methods',
+  unit: '/units',
   customer: '/customers',
   supplier: '/suppliers',
   company: '/companies',
@@ -318,6 +319,47 @@ export class ApiRepository {
   /** Configured payment methods. */
   async paymentMethods() {
     return (await this.client.get('/payment-methods')).data;
+  }
+
+  /* --------------------------------------------------------------- settings */
+
+  /**
+   * Everything the Settings screen shows, in one call.
+   *
+   * The company profile, the financial years, the numbering formats, the units,
+   * the approval and notification rules and the permission matrix are all rows
+   * in the database; this is the read side of the panels that maintain them.
+   */
+  async settings() {
+    return (await this.client.get('/settings')).data;
+  }
+
+  /** Edit the company profile, or the costing method it trades under. */
+  async updateOrganization(changes) {
+    return (await this.client.patch('/settings/organization', changes)).data;
+  }
+
+  async createFiscalYear(year) {
+    return (await this.client.post('/settings/fiscal-years', year)).data;
+  }
+
+  /** Close, reopen, or make a financial year the current one. */
+  async updateFiscalYear(id, changes) {
+    return (await this.client.patch(`/settings/fiscal-years/${id}`, changes)).data;
+  }
+
+  /** Change the prefix or width a document type is numbered with. */
+  async updateNumbering(docType, format) {
+    return (await this.client.patch(`/settings/numbering/${docType}`, format)).data;
+  }
+
+  /** Move an approval limit, or switch the rule off. */
+  async updateApprovalRule(id, changes) {
+    return (await this.client.patch(`/settings/approval-rules/${id}`, changes)).data;
+  }
+
+  async updateNotificationRule(id, changes) {
+    return (await this.client.patch(`/settings/notification-rules/${id}`, changes)).data;
   }
 
   async decideApproval(requestNo, approved, comment) {

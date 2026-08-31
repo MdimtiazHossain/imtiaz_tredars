@@ -927,4 +927,90 @@ registerMasterCrud(router, {
   }),
 });
 
+/* ------------------------------------------------------------------- units */
+
+/**
+ * Units of measure.
+ *
+ * The Settings screen listed five of them and their conversions as fixed text,
+ * which meant a business trading in a unit nobody thought of -- a 25 kg bag, a
+ * quintal -- could not record it. Units are shared rather than org-scoped, and
+ * carry no timestamps, which the generated CRUD already accommodates.
+ */
+const unitSchema = z.object({
+  code: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9 ]{0,15}$/, 'Use letters and digits, like Bag.'),
+  name: z.string().trim().min(1).max(80),
+  // How many base units one of this unit is worth: 1 Kg is 0.001 MT. A unit
+  // with no base is a base itself, and a base is worth one of itself.
+  factor: z.coerce.number().positive().default(1),
+  base: z.string().trim().max(16).optional(),
+});
+
+router.get(
+  '/units',
+  handler(async (req, res) => {
+    const { rows } = await query(
+      `SELECT u.id, u.code, u.name, u.factor, u.is_active, b.code AS base_code
+         FROM units u LEFT JOIN units b ON b.id = u.base_unit_id
+        ORDER BY u.id`
+    );
+    ok(
+      res,
+      rows.map((r) => ({
+        id: Number(r.id),
+        code: r.code,
+        name: r.name,
+        factor: num(r.factor),
+        base: r.base_code || '',
+        active: r.is_active,
+        status: r.is_active ? 'Active' : 'Retired',
+      }))
+    );
+  })
+);
+
+registerMasterCrud(router, {
+  path: 'units',
+  table: 'units',
+  label: 'Unit',
+  permissions: { create: 'unit.create', edit: 'unit.edit', remove: 'unit.delete' },
+  // The code is the unit itself -- MT, Kg, Maund -- so it is never allocated.
+  code: { prefix: 'U', width: 2, fromBody: true },
+  schema: unitSchema,
+  orgScoped: false,
+  timestamped: false,
+  columns: (b) => ({ name: b.name, factor: b.factor }),
+  resolve: async (client, body) => {
+    if (body.base === undefined) return {};
+    if (!body.base) return { base_unit_id: null };
+    const { rows } = await client.query('SELECT id FROM units WHERE code = $1', [body.base]);
+    if (!rows.length) throw notFound(`Unit ${body.base}`);
+    return { base_unit_id: Number(rows[0].id) };
+  },
+  blockers: [
+    {
+      // Retiring the unit a crop or product is measured in would leave the
+      // record with a quantity and nothing to say what of.
+      // Units are shared rather than org-scoped, so the org id the blocker is
+      // handed is not part of the question; it is bound and ignored.
+      sql: `SELECT (SELECT COUNT(*) FROM products WHERE unit_id = $1 AND is_active)
+                 + (SELECT COUNT(*) FROM crops WHERE default_unit_id = $1 AND is_active)
+                 + (SELECT COUNT(*) FROM units WHERE base_unit_id = $1 AND is_active)
+                 AS value,
+                   $2::bigint AS org_id`,
+      code: 'UNIT_IN_USE',
+      message: (n) =>
+        `${n} crop, product or unit still measures in this unit. Move them to another unit first.`,
+    },
+  ],
+  present: (r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    factor: num(r.factor),
+    active: r.is_active,
+    status: r.is_active ? 'Active' : 'Retired',
+  }),
+});
+
 export default router;
