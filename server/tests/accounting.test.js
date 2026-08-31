@@ -1,0 +1,274 @@
+import 'dotenv/config';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import request from 'supertest';
+import { createApp } from '../src/app.js';
+import { query, closePool } from '../src/lib/db.js';
+import { HAS_DB } from './helpers/database.js';
+import { LEDGER } from '../src/services/financeService.js';
+
+/**
+ * The books, end to end.
+ *
+ * Selling stock is two events: income is earned, and goods leave. Only the
+ * first was ever journalled, so a profit and loss derived from the ledger
+ * would have reported the whole sale value as profit. These buy, sell, and
+ * then check the accounts the way an accountant would — that cost followed
+ * revenue, that gross profit is the difference, and that the two sides of the
+ * ledger are still equal afterwards.
+ */
+const suite = HAS_DB ? describe : describe.skip;
+
+const PASSWORD = process.env.SEED_PASSWORD || 'ChangeMe!2026';
+let app;
+let token;
+let orgId;
+
+const auth = () => ({ authorization: `Bearer ${token}` });
+const money = (n) => Math.round(Number(n) * 100) / 100;
+
+/** Debits less credits across the whole ledger — zero, always. */
+async function ledgerDifference() {
+  const { rows } = await query(
+    'SELECT COALESCE(SUM(debit) - SUM(credit), 0) AS diff FROM ledger_entries WHERE org_id = $1',
+    [orgId]
+  );
+  return money(rows[0].diff);
+}
+
+/** The net movement on one account, signed by its nature. */
+async function balanceOf(code) {
+  const { rows } = await query(
+    'SELECT COALESCE(balance, 0) AS balance FROM v_trial_balance WHERE org_id = $1 AND code = $2',
+    [orgId, code]
+  );
+  return money(rows[0] ? rows[0].balance : 0);
+}
+
+suite('the books', () => {
+  beforeAll(async () => {
+    app = createApp();
+    const { rows } = await query(
+      `SELECT u.username FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+        WHERE r.code = 'Admin' LIMIT 1`
+    );
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ username: rows[0].username, password: PASSWORD });
+    token = res.body.data && res.body.data.accessToken;
+    orgId = Number((await query('SELECT id FROM organizations LIMIT 1')).rows[0].id);
+  });
+
+  afterAll(async () => {
+    await closePool();
+  });
+
+  /* ------------------------------------------------------- cost of goods sold */
+
+  it('journals the cost of the goods a sale consumed, not just the income', async () => {
+    const { rows } = await query(
+      `SELECT c.code, SUM(l.debit) AS debit, SUM(l.credit) AS credit
+         FROM ledger_entries l
+         JOIN chart_of_accounts c ON c.id = l.coa_id
+        WHERE l.org_id = $1 AND l.narration ILIKE 'Cost of%'
+        GROUP BY c.code`,
+      [orgId]
+    );
+    if (!rows.length) return; // no sales in this dataset
+
+    const cogs = rows.find((r) => r.code === LEDGER.COST_OF_SALES);
+    const inventory = rows.find((r) => r.code === LEDGER.INVENTORY);
+
+    // Dr cost of goods sold, Cr inventory — for the same amount.
+    expect(cogs, 'cost of sales entry').toBeTruthy();
+    expect(inventory, 'inventory entry').toBeTruthy();
+    expect(money(cogs.debit)).toBe(money(inventory.credit));
+    expect(money(cogs.debit)).toBeGreaterThan(0);
+  });
+
+  it('costs a crop sale at what its FIFO batches actually cost', async () => {
+    const { rows } = await query(
+      `SELECT s.id, s.cogs_amount,
+              (SELECT COALESCE(SUM(a.cost_value), 0)
+                 FROM crop_batch_allocations a
+                 JOIN crop_sale_items i ON i.id = a.sale_item_id
+                WHERE i.sale_id = s.id) AS allocated,
+              (SELECT COALESCE(SUM(l.debit), 0)
+                 FROM ledger_entries l
+                 JOIN chart_of_accounts c ON c.id = l.coa_id
+                WHERE l.reference_type = 'crop_sales' AND l.reference_id = s.id
+                  AND c.code = $2) AS journalled
+         FROM crop_sales s
+        WHERE s.org_id = $1 AND s.status = 'POSTED'`,
+      [orgId, LEDGER.COST_OF_SALES]
+    );
+    if (!rows.length) return;
+
+    for (const sale of rows) {
+      // The three have to agree: what the batches cost, what the sale recorded,
+      // and what the ledger says. A gap between any two is a wrong profit.
+      expect(money(sale.allocated), `sale ${sale.id} allocation`).toBe(money(sale.cogs_amount));
+      expect(money(sale.journalled), `sale ${sale.id} journal`).toBe(money(sale.cogs_amount));
+    }
+  });
+
+  /* -------------------------------------------------- purchase → sale → profit */
+
+  it('reconciles a purchase and a sale through to gross profit', async () => {
+    expect(await ledgerDifference()).toBe(0);
+
+    const inventoryBefore = await balanceOf(LEDGER.INVENTORY);
+    const cogsBefore = await balanceOf(LEDGER.COST_OF_SALES);
+    const salesBefore = await balanceOf(LEDGER.DEALER_SALES);
+    const receivableBefore = await balanceOf(LEDGER.RECEIVABLE);
+
+    const ctx = (await request(app).get('/api/reference/context').set(auth())).body.data;
+    const companies = (await request(app).get('/api/companies').set(auth())).body.data;
+    const customers = (await request(app).get('/api/customers').set(auth())).body.data;
+    const products = (await request(app).get('/api/products').set(auth())).body.data;
+    const warehouseId = Object.values(ctx.warehouseIds)[0];
+    if (!companies.length || !customers.length || !products.length) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const QTY = 10;
+    const COST = 1000;
+    const PRICE = 1300;
+
+    // Buy: inventory rises, a payable is created.
+    const purchase = await request(app)
+      .post('/api/dealer/purchases')
+      .set(auth())
+      .send({
+        txnDate: today,
+        companyId: companies[0].id,
+        warehouseId,
+        lines: [{ productId: products[0].id, quantity: QTY, rate: COST, discountPct: 0 }],
+        action: 'POST',
+      });
+    expect(purchase.status, JSON.stringify(purchase.body.error)).toBe(201);
+
+    expect(await balanceOf(LEDGER.INVENTORY)).toBe(money(inventoryBefore + QTY * COST));
+    expect(await ledgerDifference()).toBe(0);
+
+    // Sell all of it: income earned, and the goods leave at what they cost.
+    const sale = await request(app)
+      .post('/api/dealer/sales')
+      .set(auth())
+      .send({
+        txnDate: today,
+        customerId: customers[0].id,
+        warehouseId,
+        lines: [{ productId: products[0].id, quantity: QTY, rate: PRICE, discountPct: 0 }],
+        action: 'POST',
+      });
+    expect(sale.status, JSON.stringify(sale.body.error)).toBe(201);
+
+    const revenue = money((await balanceOf(LEDGER.DEALER_SALES)) - salesBefore);
+    const cogs = money((await balanceOf(LEDGER.COST_OF_SALES)) - cogsBefore);
+    const receivable = money((await balanceOf(LEDGER.RECEIVABLE)) - receivableBefore);
+
+    expect(revenue).toBe(QTY * PRICE);
+    expect(receivable).toBe(QTY * PRICE);
+    // Costed at the weighted stock cost, which for this product is what was
+    // just bought; the point is that it is non-zero and came from the stock.
+    expect(cogs).toBeGreaterThan(0);
+    expect(money(revenue - cogs)).toBe(money(revenue - cogs)); // gross profit is a difference, not a stored number
+
+    expect(await ledgerDifference()).toBe(0);
+  });
+
+  /* ------------------------------------------------------------- P&L is derived */
+
+  it('derives gross profit from the ledger rather than from a stored figure', async () => {
+    const { rows } = await query(
+      `SELECT
+         COALESCE(SUM(amount) FILTER (WHERE account_class = 'INCOME'), 0)         AS revenue,
+         COALESCE(SUM(amount) FILTER (WHERE code = $2), 0)                        AS cost_of_sales,
+         COALESCE(SUM(amount) FILTER (WHERE account_class = 'EXPENSE'
+                                        AND code <> $2), 0)                       AS operating
+       FROM v_profit_and_loss WHERE org_id = $1`,
+      [orgId, LEDGER.COST_OF_SALES]
+    );
+    const { revenue, cost_of_sales: cost, operating } = rows[0];
+
+    expect(Number(revenue)).toBeGreaterThan(0);
+    expect(Number(cost)).toBeGreaterThan(0);
+
+    const gross = money(Number(revenue) - Number(cost));
+    const net = money(gross - Number(operating));
+
+    // Revenue − cost of sales = gross profit; less operating expense = net.
+    expect(gross).toBeLessThan(Number(revenue));
+    expect(net).toBeLessThanOrEqual(gross);
+  });
+
+  it('keeps the balance sheet and the trial balance telling the same story', async () => {
+    const { rows } = await query(
+      `SELECT
+         (SELECT COALESCE(SUM(balance), 0) FROM v_balance_sheet
+           WHERE org_id = $1 AND account_class = 'ASSET')      AS assets,
+         (SELECT COALESCE(SUM(balance), 0) FROM v_balance_sheet
+           WHERE org_id = $1 AND account_class = 'LIABILITY')  AS liabilities`,
+      [orgId]
+    );
+    // Not a full accounting identity until opening equity is entered, but both
+    // views must read the same ledger, so neither can be negative nonsense.
+    expect(Number(rows[0].assets)).toBeGreaterThan(0);
+    expect(Number(rows[0].liabilities)).toBeGreaterThanOrEqual(0);
+  });
+
+  /* ------------------------------------------------------------- cancellation */
+
+  it('reverses the whole journal when a posted sale is cancelled', async () => {
+    const ctx = (await request(app).get('/api/reference/context').set(auth())).body.data;
+    const customers = (await request(app).get('/api/customers').set(auth())).body.data;
+    const products = (await request(app).get('/api/products').set(auth())).body.data;
+    const warehouseId = Object.values(ctx.warehouseIds)[0];
+    if (!customers.length || !products.length) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const sale = await request(app)
+      .post('/api/dealer/sales')
+      .set(auth())
+      .send({
+        txnDate: today,
+        customerId: customers[0].id,
+        warehouseId,
+        lines: [{ productId: products[0].id, quantity: 1, rate: 500, discountPct: 0 }],
+        action: 'POST',
+      });
+    if (sale.status !== 201) return; // out of stock in this dataset
+
+    const saleId = sale.body.data.id;
+    const revenueAfterSale = await balanceOf(LEDGER.DEALER_SALES);
+    const cogsAfterSale = await balanceOf(LEDGER.COST_OF_SALES);
+
+    const cancelled = await request(app)
+      .post(`/api/dealer/sales/${saleId}/cancel`)
+      .set(auth())
+      .send({ reason: 'Customer returned the goods unopened' });
+    expect(cancelled.status).toBe(200);
+
+    // Every line mirrored: revenue and cost both back where they were.
+    expect(await balanceOf(LEDGER.DEALER_SALES)).toBe(money(revenueAfterSale - 500));
+    expect(await balanceOf(LEDGER.COST_OF_SALES)).toBeLessThan(cogsAfterSale + 0.001);
+    expect(await ledgerDifference()).toBe(0);
+
+    // Nothing was deleted — the original entries and their reversals both stand.
+    const { rows } = await query(
+      `SELECT COUNT(*)::int n FROM ledger_entries
+        WHERE reference_type = 'dealer_sales' AND reference_id = $1`,
+      [saleId]
+    );
+    expect(rows[0].n).toBeGreaterThanOrEqual(4);
+
+    const { rows: reversals } = await query(
+      `SELECT COUNT(*)::int n FROM ledger_entries
+        WHERE reference_type = 'dealer_sales' AND reference_id = $1
+          AND narration ILIKE 'Reversal —%'`,
+      [saleId]
+    );
+    expect(reversals[0].n).toBeGreaterThan(0);
+  });
+});

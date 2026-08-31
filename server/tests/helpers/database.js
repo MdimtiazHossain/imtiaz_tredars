@@ -1,4 +1,6 @@
+import 'dotenv/config';
 import pg from 'pg';
+import { classify, databaseName } from '../../db/safety.mjs';
 
 /**
  * Whether a usable database is actually reachable.
@@ -11,6 +13,25 @@ import pg from 'pg';
  */
 
 const CONNECTION_STRING = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+
+/**
+ * The suite writes real documents, so it must never be pointed at a database
+ * anybody cares about. Falling back to DATABASE_URL is a convenience for a
+ * machine with only one database configured; it is not licence to run against
+ * a development or production one, and this is the check that says so.
+ */
+if (CONNECTION_STRING) {
+  const kind = classify(CONNECTION_STRING, { ...process.env, DATABASE_ENV: undefined });
+  if (kind !== 'test') {
+    throw new Error(
+      `Refusing to run the test suite against "${databaseName(CONNECTION_STRING)}", ` +
+        `which is classified as ${kind}.
+` +
+        'These tests create, post and cancel real documents. Set TEST_DATABASE_URL ' +
+        'in server/.env to a database whose name marks it as a test one.'
+    );
+  }
+}
 
 async function probe() {
   if (!CONNECTION_STRING) {

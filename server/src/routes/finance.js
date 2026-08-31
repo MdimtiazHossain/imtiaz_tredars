@@ -15,7 +15,14 @@ import { requirePermission } from '../middleware/auth.js';
 
 import { nextDocumentNo } from '../lib/numbering.js';
 import { writeAudit } from '../lib/audit.js';
-import { allocatePayment, writeLedger } from '../services/financeService.js';
+import {
+  allocatePayment,
+  writeLedger,
+  ledgerAccount,
+  cashAccountFor,
+  expenseAccountFor,
+  LEDGER,
+} from '../services/financeService.js';
 import { evaluateRules, requestApproval } from '../services/approvalService.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { registerMasterCrud } from './masterCrud.js';
@@ -341,10 +348,19 @@ router.post(
         allocations: input.allocations,
       });
 
-      // Cash in raises the account; cash out reduces it.
+      // Cash in raises the account; cash out reduces it. A receipt settles a
+      // receivable, a payment settles a payable -- which is what the party
+      // side of the entry is, and what it has to be classified as.
       const receipt = input.direction === 'RECEIPT';
+      const cashSide = await cashAccountFor(client, req.orgId, input.accountId);
+      const partySide = await ledgerAccount(
+        client,
+        req.orgId,
+        receipt ? LEDGER.RECEIVABLE : LEDGER.PAYABLE
+      );
       await writeLedger(client, {
         orgId: req.orgId,
+        coaId: cashSide,
         entryDate: input.txnDate,
         businessType: input.businessType,
         accountId: input.accountId,
@@ -359,6 +375,7 @@ router.post(
         orgId: req.orgId,
         entryDate: input.txnDate,
         businessType: input.businessType,
+        coaId: partySide,
         partyType: input.partyType,
         partyId: input.partyId,
         narration: `${receipt ? 'Received from' : 'Paid to'} party for ${txnNo}`,
@@ -514,8 +531,13 @@ router.post(
       }
 
       if (input.accountId) {
+        // The category says which expense account the voucher belongs in;
+        // without one it lands in operating expenses rather than being refused.
+        const expenseSide = await expenseAccountFor(client, req.orgId, input.categoryId);
+        const paidFrom = await cashAccountFor(client, req.orgId, input.accountId);
         await writeLedger(client, {
           orgId: req.orgId,
+          coaId: expenseSide,
           entryDate: input.txnDate,
           businessType: input.businessType ?? null,
           narration: `Expense ${txnNo}`,
@@ -529,6 +551,7 @@ router.post(
           orgId: req.orgId,
           entryDate: input.txnDate,
           businessType: input.businessType ?? null,
+          coaId: paidFrom,
           accountId: input.accountId,
           narration: `Expense ${txnNo} paid`,
           debit: 0,

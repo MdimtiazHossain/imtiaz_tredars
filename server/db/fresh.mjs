@@ -25,12 +25,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { withTransaction, query, closePool } from '../src/lib/db.js';
+import { guardDestructive, resolveTarget, maskUrl, OVERRIDE_FLAG } from './safety.mjs';
 import { hashPassword } from '../src/services/authService.js';
 import {
   installAccessControl,
   installBusinessTypes,
   installOrganization,
   installFiscalYear,
+  installChartOfAccounts,
   installNumbering,
   installApprovalRules,
   installNotificationRules,
@@ -113,8 +115,18 @@ async function main() {
   const username = (args.admin || 'admin').toLowerCase();
   const adminName = args['admin-name'] || 'Administrator';
 
-  const target = (process.env.DATABASE_URL || '').replace(/:[^:@/]*@/, ':***@');
-  console.log(`Database: ${target}`);
+  const target = resolveTarget();
+  console.log(`Database: ${maskUrl(target.url)}`);
+  console.log(`Classified as: ${target.kind.toUpperCase()}`);
+
+  // Which database this is decides whether it may be destroyed at all. The
+  // --force flag below only ever meant "I typed this deliberately"; it never
+  // meant "against this database", which is the distinction that matters.
+  guardDestructive({
+    url: target.url,
+    command: 'db:fresh',
+    override: args[OVERRIDE_FLAG.slice(2)] !== undefined || process.argv.includes(OVERRIDE_FLAG),
+  });
 
   let before;
   try {
@@ -164,6 +176,7 @@ async function main() {
     const orgId = await installOrganization(client, { code: codeFrom(name), name });
     const year = fiscalYearFor(new Date());
     await installFiscalYear(client, orgId, year);
+    await installChartOfAccounts(client, orgId);
     await installNumbering(client, orgId);
     await installApprovalRules(client, orgId);
     await installNotificationRules(client, orgId);

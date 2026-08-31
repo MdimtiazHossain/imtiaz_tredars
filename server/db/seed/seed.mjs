@@ -20,6 +20,7 @@ import {
   installBusinessTypes,
   installOrganization,
   installFiscalYear,
+  installChartOfAccounts,
   installNumbering,
   installApprovalRules,
   installNotificationRules,
@@ -143,6 +144,7 @@ async function seed() {
     );
 
     await installBusinessTypes(client);
+    await installChartOfAccounts(client, orgId);
     await installNumbering(client, orgId);
     await installNotificationRules(client, orgId);
 
@@ -198,13 +200,23 @@ async function seed() {
 
     const categories = await insertMany(
       client,
-      'INSERT INTO product_categories (name) VALUES ($1) RETURNING id, name',
-      [['Agrochemical'], ['Fertilizer'], ['Seeds'], ['Feed']]
+      'INSERT INTO product_categories (code, name) VALUES ($1,$2) RETURNING id, name',
+      [
+        ['AGROCHEMICAL', 'Agrochemical'],
+        ['FERTILIZER', 'Fertilizer'],
+        ['SEEDS', 'Seeds'],
+        ['FEED', 'Feed'],
+      ]
     );
     const brands = await insertMany(
       client,
-      'INSERT INTO brands (name) VALUES ($1) RETURNING id, name',
-      [['Syngenta'], ['ACI'], ['Square'], ['Ispahani']]
+      'INSERT INTO brands (code, name) VALUES ($1,$2) RETURNING id, name',
+      [
+        ['SYNGENTA', 'Syngenta'],
+        ['ACI', 'ACI'],
+        ['SQUARE', 'Square'],
+        ['ISPAHANI', 'Ispahani'],
+      ]
     );
     const grades = await insertMany(
       client,

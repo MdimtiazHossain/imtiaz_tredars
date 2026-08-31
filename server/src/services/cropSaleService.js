@@ -3,7 +3,15 @@ import { nextDocumentNo } from '../lib/numbering.js';
 import { writeAudit } from '../lib/audit.js';
 import { badRequest, notFound, unprocessable } from '../lib/errors.js';
 import { recordMovement, reverseMovements } from './inventoryService.js';
-import { createReceivable, writeLedger, addDays } from './financeService.js';
+import {
+  createReceivable,
+  writeLedger,
+  addDays,
+  ledgerAccount,
+  writeLedgerPair,
+  LEDGER,
+  reverseLedgerFor,
+} from './financeService.js';
 import { evaluateRules, requestApproval } from './approvalService.js';
 import { lockBatchPool, planAllocation, consumeAllocation, restoreAllocation } from './fifoService.js';
 
@@ -305,8 +313,11 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
     });
   }
 
+  const receivableAccount = await ledgerAccount(client, orgId, LEDGER.RECEIVABLE);
+  const cropSalesAccount = await ledgerAccount(client, orgId, LEDGER.CROP_SALES);
   await writeLedger(client, {
     orgId,
+    coaId: receivableAccount,
     entryDate: header.txn_date,
     businessType: 'BULK_CROP',
     partyType: 'COMPANY',
@@ -322,6 +333,7 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
     orgId,
     entryDate: header.txn_date,
     businessType: 'BULK_CROP',
+    coaId: cropSalesAccount,
     narration: `Crop sales income ${header.txn_no}`,
     debit: 0,
     credit: netAmount,
@@ -329,6 +341,29 @@ export async function postCropSale(client, { orgId, user, actor, saleId, buyer }
     referenceId: saleId,
     userId: user.id,
   });
+
+  // Selling stock is two events, not one: income is earned, and goods leave.
+  // Recording only the first is what left revenue on the books with no cost
+  // against it, so a ledger-derived profit read as the whole sale value.
+  //
+  // The amount is what the FIFO allocation above actually consumed -- the real
+  // cost of the real batches -- rather than an average or an estimate. It is
+  // written in the same transaction as the sale: if this fails, the sale does
+  // not stand either.
+  if (totalCogs > 0) {
+    await writeLedgerPair(client, {
+      orgId,
+      entryDate: header.txn_date,
+      businessType: 'BULK_CROP',
+      amount: totalCogs,
+      narration: `Cost of crop sold on ${header.txn_no}`,
+      referenceType: 'crop_sales',
+      referenceId: saleId,
+      userId: user.id,
+      debit: { coaId: await ledgerAccount(client, orgId, LEDGER.COST_OF_SALES) },
+      credit: { coaId: await ledgerAccount(client, orgId, LEDGER.INVENTORY) },
+    });
+  }
 
   await client.query(
     `UPDATE crop_sales
@@ -373,6 +408,17 @@ export async function cancelCropSale(client, { orgId, user, actor, saleId, reaso
     referenceId: saleId,
     userId: user.id,
     date: new Date().toISOString().slice(0, 10),
+  });
+
+  // Stock has gone back; the accounting has to as well, or a cancelled
+  // document leaves its revenue, its receivable and its cost on the books.
+  await reverseLedgerFor(client, {
+    orgId,
+    referenceType: 'crop_sales',
+    referenceId: saleId,
+    reason,
+    userId: user.id,
+    entryDate: new Date().toISOString().slice(0, 10),
   });
 
   await client.query(

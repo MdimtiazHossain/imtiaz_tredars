@@ -311,6 +311,58 @@ export async function installNotificationRules(client, orgId) {
   }
 }
 
+/* ------------------------------------------------------ chart of accounts */
+
+/**
+ * The ledger accounts every posting path resolves by code.
+ *
+ * Migration 020 installs these for an organisation that already exists. An
+ * organisation created afterwards -- which is every fresh install, since the
+ * seed runs after the migrations -- needs them installed here, or the first
+ * document posted fails: the journal's account column is NOT NULL and the
+ * services refuse to invent an account that is not in the chart.
+ */
+export const CHART_OF_ACCOUNTS = [
+  ['1000', 'Assets', 'ASSET', true],
+  ['1100', 'Cash and bank', 'ASSET', false],
+  ['1200', 'Accounts receivable', 'ASSET', false],
+  ['1300', 'Inventory', 'ASSET', false],
+  ['2000', 'Liabilities', 'LIABILITY', true],
+  ['2100', 'Accounts payable', 'LIABILITY', false],
+  ['3000', 'Equity', 'EQUITY', true],
+  ['3100', 'Opening balance equity', 'EQUITY', false],
+  ['3200', 'Retained earnings', 'EQUITY', false],
+  ['4000', 'Income', 'INCOME', true],
+  ['4100', 'Dealer sales', 'INCOME', false],
+  ['4200', 'Crop sales', 'INCOME', false],
+  ['5000', 'Expenses', 'EXPENSE', true],
+  ['5100', 'Cost of goods sold', 'EXPENSE', false],
+  ['5200', 'Operating expenses', 'EXPENSE', false],
+];
+
+export async function installChartOfAccounts(client, orgId) {
+  for (const [code, name, klass, isGroup] of CHART_OF_ACCOUNTS) {
+    await client.query(
+      `INSERT INTO chart_of_accounts (org_id, code, name, account_class, is_group, is_system)
+       VALUES ($1,$2,$3,$4,$5,true) ON CONFLICT (org_id, code) DO NOTHING`,
+      [orgId, code, name, klass, isGroup]
+    );
+  }
+
+  // Each account sits under the heading of its own class, so a statement can
+  // be grouped from the data rather than from a rule written into a report.
+  await client.query(
+    `UPDATE chart_of_accounts child SET parent_id = parent.id
+       FROM chart_of_accounts parent
+      WHERE parent.org_id = child.org_id AND child.org_id = $1
+        AND parent.is_group
+        AND parent.code = left(child.code, 1) || '000'
+        AND child.code <> parent.code
+        AND child.parent_id IS NULL`,
+    [orgId]
+  );
+}
+
 /* ------------------------------------------------------------------- units */
 
 /**

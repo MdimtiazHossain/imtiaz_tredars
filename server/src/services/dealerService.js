@@ -9,6 +9,10 @@ import {
   writeLedger,
   addDays,
   customerOutstanding,
+  ledgerAccount,
+  writeLedgerPair,
+  LEDGER,
+  reverseLedgerFor,
 } from './financeService.js';
 import { evaluateRules, requestApproval } from './approvalService.js';
 
@@ -225,8 +229,11 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
     paidAmount: 0,
   });
 
+  const inventoryAccount = await ledgerAccount(client, orgId, LEDGER.INVENTORY);
+  const purchasePayable = await ledgerAccount(client, orgId, LEDGER.PAYABLE);
   await writeLedger(client, {
     orgId,
+    coaId: inventoryAccount,
     entryDate: header.txn_date,
     businessType: 'DEALER',
     narration: `Dealer purchase ${header.txn_no}`,
@@ -240,6 +247,7 @@ export async function postDealerPurchase(client, { orgId, user, actor, purchaseI
     orgId,
     entryDate: header.txn_date,
     businessType: 'DEALER',
+    coaId: purchasePayable,
     partyType: 'COMPANY',
     partyId: Number(header.company_id),
     narration: `Payable to ${companyRows[0]?.name} for ${header.txn_no}`,
@@ -511,8 +519,11 @@ export async function postDealerSale(client, { orgId, user, actor, saleId }) {
     });
   }
 
+  const saleReceivable = await ledgerAccount(client, orgId, LEDGER.RECEIVABLE);
+  const dealerSalesAccount = await ledgerAccount(client, orgId, LEDGER.DEALER_SALES);
   await writeLedger(client, {
     orgId,
+    coaId: saleReceivable,
     entryDate: header.txn_date,
     businessType: 'DEALER',
     partyType: 'CUSTOMER',
@@ -528,6 +539,7 @@ export async function postDealerSale(client, { orgId, user, actor, saleId }) {
     orgId,
     entryDate: header.txn_date,
     businessType: 'DEALER',
+    coaId: dealerSalesAccount,
     narration: `Dealer sales income ${header.txn_no}`,
     debit: 0,
     credit: netAmount,
@@ -535,6 +547,26 @@ export async function postDealerSale(client, { orgId, user, actor, saleId }) {
     referenceId: saleId,
     userId: user.id,
   });
+
+  // Goods leaving the shelf are a cost, and were not being recorded as one.
+  // The amount is the stock cost the sale actually consumed -- the cost stored
+  // per line when the invoice was raised, under whichever valuation method the
+  // business has configured -- written in this same transaction as the sale.
+  const costAmount = num(header.cost_amount);
+  if (costAmount > 0) {
+    await writeLedgerPair(client, {
+      orgId,
+      entryDate: header.txn_date,
+      businessType: 'DEALER',
+      amount: costAmount,
+      narration: `Cost of goods sold on ${header.txn_no}`,
+      referenceType: 'dealer_sales',
+      referenceId: saleId,
+      userId: user.id,
+      debit: { coaId: await ledgerAccount(client, orgId, LEDGER.COST_OF_SALES) },
+      credit: { coaId: await ledgerAccount(client, orgId, LEDGER.INVENTORY) },
+    });
+  }
 
   await client.query(
     `UPDATE dealer_sales SET status = 'POSTED', posted_at = now(), updated_by = $1 WHERE id = $2`,
@@ -585,6 +617,17 @@ async function cancelDocument(client, { table, label, orgId, user, actor, id, re
     referenceId: id,
     userId: user.id,
     date: new Date().toISOString().slice(0, 10),
+  });
+
+  // Stock has gone back; the accounting has to as well, or a cancelled
+  // document leaves its revenue, its receivable and its cost on the books.
+  await reverseLedgerFor(client, {
+    orgId,
+    referenceType: table,
+    referenceId: id,
+    reason,
+    userId: user.id,
+    entryDate: new Date().toISOString().slice(0, 10),
   });
 
   await client.query(`DELETE FROM ${invoiceTable} WHERE invoice_type = $1 AND invoice_id = $2`, [

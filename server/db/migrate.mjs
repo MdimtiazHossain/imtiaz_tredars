@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import pg from 'pg';
+import { guardDestructive, resolveTarget, databaseName, OVERRIDE_FLAG } from './safety.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(HERE, 'migrations');
@@ -32,6 +33,11 @@ if (!DATABASE_URL) {
   );
   process.exit(1);
 }
+
+// Every run says which database it is acting on, so a mistake is visible
+// before it is irreversible rather than discovered afterwards.
+const TARGET = resolveTarget();
+console.log(`Target: ${databaseName(DATABASE_URL)} (${TARGET.kind})`);
 
 const client = new pg.Client({ connectionString: DATABASE_URL });
 
@@ -140,6 +146,15 @@ async function status() {
 }
 
 async function reset() {
+  // A reset drops every table. Which database that is matters more than the
+  // fact that somebody typed the word.
+  guardDestructive({
+    url: DATABASE_URL,
+    kind: TARGET.kind,
+    command: 'db:reset',
+    override: process.argv.includes(OVERRIDE_FLAG),
+  });
+
   console.log('  dropping schema public ...');
   await client.query('DROP SCHEMA public CASCADE');
   await client.query('CREATE SCHEMA public');

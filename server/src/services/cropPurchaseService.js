@@ -3,7 +3,14 @@ import { nextDocumentNo } from '../lib/numbering.js';
 import { writeAudit } from '../lib/audit.js';
 import { badRequest, notFound, unprocessable } from '../lib/errors.js';
 import { recordMovement, reverseMovements } from './inventoryService.js';
-import { createPayable, writeLedger, addDays } from './financeService.js';
+import {
+  createPayable,
+  writeLedger,
+  addDays,
+  ledgerAccount,
+  LEDGER,
+  reverseLedgerFor,
+} from './financeService.js';
 import { evaluateRules, requestApproval } from './approvalService.js';
 
 /**
@@ -316,8 +323,11 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
   }
 
   // Journal: stock in (debit), supplier liability (credit).
+  const inventoryAccount = await ledgerAccount(client, orgId, LEDGER.INVENTORY);
+  const payableAccount = await ledgerAccount(client, orgId, LEDGER.PAYABLE);
   await writeLedger(client, {
     orgId,
+    coaId: inventoryAccount,
     entryDate: header.txn_date,
     businessType: 'BULK_CROP',
     narration: `Crop purchase ${header.txn_no} from ${supplierName}`,
@@ -331,6 +341,7 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
     orgId,
     entryDate: header.txn_date,
     businessType: 'BULK_CROP',
+    coaId: payableAccount,
     partyType: 'SUPPLIER',
     partyId: Number(header.supplier_id),
     narration: `Payable to ${supplierName} for ${header.txn_no}`,
@@ -395,6 +406,17 @@ export async function cancelCropPurchase(client, { orgId, user, actor, purchaseI
     referenceId: purchaseId,
     userId: user.id,
     date: new Date().toISOString().slice(0, 10),
+  });
+
+  // Stock has gone back; the accounting has to as well, or a cancelled
+  // document leaves its revenue, its receivable and its cost on the books.
+  await reverseLedgerFor(client, {
+    orgId,
+    referenceType: 'crop_purchases',
+    referenceId: purchaseId,
+    reason,
+    userId: user.id,
+    entryDate: new Date().toISOString().slice(0, 10),
   });
 
   await client.query(

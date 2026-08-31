@@ -2,3 +2,6 @@ node_modules/
 .env
 *.local
 db/pgadmin-setup.sql
+
+# Database dumps taken before a destructive command. Never commit data.
+db/backups/

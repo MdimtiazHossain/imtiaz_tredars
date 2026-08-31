@@ -12,6 +12,7 @@
     "db:configure": "node db/configure.mjs",
     "check:sql": "node tools/check-sql.mjs",
     "db:migrate": "node db/migrate.mjs up",
+    "db:backup": "node db/backup.mjs",
     "db:reset": "node db/migrate.mjs reset",
     "db:seed": "node db/seed/seed.mjs",
     "db:setup": "node db/migrate.mjs reset && node db/seed/seed.mjs",
