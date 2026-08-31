@@ -86,6 +86,19 @@ export class ApiRepository {
   }
 
   /**
+   * Change the signed-in user's own password.
+   *
+   * The current one is required by the server, so knowing a session is not
+   * enough to take an account over. Every seeded and freshly installed account
+   * is flagged to force this on first sign-in.
+   */
+  changePassword(currentPassword, newPassword) {
+    return this.client
+      .post('/auth/change-password', { currentPassword, newPassword })
+      .then((payload) => payload.data);
+  }
+
+  /**
    * Remember the id behind each code so later writes can send ids without the
    * screens having to carry them.
    */

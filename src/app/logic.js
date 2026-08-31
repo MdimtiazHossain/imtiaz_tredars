@@ -11,7 +11,7 @@ import { Component } from '../runtime/component.js';
 import { C } from '../styles/tokens.js';
 import { money, int, dec2, lakh, shortDate } from '../domain/format.js';
 import { cell, column, table } from '../components/dataTable.js';
-import { formModal as formModalOf } from '../components/formModal.js';
+import { field, formModal as formModalOf } from '../components/formModal.js';
 import {
   buildModal,
   defaultsFor,
@@ -154,7 +154,9 @@ export class BusinessApp extends Component {
       extraCusts:[], custModal:false, master:null, masterRows:{},
       // Configuration, fetched when Settings is opened; the audit trail, when
       // its screen is. Neither belongs in the workspace every screen boots from.
-      settings:null, settingsForm:null, auditRows:null, expenses:null,
+      settings:null, settingsForm:null, auditRows:null,
+      // The password form, open or not. Signing out needs no state of its own.
+      password:null, expenses:null,
       roleMatrix:null, userAccounts:null,
       newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'', district:'Bogura', upazila:'', limit:500000, days:15, opening:0},
       cs:{buyer:'PRAN Agro Business Ltd.', crop:'Maize', date:'2026-08-28', rate:34500, transport:15000, other:5000, target:40, alloc:{}},
@@ -195,6 +197,118 @@ export class BusinessApp extends Component {
     color:x.k === cur ? C.ink : C.mut, onClick:this.hs(key, x.k)})); }
   fire(msg, tone) { this.setState({toast:{msg:msg, tone:tone || 'ok'}}); clearTimeout(this._t); this._t = setTimeout(() => this.setState({toast:null}), 3600); }
   componentWillUnmount() { clearTimeout(this._t); }
+
+  /* ------------------------------------------------------------ the account */
+
+  /**
+   * Sign out.
+   *
+   * The API is told first, so the refresh token is revoked server-side rather
+   * than merely forgotten by this browser; the boot sequence then runs again
+   * and lands on the sign-in card. Without a backend there is no session to
+   * end, and the menu does not offer it.
+   */
+  signOut() {
+    this.setState({ userOpen: false });
+    if (typeof this.props.onSignOut === 'function') this.props.onSignOut();
+  }
+
+  /** Open the change-password form. */
+  openPassword() {
+    this.setState({
+      userOpen: false,
+      password: { form: { current: '', next: '', repeat: '' }, error: '', busy: false },
+    });
+  }
+
+  closePassword() {
+    this.setState({ password: null });
+  }
+
+  onPasswordField(key) {
+    return e => {
+      const value = e.target.value;
+      this.setState(s =>
+        s.password
+          ? { password: { ...s.password, form: { ...s.password.form, [key]: value }, error: '' } }
+          : null
+      );
+    };
+  }
+
+  /**
+   * Change the signed-in user's own password.
+   *
+   * Every account this system creates is flagged to force this, and until now
+   * there was nowhere to do it: the endpoint existed and no screen reached it,
+   * so a one-time password stayed the password.
+   */
+  submitPassword() {
+    const state = this.state.password;
+    if (!state || state.busy) return;
+
+    const { current, next, repeat } = state.form;
+    const problem = !current
+      ? 'Enter your current password.'
+      : String(next).length < 10
+        ? 'Choose a new password of at least 10 characters.'
+        : next !== repeat
+          ? 'The two new passwords do not match.'
+          : next === current
+            ? 'The new password is the same as the current one.'
+            : null;
+
+    if (problem) {
+      this.setState({ password: { ...state, error: problem } });
+      return;
+    }
+
+    if (!this.repository || typeof this.repository.changePassword !== 'function') {
+      this.setState({ password: { ...state, error: 'Passwords cannot be changed without a server.' } });
+      return;
+    }
+
+    this.setState({ password: { ...state, busy: true, error: '' } });
+    this.repository.changePassword(current, next).then(
+      () => {
+        this.setState({ password: null });
+        this.fire('Password changed', 'ok');
+      },
+      err =>
+        this.setState(st =>
+          st.password ? { password: { ...st.password, busy: false, error: err.message } } : null
+        )
+    );
+  }
+
+  /** The change-password form, when it is open. */
+  passwordModal() {
+    const { form, error, busy } = this.state.password;
+    return formModalOf({
+      open: true,
+      title: 'Change password',
+      subtitle: 'Applies to your own account, immediately',
+      width: '460px',
+      fields: [
+        field('current', 'Current password', {
+          type: 'password', value: form.current, onChange: this.onPasswordField('current'), wide: true,
+        }),
+        field('next', 'New password', {
+          type: 'password', value: form.next, onChange: this.onPasswordField('next'), wide: true,
+          hint: 'At least 10 characters',
+        }),
+        field('repeat', 'New password again', {
+          type: 'password', value: form.repeat, onChange: this.onPasswordField('repeat'), wide: true,
+        }),
+      ],
+      error,
+      busy,
+      submitLabel: 'Change password',
+      note: 'Other sessions stay signed in; sign out of them separately',
+      onSubmit: () => this.submitPassword(),
+      onCancel: () => this.closePassword(),
+    });
+  }
 
   /**
    * Whether a real backend is answering.
@@ -2363,7 +2477,8 @@ export class BusinessApp extends Component {
     const is = {}; Object.keys(this.data.titles).forEach(k => { is[k.split('-').join('')] = S.screen === k; });
     const pendCount = S.approvals.filter(a => a.status === 'pending').length;
     return {
-      modal:this.state.settingsForm ? this.settingsModal()
+      modal:this.state.password ? this.passwordModal()
+        : this.state.settingsForm ? this.settingsModal()
         : this.state.master ? this.masterModal() : buildModal(this),
       crop:this.crops(),
       prod:this.products(),
@@ -2380,6 +2495,13 @@ export class BusinessApp extends Component {
       notifs:S.notifs.map(n => ({t:n.t, d:n.d, ago:n.ago, onClick:this.go(n.go),
         c:n.tone === 'danger' ? C.dngr : n.tone === 'warn' ? C.warn : n.tone === 'ok' ? C.crop : C.acc})),
       userOpen:S.userOpen, onUser:() => this.setState(s => ({userOpen:!s.userOpen, notifOpen:false})),
+      // Signing out and changing a password are only meaningful against a
+      // server; the no-backend demo has no session to end and no password set.
+      account:{
+        canManage:this.serverBacked(),
+        onPassword:() => this.openPassword(),
+        onSignOut:() => this.signOut(),
+      },
       // What this session actually holds, rather than a note about a design
       // tweak: the sidebar lists the screens these permissions reach.
       userNote:this.props.permissions

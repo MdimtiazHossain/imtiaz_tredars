@@ -92,7 +92,21 @@ async function mountApp(root, user) {
   const data = await repository.load();
   root.replaceChildren();
 
-  const app = new BusinessApp(readProps(user, data), data);
+  const app = new BusinessApp(
+    {
+      ...readProps(user, data),
+      // Signing out drops the tokens and starts the boot sequence again, which
+      // lands on the sign-in card because there is no longer a session to
+      // restore. The app does not need to know any of that.
+      onSignOut: () =>
+        Promise.resolve(
+          'logout' in repository ? repository.logout() : null
+        )
+          .catch(() => {})
+          .then(() => start(root)),
+    },
+    data
+  );
   app.mount(root, appTemplate, {
     DataTable: dataTableTemplate,
     FormModal: formModalTemplate,

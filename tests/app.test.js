@@ -1875,3 +1875,146 @@ describe('audit trail', () => {
     expect(table.emptyTitle).toBe('Nothing recorded yet');
   });
 });
+
+describe('the account menu', () => {
+  /** A repository that records what the account actions asked it to do. */
+  function withAccount(overrides = {}) {
+    const calls = [];
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    // `report` is how the app tells a real backend from the bundled data.
+    repository.report = async () => ({ rows: [] });
+    repository.changePassword = async (current, next) => {
+      calls.push(['changePassword', current, next]);
+      return { changed: true };
+    };
+    Object.assign(repository, overrides);
+    return { repository, calls };
+  }
+
+  it('offers signing out and changing a password against a server', async () => {
+    const { repository } = withAccount();
+    const { app } = await mountApp({ repository });
+    expect(app.renderVals().account.canManage).toBe(true);
+  });
+
+  it('offers neither when there is no server to sign out of', async () => {
+    const { app } = await mountApp();
+    expect(app.renderVals().account.canManage).toBe(false);
+  });
+
+  it('hands the sign-out back to whatever started the app', async () => {
+    let signedOut = 0;
+    const { repository } = withAccount();
+    const { app } = await mountApp({ repository, onSignOut: () => { signedOut += 1; } });
+
+    app.setState({ userOpen: true });
+    app.renderVals().account.onSignOut();
+
+    expect(signedOut).toBe(1);
+    // The menu closes with it, rather than hanging over the sign-in card.
+    expect(app.state.userOpen).toBe(false);
+  });
+
+  it('sends a changed password through the repository', async () => {
+    const { repository, calls } = withAccount();
+    const { app } = await mountApp({ repository });
+
+    app.openPassword();
+    app.onPasswordField('current')({ target: { value: 'OneTimeKey!7' } });
+    app.onPasswordField('next')({ target: { value: 'a-longer-secret' } });
+    app.onPasswordField('repeat')({ target: { value: 'a-longer-secret' } });
+    app.submitPassword();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(calls).toEqual([['changePassword', 'OneTimeKey!7', 'a-longer-secret']]);
+    expect(app.state.password).toBeNull();
+    expect(app.state.toast.msg).toBe('Password changed');
+  });
+
+  it('refuses a new password that is too short, mistyped, or unchanged', async () => {
+    const { repository, calls } = withAccount();
+    const { app } = await mountApp({ repository });
+
+    const attempt = (current, next, repeat) => {
+      app.openPassword();
+      app.onPasswordField('current')({ target: { value: current } });
+      app.onPasswordField('next')({ target: { value: next } });
+      app.onPasswordField('repeat')({ target: { value: repeat } });
+      app.submitPassword();
+      return app.state.password.error;
+    };
+
+    expect(attempt('', 'a-longer-secret', 'a-longer-secret')).toContain('current password');
+    expect(attempt('now', 'short', 'short')).toContain('at least 10');
+    expect(attempt('now', 'a-longer-secret', 'a-longer-secre')).toContain('do not match');
+    expect(attempt('a-longer-secret', 'a-longer-secret', 'a-longer-secret')).toContain('same as');
+
+    // Nothing reached the server while the form was wrong.
+    expect(calls).toHaveLength(0);
+  });
+
+  it('reports a refusal from the server in the form', async () => {
+    const { repository } = withAccount({
+      changePassword: async () => { throw new Error('Your current password is not correct.'); },
+    });
+    const { app } = await mountApp({ repository });
+
+    app.openPassword();
+    app.onPasswordField('current')({ target: { value: 'wrong-one' } });
+    app.onPasswordField('next')({ target: { value: 'a-longer-secret' } });
+    app.onPasswordField('repeat')({ target: { value: 'a-longer-secret' } });
+    app.submitPassword();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(app.state.password.error).toBe('Your current password is not correct.');
+    expect(app.state.password.busy).toBe(false);
+  });
+
+  it('masks all three password fields', async () => {
+    const { repository } = withAccount();
+    const { app } = await mountApp({ repository });
+    app.openPassword();
+    for (const f of app.renderVals().modal.fields) expect(f.inputType).toBe('password');
+  });
+});
+
+describe('the account menu in the DOM', () => {
+  it('draws Sign out and Change password when the menu is open', async () => {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    const { app, root } = await mountApp({ repository });
+
+    expect(root.textContent).not.toContain('Sign out');
+
+    app.setState({ userOpen: true });
+    flush(app);
+
+    expect(root.textContent).toContain('Sign out');
+    expect(root.textContent).toContain('Change password');
+  });
+
+  it('draws neither without a server behind the app', async () => {
+    const { app, root } = await mountApp();
+    app.setState({ userOpen: true });
+    flush(app);
+
+    expect(root.textContent).not.toContain('Sign out');
+    expect(root.textContent).not.toContain('Change password');
+  });
+
+  it('signs out when the button is clicked', async () => {
+    let signedOut = 0;
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    const { app, root } = await mountApp({ repository, onSignOut: () => { signedOut += 1; } });
+
+    app.setState({ userOpen: true });
+    flush(app);
+
+    const button = [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Sign out');
+    expect(button).toBeTruthy();
+    button.click();
+
+    expect(signedOut).toBe(1);
+  });
+});
