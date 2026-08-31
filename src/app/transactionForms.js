@@ -1,4 +1,4 @@
-import { field, formModal, allocation } from '../components/formModal.js';
+import { field, formModal, allocation, lineEntry } from '../components/formModal.js';
 import { money } from '../domain/format.js';
 
 /**
@@ -38,6 +38,14 @@ const activeMethods = (data) => (data.paymentMethods || []).filter((m) => m.acti
 const asOptions = (rows, valueKey, labelKey) =>
   rows.map((r) => ({ value: String(r[valueKey]), label: r[labelKey] }));
 
+/**
+ * One string that names a document across the four tables it could be in.
+ *
+ * A select carries a string, and an id alone is ambiguous: dealer sale 14 and
+ * crop purchase 14 both exist. The type travels with it.
+ */
+export const docKey = (d) => `${d.sourceType}:${d.sourceId}`;
+
 /* --------------------------------------------------------------- defaults */
 
 /** The master list a party type selects from. */
@@ -66,6 +74,33 @@ export function defaultsFor(kind, data, seed = {}) {
       note: '',
       // Invoice key -> amount, filled in by the allocation table.
       allocated: {},
+    };
+  }
+
+  if (kind === 'return') {
+    // A return is always against a document, so the picker starts on whichever
+    // one the operator arrived from -- or on nothing, waiting for a choice.
+    return {
+      date: seed.date || today,
+      sourceType: seed.sourceType || 'dealer_sales',
+      source: seed.source || '',
+      reason: '',
+      // Source line key -> quantity coming back, filled in by the line table.
+      quantities: {},
+    };
+  }
+
+  if (kind === 'note') {
+    const partyType = seed.partyType || 'CUSTOMER';
+    const first = partyList(partyType, data)[0];
+    return {
+      date: today,
+      noteType: seed.noteType || 'CREDIT',
+      partyType,
+      party: seed.party || (first && first.code) || '',
+      businessType: seed.businessType || 'DEALER',
+      amount: '',
+      reason: '',
     };
   }
 
@@ -183,6 +218,94 @@ export function fieldsFor(kind, form, data, onChange) {
         placeholder: 'Cheque or transaction number',
       }),
       field('note', 'Note', { value: form.note, onChange: on('note'), wide: true }),
+    ];
+  }
+
+  if (kind === 'return') {
+    const source = (data.returnableDocs || []).find((d) => docKey(d) === form.source);
+    return [
+      field('sourceType', 'Returning against', {
+        options: [
+          { value: 'dealer_sales', label: 'Dealer sale — customer sent goods back' },
+          { value: 'crop_sales', label: 'Crop sale — buyer sent goods back' },
+          { value: 'dealer_purchases', label: 'Dealer purchase — going back to the principal' },
+          { value: 'crop_purchases', label: 'Crop purchase — going back to the farmer' },
+        ],
+        value: form.sourceType,
+        onChange: on('sourceType'),
+        wide: true,
+      }),
+      field('source', 'Document', {
+        options: (data.returnableDocs || []).map((d) => ({
+          value: docKey(d),
+          label: `${d.txnNo} — ${d.partyName}`,
+        })),
+        value: form.source,
+        onChange: on('source'),
+        hint: source ? `${money(source.netAmount)} on the original` : 'Nothing posted to return against',
+        wide: true,
+      }),
+      field('date', 'Date', { type: 'date', value: form.date, onChange: on('date') }),
+      field('reason', 'Reason', {
+        value: form.reason,
+        onChange: on('reason'),
+        placeholder: 'Why the goods came back',
+        wide: true,
+      }),
+    ];
+  }
+
+  if (kind === 'note') {
+    const isCredit = form.noteType === 'CREDIT';
+    return [
+      field('noteType', 'Note', {
+        options: [
+          { value: 'CREDIT', label: 'Credit note — a customer owes us less' },
+          { value: 'DEBIT', label: 'Debit note — we owe a supplier less' },
+        ],
+        value: form.noteType,
+        onChange: on('noteType'),
+        wide: true,
+      }),
+      field('date', 'Date', { type: 'date', value: form.date, onChange: on('date') }),
+      field('partyType', 'Party type', {
+        options: isCredit
+          ? [
+              { value: 'CUSTOMER', label: 'Customer' },
+              { value: 'COMPANY', label: 'Buyer company' },
+            ]
+          : [
+              { value: 'SUPPLIER', label: 'Supplier / farmer' },
+              { value: 'COMPANY', label: 'Principal company' },
+            ],
+        value: form.partyType,
+        onChange: on('partyType'),
+      }),
+      field('party', 'Party', {
+        options: partyOptions(form, data),
+        value: form.party,
+        onChange: on('party'),
+      }),
+      field('businessType', 'Business', {
+        options: [
+          { value: 'DEALER', label: 'Dealer' },
+          { value: 'BULK_CROP', label: 'Bulk crop' },
+        ],
+        value: form.businessType,
+        onChange: on('businessType'),
+      }),
+      field('amount', 'Amount', {
+        type: 'number',
+        value: form.amount,
+        onChange: on('amount'),
+        placeholder: '0',
+      }),
+      field('reason', 'Reason', {
+        value: form.reason,
+        onChange: on('reason'),
+        placeholder: 'A price agreed after invoicing, or an allowance for damage',
+        wide: true,
+      }),
     ];
   }
 
@@ -340,6 +463,24 @@ export function validate(kind, form) {
     return null;
   }
 
+  if (kind === 'return') {
+    if (!form.source) return 'Choose the document the goods are coming back from.';
+    if (!String(form.reason || '').trim()) return 'Say why the goods came back.';
+    const returning = Object.values(form.quantities || {}).reduce(
+      (t, v) => t + (Number(v) || 0),
+      0
+    );
+    if (!(returning > 0)) return 'Enter how much of at least one line is coming back.';
+    return null;
+  }
+
+  if (kind === 'note') {
+    if (!form.party) return 'Choose the party the note is for.';
+    if (!(amount > 0)) return 'Enter an amount greater than zero.';
+    if (!String(form.reason || '').trim()) return 'Say what the note is for.';
+    return null;
+  }
+
   if (kind === 'expense') {
     if (!form.categoryId) return 'Choose an expense category.';
     if (!(amount > 0)) return 'Enter an amount greater than zero.';
@@ -366,7 +507,7 @@ export function validate(kind, form) {
 /* ---------------------------------------------------------------- summary */
 
 /** The figures shown above the footer, so the effect is visible before saving. */
-export function summaryFor(kind, form, data) {
+export function summaryFor(kind, form, data, lines) {
   if (kind === 'payment') {
     const outstanding = partyBalance(form, data);
     const amount = Number(form.amount) || 0;
@@ -397,6 +538,48 @@ export function summaryFor(kind, form, data) {
       { k: 'Moving', v: qty(quantity) },
       { k: 'Left behind', v: qty(left), good: left >= 0 },
     ];
+  }
+
+  if (kind === 'return') {
+    if (!lines || !lines.length) return [];
+    let value = 0;
+    let count = 0;
+    for (const line of lines) {
+      const quantity = Number((form.quantities || {})[String(line.sourceItemId)]) || 0;
+      if (quantity <= 0) continue;
+      count += 1;
+      value += quantity * line.rate * (1 - (line.discountPct || 0) / 100);
+    }
+    if (!count) return [];
+
+    const isSale = form.sourceType === 'dealer_sales' || form.sourceType === 'crop_sales';
+    return [
+      { k: 'Lines coming back', v: String(count) },
+      { k: isSale ? 'Credit note' : 'Debit note', v: money(value), good: true },
+      {
+        k: isSale ? 'Customer will owe' : 'We will owe',
+        v: money(value) + ' less',
+      },
+    ];
+  }
+
+  if (kind === 'note') {
+    const amount = Number(form.amount) || 0;
+    const outstanding = partyBalance(form, data);
+    if (!amount) return [];
+    const rows = [{ k: form.noteType === 'CREDIT' ? 'Credit note' : 'Debit note', v: money(amount) }];
+    if (outstanding !== null) {
+      const after = outstanding - amount;
+      rows.unshift({ k: 'Outstanding now', v: money(outstanding) });
+      // More credit than there is invoice leaves the party in credit, which is
+      // a real position rather than a negative balance.
+      rows.push(
+        after < 0
+          ? { k: 'Settled, leaving on account', v: money(-after), good: true }
+          : { k: 'Outstanding after', v: money(after), good: after === 0 }
+      );
+    }
+    return rows;
   }
 
   if (kind === 'adjustment') {
@@ -438,6 +621,37 @@ export function payloadFor(kind, form, data) {
           return { invoiceType, invoiceId: Number(invoiceId), amount: Number(value) || 0 };
         })
         .filter((a) => a.amount > 0),
+    };
+  }
+
+  if (kind === 'return') {
+    const [sourceType, sourceId] = String(form.source).split(':');
+    return {
+      txnDate: form.date,
+      sourceType,
+      sourceId: Number(sourceId),
+      reason: form.reason.trim(),
+      // Only the lines actually filled in; a blank row is not a return of zero.
+      lines: Object.entries(form.quantities || {})
+        .map(([sourceItemId, quantity]) => ({
+          sourceItemId: Number(sourceItemId),
+          quantity: Number(quantity) || 0,
+        }))
+        .filter((l) => l.quantity > 0),
+      action: 'POST',
+    };
+  }
+
+  if (kind === 'note') {
+    const party = partyList(form.partyType, data).find((p) => p.code === form.party);
+    return {
+      noteDate: form.date,
+      noteType: form.noteType,
+      businessType: form.businessType,
+      partyType: form.partyType,
+      partyId: party?.id,
+      amount: Number(form.amount),
+      reason: form.reason.trim(),
     };
   }
 
@@ -504,6 +718,8 @@ const TITLES = {
   expense: ['Add an expense', 'Booked against a category and, optionally, one business line'],
   adjustment: ['Adjust stock', 'Every adjustment is explained, and goes for approval'],
   transfer: ['Transfer stock', 'Move stock between warehouses; cost and age travel with it'],
+  return: ['Record a return', 'Part of a posted document coming back, and the note that settles it'],
+  note: ['Issue a note', 'An adjustment with no goods behind it: a price agreed, or an allowance'],
 };
 
 const SUBMIT = {
@@ -511,6 +727,8 @@ const SUBMIT = {
   expense: 'Save expense',
   adjustment: 'Submit adjustment',
   transfer: 'Post transfer',
+  return: 'Post return',
+  note: 'Issue note',
 };
 
 const NOTES = {
@@ -518,7 +736,20 @@ const NOTES = {
   expense: 'Posted straight to the cash book unless it exceeds the approval limit',
   adjustment: 'Stock moves only once the adjustment is approved',
   transfer: 'Stock leaves one warehouse and arrives at the other as one action',
+  return: 'Stock, the ledger and the party balance all move as one action',
+  note: 'Applied to the party balance; anything it cannot absorb stays on account',
 };
+
+/** What the selected quantities come to, at the rates on the original. */
+function returnValue(state, fallback) {
+  const lines = state.lines || [];
+  let value = 0;
+  for (const line of lines) {
+    const quantity = Number((state.form.quantities || {})[String(line.sourceItemId)]) || 0;
+    value += quantity * line.rate * (1 - (line.discountPct || 0) / 100);
+  }
+  return value || fallback;
+}
 
 /** Build the modal model for whichever form is open. */
 export function buildModal(app) {
@@ -532,7 +763,8 @@ export function buildModal(app) {
     title,
     subtitle,
     fields: fieldsFor(state.kind, state.form, app.data, (key) => app.onFormField(key)),
-    // Only a payment settles invoices, and only once some have been loaded.
+    // The same panel serves two jobs: a payment spreads money across invoices,
+    // a return counts goods against what is still owed back.
     allocation:
       state.kind === 'payment' && state.invoices
         ? allocation({
@@ -547,8 +779,31 @@ export function buildModal(app) {
             onChange: (key, value) => app.onAllocationChange(key, value),
             onAuto: () => app.autoAllocate(),
           })
-        : null,
-    summary: summaryFor(state.kind, state.form, app.data),
+        : state.kind === 'return' && state.lines
+          ? lineEntry({
+              title: 'What is coming back',
+              rows: state.lines.map((l) => ({
+                key: String(l.sourceItemId),
+                label: l.description,
+                detail:
+                  `${qty(l.quantityReturnable)} of ${qty(l.quantity)} left · ` +
+                  `${money(l.rate)} each`,
+                limit: l.quantityReturnable,
+                limitText: qty(l.quantityReturnable),
+              })),
+              entered: state.form.quantities,
+              autoLabel: 'Take everything left',
+              onChange: (key, value) => app.onReturnLine(key, value),
+              onAuto: () => app.returnEverything(),
+              emptyNote: state.linesLoading
+                ? 'Reading the document…'
+                : 'Nothing on this document is still returnable.',
+              footNote: (total) =>
+                total ? `${qty(total)} coming back` : 'Nothing selected yet',
+              footTotal: (total) => (total ? money(returnValue(state, total)) : ''),
+            })
+          : null,
+    summary: summaryFor(state.kind, state.form, app.data, state.lines),
     error: state.error,
     busy: state.busy,
     submitLabel: SUBMIT[state.kind],

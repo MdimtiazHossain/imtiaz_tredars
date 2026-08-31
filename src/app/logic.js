@@ -183,6 +183,7 @@ export class BusinessApp extends Component {
     this.state = {
       screen:'dashboard', biz:'all', q:'', qOpen:false, notifOpen:false, userOpen:false, toast:null,
       invTab:'all', invSort:'value', acctTab:'receivable', setSec:'company', repSel:'crop-batch-profit', repLoading:false,
+      retTab:'returns', returns:[], creditNotes:[], returnableDocs:[], returnsLoading:false, returnsError:'',
       custSel:opening(data.customers, 'CUS-003', 'code'), custTab:'purchases',
       supSel:opening(data.suppliers, 'SUP-001', 'code'), supTab:'purchases',
       // The configured costing method, not a default the screen decides on.
@@ -252,6 +253,7 @@ export class BusinessApp extends Component {
       if (id === 'employees') this.loadAccessControl();
       if (id === 'audit') this.loadAudit();
       if (id === 'dealer-sales') this.loadInvoices();
+      if (id === 'returns') this.loadReturns();
       if (id === 'inventory') this.loadInventory();
     };
   }
@@ -440,13 +442,19 @@ export class BusinessApp extends Component {
    * The design never drew these, but its dashboard has always offered them as
    * quick actions. They reuse the design's own modal treatment.
    *
-   * @param {'payment'|'expense'|'adjustment'|'transfer'} kind
+   * @param {'payment'|'expense'|'adjustment'|'transfer'|'return'|'note'} kind
    * @param {object} [seed] pre-selected values, e.g. paying a specific supplier
    */
   openForm(kind, seed) {
     const form = defaultsFor(kind, this.data, seed);
-    this.setState({ modal: { kind, form, error: '', busy: false, invoices: null } });
+    this.setState({
+      modal: { kind, form, error: '', busy: false, invoices: null, lines: null, linesLoading: false },
+    });
     if (kind === 'payment') this.loadOpenInvoices(form);
+    if (kind === 'return') {
+      this.loadReturnableDocs(form.sourceType, form.source);
+      if (form.source) this.loadReturnLines(form);
+    }
   }
 
   /**
@@ -533,6 +541,16 @@ export class BusinessApp extends Component {
           form.allocated = {};
           queueMicrotask(() => this.loadOpenInvoices(form));
         }
+        if (key === 'sourceType') {
+          form.source = '';
+          form.quantities = {};
+          queueMicrotask(() => this.loadReturnableDocs(value, ''));
+        }
+        if (key === 'source') {
+          form.quantities = {};
+          queueMicrotask(() => this.loadReturnLines(form));
+        }
+
         if (key === 'itemType') {
           form.item = value === 'CROP_BATCH'
             ? (this.data.batches[0] ? this.data.batches[0].id : '')
@@ -585,6 +603,8 @@ export class BusinessApp extends Component {
     expense: 'createExpense',
     adjustment: 'createStockAdjustment',
     transfer: 'createStockTransfer',
+    return: 'createReturn',
+    note: 'createCreditNote',
   };
 
   submitForm() {
@@ -1228,7 +1248,14 @@ export class BusinessApp extends Component {
         cell(STATUS_LABELS[r.status] || r.status, {align:'center', badge:true,
           badgeBg:r.status === 'POSTED' ? C.cropBg : r.status === 'CANCELLED' ? '#FBEEF0' : C.warnBg,
           badgeFg:r.status === 'POSTED' ? C.crop : r.status === 'CANCELLED' ? C.dngr : C.warn}),
-        cell('', {align:'right', actions:[{label:'Print', onClick:() => this.printInvoice(r)}]}),
+        cell('', {align:'right', actions:[
+          {label:'Print', onClick:() => this.printInvoice(r)},
+          // Raised from the invoice rather than from a picker: this is where a
+          // clerk is standing when the goods come back.
+          ...(r.status === 'POSTED' && this.may('return.create')
+            ? [{label:'Return', onClick:() => this.openReturnFor('dealer_sales', r)}]
+            : []),
+        ]}),
       ]})),
       {
         maxH:'420px',
@@ -1243,6 +1270,176 @@ export class BusinessApp extends Component {
       }
     );
   }
+  /* --------------------------------------------------- returns and notes */
+
+  /**
+   * Open a return already pointed at one document.
+   *
+   * The picker still loads, so the operator can change their mind, but it
+   * opens on the invoice they were looking at rather than on the newest one.
+   */
+  openReturnFor(sourceType, row) {
+    this.openForm('return', {
+      sourceType,
+      source: `${sourceType}:${row.id}`,
+      date: today(),
+    });
+  }
+
+  /**
+   * Load the returns screen: what came back, and the notes it raised.
+   *
+   * Both lists in one call rather than one per tab, because the summary above
+   * them counts across both -- a credit note raised without a return is still
+   * money the business gave up, and a tab that had not been opened yet would
+   * otherwise leave it out of the total.
+   */
+  loadReturns() {
+    if (!this.repository || typeof this.repository.returns !== 'function') return;
+    this.setState({ returnsLoading: true, returnsError: '' });
+
+    Promise.all([
+      this.repository.returns({ pageSize: 100 }),
+      typeof this.repository.creditNotes === 'function'
+        ? this.repository.creditNotes({ pageSize: 100 })
+        : Promise.resolve({ rows: [] }),
+    ]).then(
+      ([returns, notes]) =>
+        this.setState({
+          returns: returns.rows || [],
+          creditNotes: notes.rows || [],
+          returnsLoading: false,
+          returnsError: '',
+        }),
+      err =>
+        this.setState({
+          returns: [],
+          creditNotes: [],
+          returnsLoading: false,
+          // An empty list and a list that failed to load look identical on
+          // screen, and only one of them means the business had no returns.
+          returnsError: err && err.message ? err.message : 'Returns could not be loaded.',
+        })
+    );
+  }
+
+  /** The posted documents a return could be raised against. */
+  loadReturnableDocs(sourceType, keep) {
+    if (!this.repository || typeof this.repository.returnableDocuments !== 'function') {
+      this.setState({ returnableDocs: [] });
+      return;
+    }
+    this.repository.returnableDocuments({ sourceType, pageSize: 60 }).then(
+      docs => {
+        this.setState(s => {
+          if (!s.modal || s.modal.kind !== 'return') return { returnableDocs: docs };
+          // Land on the first document of the newly chosen kind, unless the
+          // one already selected is still among them.
+          const keys = docs.map(d => `${d.sourceType}:${d.sourceId}`);
+          const source = keep && keys.indexOf(keep) > -1 ? keep : keys[0] || '';
+          const form = { ...s.modal.form, source, quantities: {} };
+          if (source) queueMicrotask(() => this.loadReturnLines(form));
+          return {
+            returnableDocs: docs,
+            modal: { ...s.modal, form, lines: source ? null : [], linesLoading: !!source },
+          };
+        });
+      },
+      () => this.setState({ returnableDocs: [] })
+    );
+  }
+
+  /**
+   * Read what is still returnable on the chosen document.
+   *
+   * The server answers this, not the browser: an invoice line says what was
+   * sold, and only the server knows what earlier returns already took back.
+   */
+  loadReturnLines(form) {
+    if (!this.repository || typeof this.repository.returnable !== 'function') return;
+    const [sourceType, sourceId] = String(form.source).split(':');
+    if (!sourceId) return;
+
+    this.setState(s => (s.modal ? { modal: { ...s.modal, lines: null, linesLoading: true } } : null));
+
+    this.repository.returnable(sourceType, Number(sourceId)).then(
+      result => {
+        this.setState(s => {
+          // Ignore an answer for a document the user has since moved away from.
+          if (!s.modal || s.modal.form.source !== form.source) return null;
+          return {
+            modal: {
+              ...s.modal,
+              lines: (result.lines || []).filter(l => l.quantityReturnable > 0),
+              linesLoading: false,
+            },
+          };
+        });
+      },
+      err =>
+        this.setState(s =>
+          s.modal && s.modal.form.source === form.source
+            ? { modal: { ...s.modal, lines: [], linesLoading: false, error: err.message } }
+            : null
+        )
+    );
+  }
+
+  /** One line's returned quantity, as typed. */
+  onReturnLine(key, value) {
+    this.setState(s => {
+      if (!s.modal) return null;
+      const quantities = { ...s.modal.form.quantities };
+      if (value === '' || value === null) delete quantities[key];
+      else quantities[key] = value;
+      return { modal: { ...s.modal, form: { ...s.modal.form, quantities }, error: '' } };
+    });
+  }
+
+  /** Take back everything the document still has outstanding. */
+  returnEverything() {
+    this.setState(s => {
+      if (!s.modal || !s.modal.lines) return null;
+      const quantities = {};
+      for (const line of s.modal.lines) {
+        if (line.quantityReturnable > 0) {
+          quantities[String(line.sourceItemId)] = line.quantityReturnable;
+        }
+      }
+      return { modal: { ...s.modal, form: { ...s.modal.form, quantities }, error: '' } };
+    });
+  }
+
+  /**
+   * Undo a posted return.
+   *
+   * Cancelling puts the stock back where it was, reverses the journal and
+   * cancels the note it raised, so it needs saying why -- the same standard
+   * every other cancellation on the system is held to.
+   */
+  cancelReturnDoc(row) {
+    if (!this.repository || typeof this.repository.cancelReturn !== 'function') {
+      this.fire('A return can only be cancelled with a server behind the app.', 'warn');
+      return;
+    }
+    const reason = this.ask(`Why is ${row.txnNo} being cancelled?`);
+    if (!reason || !reason.trim()) return;
+
+    this.repository.cancelReturn(row.id, reason.trim()).then(
+      () => {
+        this.fire(row.txnNo + ' cancelled; stock and the note went back', 'ok');
+        this.loadReturns();
+        this.reloadWorkspace();
+      },
+      err => this.fire('Could not cancel ' + row.txnNo + ' — ' + err.message, 'danger')
+    );
+  }
+
+  /** Ask for a short piece of text; overridable so tests need no dialog. */
+  ask(question) {
+    return typeof globalThis.prompt === 'function' ? globalThis.prompt(question) : '';
+  }
+
   /* ------------------------------------------------------------- audit trail */
 
   /**
@@ -1581,6 +1778,13 @@ export class BusinessApp extends Component {
       return form.direction === 'RECEIPT' ? amount + ' received' : amount + ' paid';
     }
     if (kind === 'expense') return amount + ' expense recorded';
+    if (kind === 'note') {
+      return form.noteType === 'CREDIT' ? amount + ' credited' : amount + ' debited';
+    }
+    if (kind === 'return') {
+      const back = Object.values(form.quantities || {}).reduce((t, v) => t + (Number(v) || 0), 0);
+      return back + ' returned, and the note raised';
+    }
     if (kind === 'transfer') {
       return Number(form.quantity) + ' moved from ' + form.fromWarehouse + ' to ' + form.toWarehouse;
     }
@@ -2620,6 +2824,105 @@ export class BusinessApp extends Component {
       onExport:() => this.exportReport('xlsx', curLabel), onPdf:() => this.exportReport('pdf', curLabel)};
   }
 
+  /**
+   * Returns and the notes that settled them.
+   *
+   * Every figure here is counted from the rows on screen. A return is only a
+   * return once it is posted, so a draft counts towards neither the value
+   * given back nor the credit outstanding -- and a cancelled one counts
+   * towards nothing at all.
+   */
+  ret() {
+    const S = this.state, t = S.retTab;
+    const returns = S.returns || [];
+    const notes = S.creditNotes || [];
+    const posted = returns.filter(r => r.status === 'POSTED');
+    const openNotes = notes.filter(n => n.status === 'POSTED' && n.onAccount > 0);
+
+    const sales = posted.filter(r => r.direction === 'SALE');
+    const purchases = posted.filter(r => r.direction === 'PURCHASE');
+    const sum = (rows, key) => rows.reduce((total, r) => total + (Number(r[key]) || 0), 0);
+
+    const statusCell = status => cell(STATUS_LABELS[status] || status, {align:'center', badge:true,
+      badgeBg:status === 'POSTED' ? C.cropBg : status === 'CANCELLED' ? '#FBEEF0' : C.warnBg,
+      badgeFg:status === 'POSTED' ? C.crop : status === 'CANCELLED' ? C.dngr : C.warn});
+
+    const list = table(
+      [column('Return'), column('Date'), column('Against'), column('Party'),
+        column('Reason'), column('Value', 'right'), column('Note'),
+        column('Status', 'center'), column('', 'right')],
+      returns.map(r => ({cells:[
+        cell(r.txnNo, {mono:true, weight:'600'}),
+        cell(shortDate(r.txnDate), {color:C.mut}),
+        cell(r.sourceNo, {mono:true, sub:r.sourceLabel}),
+        cell(r.partyName || '—', {weight:'600'}),
+        cell(r.reason, {color:C.mut}),
+        cell(money(r.netAmount), {align:'right', mono:true, weight:'600'}),
+        cell(r.noteNo || '—', {mono:true, color:r.noteNo ? C.ink : C.mut,
+          sub:r.noteOnAccount > 0 ? money(r.noteOnAccount) + ' on account' : ''}),
+        statusCell(r.status),
+        cell('', {align:'right', actions:r.status === 'POSTED' && this.may('return.cancel')
+          ? [{label:'Cancel', onClick:() => this.cancelReturnDoc(r)}] : []}),
+      ]})),
+      {maxH:'420px',
+       emptyTitle:S.returnsLoading ? 'Loading returns…' : S.returnsError ? 'Returns could not be loaded' : 'Nothing has come back',
+       emptyNote:S.returnsLoading ? '' : S.returnsError || 'Record a return above and it appears here with the note it raised.',
+       footNote:posted.length
+         ? posted.length + (posted.length === 1 ? ' posted return' : ' posted returns')
+         : '',
+       footTotal:posted.length ? 'Value ' + money(sum(posted, 'netAmount')) : ''});
+
+    const noteList = table(
+      [column('Note'), column('Date'), column('Type'), column('Party'), column('Against'),
+        column('Reason'), column('Amount', 'right'), column('On account', 'right'),
+        column('Status', 'center')],
+      notes.map(n => ({cells:[
+        cell(n.noteNo, {mono:true, weight:'600'}),
+        cell(shortDate(n.noteDate), {color:C.mut}),
+        cell(n.noteType === 'CREDIT' ? 'Credit' : 'Debit', {badge:true,
+          badgeBg:n.noteType === 'CREDIT' ? C.cropBg : C.dealBg,
+          badgeFg:n.noteType === 'CREDIT' ? C.crop : C.deal}),
+        cell(n.partyName || '—', {weight:'600'}),
+        cell(n.returnNo || n.sourceNo || 'On account', {mono:true, color:C.mut}),
+        cell(n.reason, {color:C.mut}),
+        cell(money(n.amount), {align:'right', mono:true, weight:'600'}),
+        cell(n.onAccount > 0 ? money(n.onAccount) : '—', {align:'right', mono:true,
+          color:n.onAccount > 0 ? C.warn : C.mut}),
+        statusCell(n.status),
+      ]})),
+      {maxH:'420px',
+       emptyTitle:S.returnsLoading ? 'Loading notes…' : 'No credit or debit notes yet',
+       emptyNote:S.returnsLoading ? '' : 'A return raises one automatically, or issue one on its own above.',
+       footNote:notes.length
+         ? notes.length + (notes.length === 1 ? ' note' : ' notes') + ' · ' + openNotes.length + ' still open'
+         : '',
+       footTotal:openNotes.length ? 'On account ' + money(sum(openNotes, 'onAccount')) : ''});
+
+    return {
+      tabs:this.tabify([{k:'returns', l:'Returns'}, {k:'notes', l:'Credit & debit notes'}], t, 'retTab'),
+      isReturns:t === 'returns', isNotes:t === 'notes',
+      list:list, notes:noteList,
+      actions:[
+        {l:'Record a return', can:this.may('return.create'),
+          onClick:() => this.openForm('return')},
+        {l:'Issue a note', can:this.may('credit.note.create'),
+          onClick:() => this.openForm('note')},
+      ].filter(a => a.can),
+      // Counted from the rows above, so a tile can never disagree with the
+      // table under it.
+      kpis:[
+        {k:'Sales returned', v:money(sum(sales, 'netAmount')),
+          s:sales.length + (sales.length === 1 ? ' return' : ' returns')},
+        {k:'Purchases returned', v:money(sum(purchases, 'netAmount')),
+          s:purchases.length + (purchases.length === 1 ? ' return' : ' returns')},
+        {k:'Stock value back', v:money(sum(sales, 'costAmount')),
+          s:'at what it cost'},
+        {k:'Credit on account', v:money(sum(openNotes, 'onAccount')),
+          s:openNotes.length + (openNotes.length === 1 ? ' open note' : ' open notes')},
+      ],
+    };
+  }
+
   appr() {
     const S = this.state, L = this.limit();
     const act = (id, ok) => () => {
@@ -2792,6 +3095,7 @@ export class BusinessApp extends Component {
         onClick:() => { this.setState({biz:x.k}); this.loadDashboard(); }})),
       nav:nav, dash:this.dash(), cp:this.calcCP(), cs:this.calcCS(), ds:this.calcDS(), dp:this.calcDP(),
       inv:this.inv(), cust:this.cust(), sup:this.sup(), acct:this.acct(), rep:this.rep(), appr:this.appr(),
+      ret:this.ret(),
       sr:this.search(), q:S.q, onQ:e => this.setState({q:e.target.value, qOpen:true}), onQClear:() => this.setState({q:'', qOpen:false}),
       notifOpen:S.notifOpen, onNotif:() => this.setState(s => ({notifOpen:!s.notifOpen, userOpen:false})), notifCount:S.notifs.length,
       notifs:S.notifs.map(n => ({t:n.t, d:n.d, ago:n.ago, onClick:this.go(n.go),

@@ -2667,3 +2667,331 @@ describe('the profit and loss', () => {
     expect(pl.some((r) => /net profit/i.test(r.k))).toBe(true);
   });
 });
+
+describe('returns and credit notes', () => {
+  /** Two posted returns and the notes they raised, as the API reports them. */
+  const RETURNS = [
+    {
+      id: 1, txnNo: 'SR-2608-001', txnDate: '2026-08-30', businessType: 'DEALER',
+      sourceType: 'dealer_sales', sourceNo: 'DS-2608-014', sourceLabel: 'Dealer sale',
+      direction: 'SALE', partyType: 'CUSTOMER', partyId: 1, partyName: 'Messrs. Rahman Traders',
+      warehouse: 'Bogura Central Godown', reason: 'Four bags arrived torn',
+      netAmount: 5200, costAmount: 4000, status: 'POSTED',
+      noteNo: 'CN-2608-001', noteType: 'CREDIT', noteAmount: 5200, noteOnAccount: 0,
+    },
+    {
+      id: 2, txnNo: 'PR-2608-001', txnDate: '2026-08-29', businessType: 'DEALER',
+      sourceType: 'dealer_purchases', sourceNo: 'DP-2608-009', sourceLabel: 'Dealer purchase',
+      direction: 'PURCHASE', partyType: 'COMPANY', partyId: 3, partyName: 'ACI Agrochemicals Ltd.',
+      warehouse: 'Bogura Central Godown', reason: 'Failed the incoming quality check',
+      netAmount: 2000, costAmount: 2000, status: 'POSTED',
+      noteNo: 'DN-2608-001', noteType: 'DEBIT', noteAmount: 2000, noteOnAccount: 0,
+    },
+    {
+      id: 3, txnNo: 'SR-2608-002', txnDate: '2026-08-28', businessType: 'DEALER',
+      sourceType: 'dealer_sales', sourceNo: 'DS-2608-011', sourceLabel: 'Dealer sale',
+      direction: 'SALE', partyType: 'CUSTOMER', partyId: 2, partyName: 'Bhai Bhai Agro Store',
+      warehouse: 'Bogura Central Godown', reason: 'Raised against the wrong invoice',
+      netAmount: 900, costAmount: 700, status: 'CANCELLED',
+      noteNo: null, noteType: null, noteAmount: null, noteOnAccount: null,
+    },
+  ];
+
+  const NOTES = [
+    {
+      id: 1, noteNo: 'CN-2608-001', noteDate: '2026-08-30', noteType: 'CREDIT',
+      partyName: 'Messrs. Rahman Traders', returnNo: 'SR-2608-001', sourceNo: 'DS-2608-014',
+      reason: 'Four bags arrived torn', amount: 5200, appliedAmount: 5200, onAccount: 0,
+      status: 'POSTED',
+    },
+    {
+      id: 2, noteNo: 'CN-2608-002', noteDate: '2026-08-29', noteType: 'CREDIT',
+      partyName: 'Sonar Bangla Enterprise', returnNo: null, sourceNo: null,
+      reason: 'Price agreed after the invoice went out', amount: 1500,
+      appliedAmount: 0, onAccount: 1500, status: 'POSTED',
+    },
+  ];
+
+  const RETURNABLE_DOCS = [
+    {
+      sourceType: 'dealer_sales', sourceId: 14, txnNo: 'DS-2608-014',
+      txnDate: '2026-08-30', partyName: 'Messrs. Rahman Traders',
+      sourceLabel: 'Dealer sale', direction: 'SALE', netAmount: 13000,
+    },
+    {
+      sourceType: 'dealer_sales', sourceId: 11, txnNo: 'DS-2608-011',
+      txnDate: '2026-08-28', partyName: 'Bhai Bhai Agro Store',
+      sourceLabel: 'Dealer sale', direction: 'SALE', netAmount: 9000,
+    },
+  ];
+
+  const RETURNABLE_LINES = {
+    header: { id: 14, txnNo: 'DS-2608-014', sourceLabel: 'Dealer sale', noteType: 'CREDIT' },
+    lines: [
+      {
+        sourceItemId: 16, lineNo: 1, itemType: 'PRODUCT', productId: 1, batchId: null,
+        description: 'Ridomil Gold MZ 72 WP 100g (P-1001)', quantity: 10, rate: 1300,
+        discountPct: 0, unitCost: 1000, quantityReturned: 0, quantityReturnable: 10,
+      },
+      {
+        sourceItemId: 17, lineNo: 2, itemType: 'PRODUCT', productId: 2, batchId: null,
+        description: 'Autostin 50 WDG 100g (P-1002)', quantity: 6, rate: 900,
+        discountPct: 0, unitCost: 700, quantityReturned: 6, quantityReturnable: 0,
+      },
+    ],
+  };
+
+  /** A repository that answers the returns screen the way the API does. */
+  function serving(overrides = {}) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.returns = async () => ({ rows: RETURNS, meta: { total: RETURNS.length } });
+    repository.creditNotes = async () => ({ rows: NOTES, meta: { total: NOTES.length } });
+    repository.returnableDocuments = async () => RETURNABLE_DOCS;
+    repository.returnable = async () => RETURNABLE_LINES;
+    repository.createReturn = async () => ({ id: 9, txnNo: 'SR-2608-003', status: 'POSTED' });
+    repository.cancelReturn = async () => ({ id: 1, status: 'CANCELLED' });
+    return Object.assign(repository, overrides);
+  }
+
+  async function openReturns(repository = serving(), props = {}) {
+    const { app, root } = await mountApp({ repository, ...props });
+    app.go('returns')();
+    await new Promise((r) => setTimeout(r, 30));
+    app.renderNow();
+    return { app, root };
+  }
+
+  /** Open the return form and wait for its document and lines to arrive. */
+  async function openReturnForm(app) {
+    app.renderVals().ret.actions.find((a) => a.l === 'Record a return').onClick();
+    await new Promise((r) => setTimeout(r, 40));
+    app.renderNow();
+  }
+
+  it('lists what came back with the note each return raised', async () => {
+    const { app, root } = await openReturns();
+    const rows = app.renderVals().ret.list.rows;
+
+    expect(rows).toHaveLength(RETURNS.length);
+    expect(root.textContent).toContain('SR-2608-001');
+    expect(root.textContent).toContain('CN-2608-001');
+    // The document it came from, so a return is never orphaned on screen.
+    expect(root.textContent).toContain('DS-2608-014');
+  });
+
+  it('counts only posted returns towards the totals', async () => {
+    const { app } = await openReturns();
+    const ret = app.renderVals().ret;
+    const kpi = (name) => ret.kpis.find((k) => k.k === name);
+
+    // The cancelled return took nothing back, so it counts towards nothing.
+    expect(kpi('Sales returned').v).toBe(money(5200));
+    expect(kpi('Sales returned').s).toBe('1 return');
+    expect(kpi('Purchases returned').v).toBe(money(2000));
+    expect(kpi('Stock value back').v).toBe(money(4000));
+  });
+
+  it('counts credit still on account, not credit already used', async () => {
+    const { app } = await openReturns();
+    const kpi = app.renderVals().ret.kpis.find((k) => k.k === 'Credit on account');
+
+    // CN-2608-001 was absorbed by its invoice; only CN-2608-002 is still owed.
+    expect(kpi.v).toBe(money(1500));
+    expect(kpi.s).toBe('1 open note');
+  });
+
+  it('shows the notes on their own tab', async () => {
+    const { app, root } = await openReturns();
+    app.renderVals().ret.tabs.find((t) => t.l === 'Credit & debit notes').onClick();
+    app.renderNow();
+
+    expect(root.textContent).toContain('CN-2608-002');
+    expect(root.textContent).toContain('Price agreed after the invoice went out');
+    // A note raised without a return says so rather than showing a blank.
+    expect(root.textContent).toContain('On account');
+  });
+
+  it('says a list failed to load rather than showing none came back', async () => {
+    const { app } = await openReturns(
+      serving({
+        returns: async () => {
+          throw new Error('returns unavailable');
+        },
+      })
+    );
+    const list = app.renderVals().ret.list;
+
+    expect(list.rows).toHaveLength(0);
+    expect(list.emptyTitle).toBe('Returns could not be loaded');
+    expect(list.emptyNote).toBe('returns unavailable');
+  });
+
+  it('offers only the lines that still have something to come back', async () => {
+    const { app } = await openReturns();
+    await openReturnForm(app);
+
+    const rows = app.renderVals().modal.allocation.rows;
+    // The second line was returned in full already, so it is not offered.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].invoiceNo).toBe('Ridomil Gold MZ 72 WP 100g (P-1001)');
+    expect(rows[0].balanceText).toBe('10');
+  });
+
+  it('flags a line asking for more than is left', async () => {
+    const { app } = await openReturns();
+    await openReturnForm(app);
+
+    app.onReturnLine('16', '12');
+    app.renderNow();
+
+    // Flagged where it is typed, not only when the server refuses the document.
+    const row = app.renderVals().modal.allocation.rows[0];
+    expect(row.border).not.toBe('#E3E0DA');
+  });
+
+  it('takes back everything left in one click', async () => {
+    const { app } = await openReturns();
+    await openReturnForm(app);
+
+    app.renderVals().modal.allocation.onAuto();
+    app.renderNow();
+
+    expect(app.state.modal.form.quantities).toEqual({ 16: 10 });
+    // Only what is still returnable; the fully-returned line stays out.
+    expect(app.state.modal.form.quantities['17']).toBeUndefined();
+  });
+
+  it('will not post a return with no reason and no quantity', async () => {
+    const { app } = await openReturns();
+    await openReturnForm(app);
+
+    app.submitForm();
+    expect(app.state.modal.error).toBe('Say why the goods came back.');
+
+    app.onFormField('reason')({ target: { value: 'Damaged in transit' } });
+    app.submitForm();
+    expect(app.state.modal.error).toContain('how much of at least one line');
+  });
+
+  it('sends the document, the reason and only the filled lines', async () => {
+    /** @type {any} */
+    let sent = null;
+    const { app } = await openReturns(
+      serving({
+        createReturn: async (body) => {
+          sent = body;
+          return { id: 9, txnNo: 'SR-2608-003', status: 'POSTED' };
+        },
+      })
+    );
+    await openReturnForm(app);
+
+    app.onFormField('reason')({ target: { value: 'Four bags arrived torn' } });
+    app.onReturnLine('16', '4');
+    app.submitForm();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(sent.sourceType).toBe('dealer_sales');
+    expect(sent.sourceId).toBe(14);
+    expect(sent.reason).toBe('Four bags arrived torn');
+    expect(sent.lines).toEqual([{ sourceItemId: 16, quantity: 4 }]);
+    // Posted outright: a return that sits in draft has not put the stock back.
+    expect(sent.action).toBe('POST');
+  });
+
+  it('states what the return will credit before it is posted', async () => {
+    const { app } = await openReturns();
+    await openReturnForm(app);
+
+    app.onReturnLine('16', '4');
+    app.renderNow();
+
+    const summary = app.renderVals().modal.summary;
+    expect(summary.find((r) => r.k === 'Credit note').v).toBe(money(4 * 1300));
+    expect(summary.find((r) => r.k === 'Customer will owe').v).toBe(money(5200) + ' less');
+  });
+
+  it('opens a return already pointed at the invoice it came from', async () => {
+    const repository = serving();
+    repository.invoices = async () => ({
+      rows: [
+        {
+          id: 14, no: 'DS-2608-014', date: '2026-08-30', customer: 'Messrs. Rahman Traders',
+          items: 1, amount: 13000, paid: 0, due: 13000, status: 'POSTED',
+        },
+      ],
+    });
+    const { app } = await mountApp({ repository });
+    app.go('dealer-sales')();
+    await new Promise((r) => setTimeout(r, 30));
+    app.renderNow();
+
+    const cells = app.renderVals().invoices.rows[0].cells;
+    const actions = cells[cells.length - 1].actions;
+    const returnAction = actions.find((a) => a.label === 'Return');
+    expect(returnAction, 'a Return action on a posted invoice').toBeTruthy();
+
+    returnAction.onClick();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(app.state.modal.kind).toBe('return');
+    expect(app.state.modal.form.source).toBe('dealer_sales:14');
+  });
+
+  it('hides the actions a role may not take', async () => {
+    const { app } = await openReturns(serving(), { permissions: ['return.view'] });
+    const ret = app.renderVals().ret;
+    const cells = ret.list.rows[0].cells;
+
+    // Viewing is not raising, and the row action goes with the permission.
+    expect(ret.actions).toHaveLength(0);
+    expect(cells[cells.length - 1].actions).toHaveLength(0);
+  });
+
+  it('offers cancelling only on a posted return', async () => {
+    const { app } = await openReturns(serving(), {
+      permissions: ['return.view', 'return.create', 'return.cancel', 'credit.note.create'],
+    });
+    const rows = app.renderVals().ret.list.rows;
+    const last = (row) => row.cells[row.cells.length - 1].actions;
+
+    expect(last(rows[0]).map((a) => a.label)).toEqual(['Cancel']);
+    // Nothing to undo on one that was already cancelled.
+    expect(last(rows[2])).toHaveLength(0);
+  });
+
+  it('cancels a return only once a reason has been given', async () => {
+    /** @type {any} */
+    let cancelled = null;
+    const repository = serving({
+      cancelReturn: async (id, reason) => {
+        cancelled = { id, reason };
+        return { id, status: 'CANCELLED' };
+      },
+    });
+    const { app } = await openReturns(repository);
+    const cancelAction = () => {
+      const row = app.renderVals().ret.list.rows[0];
+      return row.cells[row.cells.length - 1].actions[0];
+    };
+
+    app.ask = () => '';
+    cancelAction().onClick();
+    expect(cancelled, 'nothing cancelled without a reason').toBeNull();
+
+    app.ask = () => 'Raised against the wrong invoice';
+    cancelAction().onClick();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(cancelled).toEqual({ id: 1, reason: 'Raised against the wrong invoice' });
+  });
+
+  it('says so plainly when there is no backend to return against', async () => {
+    const { app } = await mountApp();
+    app.go('returns')();
+    await new Promise((r) => setTimeout(r, 30));
+    app.renderNow();
+
+    const list = app.renderVals().ret.list;
+    expect(list.rows).toHaveLength(0);
+    expect(list.emptyTitle).toBe('Nothing has come back');
+  });
+});

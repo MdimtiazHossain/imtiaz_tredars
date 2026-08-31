@@ -65,6 +65,16 @@ export function averageCost(pool) {
 }
 
 /**
+ * Round to paisa, which is the precision the columns these figures land in
+ * actually hold. Doing it here rather than letting the database do it on the
+ * way in is what keeps the total equal to the sum of its parts: the sum of
+ * rounded line values and the rounded sum of unrounded ones differ by a paisa
+ * often enough that a reconciliation between `crop_batch_allocations` and
+ * `crop_sales.cogs_amount` would fail on ordinary data.
+ */
+const paisa = (n) => Math.round(n * 100) / 100;
+
+/**
  * Plan an allocation across a locked pool without writing anything.
  * Oldest batch first; each batch is costed at its own landed cost under FIFO,
  * or at the pool average under weighted average.
@@ -85,7 +95,7 @@ export function planAllocation(pool, quantity, valuationMethod = 'FIFO') {
     if (take <= 0) continue;
 
     const unitCost = useFifo ? batch.costPerUnit : avg;
-    const costValue = take * unitCost;
+    const costValue = paisa(take * unitCost);
 
     lines.push({
       batchId: batch.id,
@@ -104,7 +114,7 @@ export function planAllocation(pool, quantity, valuationMethod = 'FIFO') {
     lines,
     allocated: quantity - remaining,
     shortfall: Math.max(0, remaining),
-    cogs,
+    cogs: paisa(cogs),
     averageCost: avg,
   };
 }

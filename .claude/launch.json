@@ -37,6 +37,30 @@
         "--strictPort"
       ],
       "port": 5291
+    },
+    {
+      "name": "business-suite-test-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "server",
+        "run",
+        "dev:test"
+      ],
+      "port": 5320
+    },
+    {
+      "name": "business-suite-vs-test",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:test",
+        "--",
+        "--port",
+        "5292",
+        "--strictPort"
+      ],
+      "port": 5292
     }
   ]
 }

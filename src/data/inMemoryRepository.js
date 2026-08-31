@@ -431,6 +431,49 @@ export class InMemoryRepository {
     throw new Error('Invoices can only be opened with a server behind the app.');
   }
 
+  /* -------------------------------------------------- returns and notes */
+
+  /**
+   * Returns, without a server.
+   *
+   * A return points at a posted invoice and takes back some of its lines, and
+   * the bundled dataset has no invoice ledger to point at -- the same reason
+   * `invoices()` answers with an empty page. Listing nothing is honest; the
+   * screen shows its empty state and says what is missing rather than
+   * offering a return that could not be raised against anything.
+   */
+  async returns() {
+    return settle({ rows: [], meta: { total: 0 } }, this.latency);
+  }
+
+  async creditNotes() {
+    return settle({ rows: [], meta: { total: 0 } }, this.latency);
+  }
+
+  async returnDocument() {
+    throw new Error('A return can only be opened with a server behind the app.');
+  }
+
+  async returnableDocuments() {
+    return settle([], this.latency);
+  }
+
+  async returnable() {
+    throw new Error('What is returnable can only be read with a server behind the app.');
+  }
+
+  async createReturn() {
+    throw new Error('A return can only be recorded with a server behind the app.');
+  }
+
+  async cancelReturn() {
+    throw new Error('A return can only be cancelled with a server behind the app.');
+  }
+
+  async createCreditNote() {
+    throw new Error('A credit note can only be issued with a server behind the app.');
+  }
+
   /* --------------------------------------------------------------- settings */
 
   /** The Settings screen's working set, in the shape the API returns. */

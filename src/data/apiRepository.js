@@ -462,6 +462,55 @@ export class ApiRepository {
     return (await this.client.get('/profit-and-loss', filters)).data;
   }
 
+  /* -------------------------------------------------- returns and notes */
+
+  /** Returns posted or drafted, newest first. */
+  async returns(params = {}) {
+    const payload = await this.client.get('/returns', params);
+    return { rows: payload.data, meta: payload.meta };
+  }
+
+  /** One return with its lines. */
+  async returnDocument(id) {
+    return (await this.client.get(`/returns/${id}`)).data;
+  }
+
+  /**
+   * What is still returnable on a posted document.
+   *
+   * The server answers this rather than the browser working it out from the
+   * invoice, because only the server knows what earlier returns took back.
+   */
+  async returnable(sourceType, sourceId) {
+    return (await this.client.get(`/returnable/${sourceType}/${sourceId}`)).data;
+  }
+
+  /** Posted documents a return could be raised against. */
+  async returnableDocuments(params = {}) {
+    return (await this.client.get('/returnable', params)).data;
+  }
+
+  /** Record a return; posting it raises the credit or debit note. */
+  async createReturn(body) {
+    return (await this.client.post('/returns', body)).data;
+  }
+
+  /** Undo a posted return: stock, note and journal all go back. */
+  async cancelReturn(id, reason) {
+    return (await this.client.post(`/returns/${id}/cancel`, { reason })).data;
+  }
+
+  /** Credit and debit notes, whether or not goods came back. */
+  async creditNotes(params = {}) {
+    const payload = await this.client.get('/credit-notes', params);
+    return { rows: payload.data, meta: payload.meta };
+  }
+
+  /** Issue a note with nothing coming back: a price agreed after the fact. */
+  async createCreditNote(body) {
+    return (await this.client.post('/credit-notes', body)).data;
+  }
+
   /* --------------------------------------------------------------- invoices */
 
   /** Posted and draft dealer invoices, newest first. */

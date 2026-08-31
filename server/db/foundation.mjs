@@ -49,6 +49,11 @@ export const PERMISSIONS = [
   ['employee.view', 'View employees'],
   ['settings.view', 'View settings'], ['settings.edit', 'Change settings'],
   ['audit.view', 'View the audit trail'],
+  ['return.view', 'View returns and credit notes'],
+  ['return.create', 'Record a return'],
+  ['return.post', 'Post a return'],
+  ['return.cancel', 'Cancel a posted return'],
+  ['credit.note.create', 'Issue a credit or debit note without a return'],
 ];
 
 /** Role -> permissions, mirroring the permission matrix on the Settings screen. */
@@ -102,18 +107,21 @@ export const ROLE_DESCRIPTIONS = {
  * here instead.
  */
 export const MIGRATED_ROLE_PERMISSIONS = {
-  Management: ['crop.view', 'warehouse.create', 'warehouse.edit', 'employee.create', 'employee.edit'],
-  Sales: ['crop.view'],
+  Management: ['crop.view', 'warehouse.create', 'warehouse.edit', 'employee.create', 'employee.edit',
+    'return.view'],
+  Sales: ['crop.view', 'return.view', 'return.create', 'return.post'],
   Purchase: [
     'crop.view', 'supplier.edit', 'company.create', 'company.edit',
     'crop.create', 'crop.edit', 'product.create', 'product.edit',
+    'return.view', 'return.create',
   ],
   Accounts: [
     'crop.view', 'account.create', 'account.edit',
     'expense.category.create', 'expense.category.edit',
     'payment.method.create', 'payment.method.edit',
+    'return.view', 'return.create', 'return.post', 'credit.note.create',
   ],
-  Warehouse: ['crop.view'],
+  Warehouse: ['crop.view', 'return.view'],
 };
 
 /**
@@ -250,6 +258,8 @@ export const DOCUMENT_NUMBER_FORMATS = [
   ['payment', 'PY', 3], ['expense', 'EXP', 3],
   ['adjustment', 'ADJ', 3], ['transfer', 'TRF', 3],
   ['movement', 'MOV', 3], ['approval', 'AP', 4],
+  ['sale_return', 'SR', 3], ['purchase_return', 'PR', 3],
+  ['credit_note', 'CN', 3], ['debit_note', 'DN', 3],
 ];
 
 export async function installNumbering(client, orgId) {
@@ -335,6 +345,7 @@ export const CHART_OF_ACCOUNTS = [
   ['4000', 'Income', 'INCOME', true],
   ['4100', 'Dealer sales', 'INCOME', false],
   ['4200', 'Crop sales', 'INCOME', false],
+  ['4900', 'Sales returns and allowances', 'INCOME', false],
   ['5000', 'Expenses', 'EXPENSE', true],
   ['5100', 'Cost of goods sold', 'EXPENSE', false],
   ['5200', 'Operating expenses', 'EXPENSE', false],

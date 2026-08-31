@@ -28,6 +28,10 @@ export const DOC_PREFIXES = {
   transfer: 'TRF',
   movement: 'MOV',
   approval: 'AP',
+  sale_return: 'SR',
+  purchase_return: 'PR',
+  credit_note: 'CN',
+  debit_note: 'DN',
 };
 
 /** `YYMM` period key for a date. */

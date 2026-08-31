@@ -14,6 +14,13 @@ import { config } from './config.js';
 pg.types.setTypeParser(pg.types.builtins.NUMERIC, (v) => v);
 pg.types.setTypeParser(pg.types.builtins.INT8, (v) => v);
 
+// A `date` is a calendar day, not an instant. Parsed into a JS Date it becomes
+// local midnight, which `JSON.stringify` then writes as the previous day
+// anywhere east of Greenwich -- so an invoice dated the 31st reached the
+// browser as the 30th. Several services carry their own defence against this;
+// keeping the column a string means none of them has to.
+pg.types.setTypeParser(pg.types.builtins.DATE, (v) => v);
+
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
   max: config.dbPoolMax,

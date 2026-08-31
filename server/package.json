@@ -19,7 +19,8 @@
     "db:fresh": "node db/fresh.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "dev:test": "node --env-file=.env.testserver --watch src/index.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

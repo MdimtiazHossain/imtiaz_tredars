@@ -167,6 +167,58 @@ export function formModal(o) {
  * @param {Function} o.onAuto
  * @param {Function} o.formatMoney
  */
+/**
+ * A table of editable line quantities, in the allocation block's shape.
+ *
+ * Returns need the same control an allocation needs -- a list of rows, each
+ * with a ceiling and a number the operator types -- so this builds the same
+ * structure from generic rows rather than a second panel being drawn for it.
+ * What differs is only the units: an allocation counts money against a
+ * payment, a return counts goods against what is left to send back.
+ *
+ * @param {object} o
+ * @param {string} o.title
+ * @param {Array} o.rows        {key, label, detail, limit, limitText}
+ * @param {object} o.entered    key -> what the operator typed
+ * @param {(key: string, value: string) => void} o.onChange
+ * @param {() => void} [o.onAuto]
+ * @param {string} [o.autoLabel]
+ * @param {string} [o.emptyNote]
+ * @param {(total: number) => string} [o.footNote]
+ * @param {(total: number) => string} [o.footTotal]
+ */
+export function lineEntry(o) {
+  const rows = (o.rows || []).map((row) => {
+    const value = Number(o.entered?.[row.key]) || 0;
+    return {
+      key: row.key,
+      invoiceNo: row.label,
+      detail: row.detail,
+      balanceText: row.limitText,
+      value: o.entered?.[row.key] ?? '',
+      // Asking for more than is left is flagged where it is typed, rather
+      // than only when the server refuses the whole document.
+      border: value > row.limit + 1e-9 ? C.dngr : '#E3E0DA',
+      onChange: (e) => o.onChange(row.key, e.target.value),
+    };
+  });
+
+  const over = rows.some((r) => r.border === C.dngr);
+  const total = rows.reduce((t, r) => t + (Number(r.value) || 0), 0);
+
+  return {
+    title: o.title,
+    rows,
+    autoLabel: o.autoLabel || 'Take everything back',
+    onAuto: o.onAuto || null,
+    isEmpty: rows.length === 0,
+    emptyNote: o.emptyNote || 'Nothing on this document is still returnable.',
+    footNote: o.footNote ? o.footNote(total) : total ? `${total} to come back` : 'Nothing yet',
+    footTotal: o.footTotal ? o.footTotal(total) : '',
+    footColor: over ? C.dngr : total ? C.crop : C.mut,
+  };
+}
+
 export function allocation(o) {
   const money = o.formatMoney;
   const rows = (o.invoices || []).map((inv) => {
@@ -192,6 +244,7 @@ export function allocation(o) {
   return {
     title: o.title,
     rows,
+    autoLabel: 'Allocate oldest first',
     onAuto: o.onAuto || null,
     isEmpty: rows.length === 0,
     emptyNote: 'No open invoices for this party — the payment will sit on account.',

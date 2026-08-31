@@ -27,6 +27,7 @@ export const NAV = [
       {id:'crops', perm:'crop.view', label:'Crops', icon:'M8 14V7.5M8 7.5C8 5 6.2 3 3.5 2.5 3 5.2 5 7.3 8 7.5zM8 9.2c.2-2.2 2-4 4.5-4.4.4 2.4-1.4 4.3-4.5 4.4z', roles:['Admin','Management','Purchase','Sales','Warehouse','Accounts']}]},
     {g:'Finance', items:[
       {id:'accounts', perm:'payment.view', label:'Accounts & Outstanding', icon:'M2 4.5h11.5v9H2zM2 4.5 11 2v2.5M10 9h2.5', roles:['Admin','Management','Accounts']},
+      {id:'returns', perm:'return.view', label:'Returns & Notes', icon:'M6 4.5 2.5 8 6 11.5M2.5 8h7a4 4 0 014 4v1.5', roles:['Admin','Management','Accounts','Sales','Purchase','Warehouse']},
       {id:'approvals', perm:'approval.view', label:'Approvals', icon:'M8 14A6 6 0 108 2a6 6 0 000 12zM5.5 8.2l1.9 1.9 3.3-3.8', roles:['Admin','Management','Accounts']}]},
     {g:'Insight', items:[{id:'reports', perm:'report.view', label:'Reports Centre', icon:'M2.5 13.5h11M4.5 11V6.5M8 11V3M11.5 11V8', roles:'*'}]},
     {g:'System', items:[
@@ -49,6 +50,7 @@ export const TITLES = {dashboard:['Business Overview','Consolidated position acr
     products:['Products','Dealer catalogue: agrochemical, fertiliser, seed and feed'],
     warehouses:['Warehouses','Godowns and depots that hold stock'],
     accounts:['Accounts & Outstanding','Receivable, payable, cash and profitability'],
+    returns:['Returns & Credit Notes','Goods that came back, and the notes that settled them'],
     approvals:['Approval Queue','Transactions waiting on authorisation'],
     reports:['Reports Centre','Filterable reports across both business types'],
     settings:['Settings','Company, numbering, limits and permissions'],
