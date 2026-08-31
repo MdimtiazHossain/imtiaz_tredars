@@ -1050,7 +1050,9 @@ describe('master data', () => {
   });
 
   it('offers a category no product uses yet', async () => {
-    const { app } = await mountApp();
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    const { app } = await mountApp({ repository });
     // This is the case that used to be impossible: the form listed only what
     // other products were filed under, so the first one could never be set.
     const fresh = { id: 99, code: 'BIO', name: 'Biological', products: 0, active: true };
@@ -1064,7 +1066,9 @@ describe('master data', () => {
   });
 
   it('leaves a retired category off the form', async () => {
-    const { app } = await mountApp();
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    const { app } = await mountApp({ repository });
     app.setState({
       settings: {
         ...app.settingsData(),
@@ -2075,5 +2079,56 @@ describe('the account menu in the DOM', () => {
     button.click();
 
     expect(signedOut).toBe(1);
+  });
+});
+
+describe('classification lists against a server', () => {
+  /** The app as it is a moment after loading, before settings have arrived. */
+  async function beforeSettingsArrive() {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    // Never resolves: this is the window the product form used to fill with
+    // the bundled demo categories.
+    repository.settings = () => new Promise(() => {});
+    return mountApp({ repository });
+  }
+
+  it('offers no category at all rather than four the server never heard of', async () => {
+    const { app } = await beforeSettingsArrive();
+    // A catalogue with nothing in it, which is where this business starts.
+    app.data.products = [];
+
+    app.openMaster('product');
+    const options = app.renderVals().modal.fields
+      .find((f) => f.key === 'cat')
+      .options.map((o) => o.value);
+
+    // Blank only. Picking a bundled name here would be refused on save.
+    expect(options).toEqual(['']);
+  });
+
+  it('still offers the bundled lists with no backend behind the app', async () => {
+    const { app } = await mountApp();
+    app.openMaster('product');
+    const options = app.renderVals().modal.fields
+      .find((f) => f.key === 'cat')
+      .options.map((o) => o.value);
+
+    expect(options.length).toBeGreaterThan(1);
+  });
+
+  it('fetches the lists when the products screen is opened', async () => {
+    const asked = [];
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    repository.settings = async () => { asked.push('settings'); return { categories: [], brands: [] }; };
+    const { app } = await mountApp({ repository });
+
+    asked.length = 0;
+    app.go('products')();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Opening Products must not depend on Settings having been visited first.
+    expect(asked).toContain('settings');
   });
 });

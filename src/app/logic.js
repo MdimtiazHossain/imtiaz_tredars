@@ -180,7 +180,7 @@ export class BusinessApp extends Component {
       // The crop master is not part of the workspace payload, so it is
       // fetched when the screen is actually opened rather than on every load.
       if (id === 'crops') this.loadMasterList('crop');
-      if (id === 'products') this.loadMasterList('product');
+      if (id === 'products') { this.loadMasterList('product'); this.loadSettings(); }
       if (id === 'warehouses') this.loadMasterList('warehouse');
       if (id === 'employees') this.loadMasterList('employee');
       if (id === 'accounts') {
@@ -571,8 +571,8 @@ export class BusinessApp extends Component {
       unitRecords: rows.unit || this.settingsData().units || [],
       // The categories and brands that exist, rather than the ones other
       // products happen to use -- which is what made the first one impossible.
-      productCategories: this.settingsData().categories || [],
-      brands: this.settingsData().brands || [],
+      productCategories: this.classifications('categories'),
+      brands: this.classifications('brands'),
     };
   }
 
@@ -751,6 +751,19 @@ export class BusinessApp extends Component {
   /** The settings in hand: the server's once fetched, the bundled ones until then. */
   settingsData() {
     return this.state.settings || SETTINGS;
+  }
+
+  /**
+   * The maintained categories or brands.
+   *
+   * With a server answering, the bundled lists are not an acceptable stand-in
+   * while the real ones are in flight: they name four categories this business
+   * has never heard of, and choosing one is refused on save. Better to offer
+   * nothing for the moment it takes them to arrive.
+   */
+  classifications(key) {
+    if (this.serverBacked()) return (this.state.settings && this.state.settings[key]) || [];
+    return SETTINGS[key] || [];
   }
 
   /** The roles and their grants, from whichever call brought them last. */
