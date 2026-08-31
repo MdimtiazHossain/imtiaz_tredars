@@ -489,8 +489,24 @@ async function loadFinanceLookups(orgId) {
  * Build the whole workspace payload in one round trip.
  * Queries run concurrently because none depends on another's result.
  */
+/**
+ * Whether this session holds any of these permissions.
+ *
+ * The workspace is one payload feeding every screen, so without this it hands
+ * a warehouse clerk the whole customer list, their mobile numbers and what
+ * each one owes -- data the Customers screen would refuse them, delivered by
+ * the endpoint that draws the sidebar.
+ */
+const may = (user, ...codes) => codes.some((code) => user.permissions.includes(code));
+
 export async function loadWorkspace({ orgId, user }) {
   const showProfit = canSeeProfit(user);
+
+  // A list nobody may see is not fetched. Returning it empty rather than
+  // omitting it keeps the payload one shape, so a screen reading it finds
+  // nothing rather than finding undefined.
+  const none = Promise.resolve([]);
+  const noRows = Promise.resolve({ rows: [] });
 
   const [
     org,
@@ -519,27 +535,42 @@ export async function loadWorkspace({ orgId, user }) {
         WHERE o.id = $1`,
       [orgId]
     ),
-    loadCustomers(orgId),
-    loadSuppliers(orgId),
-    loadCompanies(orgId),
-    loadProducts(orgId),
-    loadBatches(orgId),
-    loadApprovals(orgId),
-    loadCropLog(orgId),
-    loadSaleLog(orgId, showProfit),
+    may(user, 'customer.view') ? loadCustomers(orgId) : none,
+    may(user, 'supplier.view') ? loadSuppliers(orgId) : none,
+    may(user, 'company.view') ? loadCompanies(orgId) : none,
+    may(user, 'product.view') ? loadProducts(orgId) : none,
+    may(user, 'inventory.view') ? loadBatches(orgId) : none,
+    may(user, 'approval.view') ? loadApprovals(orgId) : none,
+    may(user, 'crop.purchase.view') ? loadCropLog(orgId) : none,
+    may(user, 'crop.sale.view') ? loadSaleLog(orgId, showProfit) : none,
+    // Alerts are addressed to the person reading them.
     loadNotifications(orgId),
-    loadFinanceLookups(orgId),
+    may(user, 'payment.view', 'expense.view')
+      ? loadFinanceLookups(orgId)
+      : Promise.resolve({ accounts: [], paymentMethods: [], expenseCategories: [] }),
     Promise.all([
-      query('SELECT name, last_rate FROM crops WHERE org_id = $1 AND is_active ORDER BY id', [orgId]),
-      query('SELECT name FROM warehouses WHERE org_id = $1 AND is_active ORDER BY id', [orgId]),
+      may(user, 'crop.view')
+        ? query('SELECT name, last_rate FROM crops WHERE org_id = $1 AND is_active ORDER BY id', [orgId])
+        : noRows,
+      may(user, 'inventory.view')
+        ? query('SELECT name FROM warehouses WHERE org_id = $1 AND is_active ORDER BY id', [orgId])
+        : noRows,
+      // Units and grades describe how anything is measured and graded. They
+      // name no party and no figure, and every form that shows a quantity
+      // needs them.
       query('SELECT code FROM units WHERE is_active ORDER BY id'),
       query('SELECT name FROM crop_grades WHERE is_active ORDER BY id'),
-      query(
-        `SELECT name FROM companies
-          WHERE org_id = $1 AND is_active AND role IN ('BUYER','SUPPLIER_AND_BUYER')
-          ORDER BY id`,
-        [orgId]
-      ),
+      // The buyers a crop sale can be raised for. Governed by the sale rather
+      // than by the company master: somebody who may raise the sale has to be
+      // able to name who it is for.
+      may(user, 'crop.sale.view', 'company.view')
+        ? query(
+            `SELECT name FROM companies
+              WHERE org_id = $1 AND is_active AND role IN ('BUYER','SUPPLIER_AND_BUYER')
+              ORDER BY id`,
+            [orgId]
+          )
+        : noRows,
     ]),
   ]);
 

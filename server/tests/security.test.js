@@ -804,3 +804,146 @@ suite('master data', () => {
     expect(String(withStock.value)).not.toMatch(/\.\d{3,}/);
   });
 });
+
+suite('what a session may look at', () => {
+  /**
+   * The header search box and the workspace payload were the two ways round
+   * the permission model. Every screen checked what a role may see; these two
+   * handed the same records over to anybody signed in — the search with no
+   * check at all, the workspace behind a permission every role holds.
+   *
+   * A warehouse clerk who cannot open the Customers screen could type a name
+   * into the header and read the customer list back, matched on mobile number.
+   */
+
+  const search = (role, term = 'a') =>
+    request(app).get(`/api/search?q=${term}`).set('authorization', `Bearer ${tokens[role]}`);
+
+  const workspace = (role) =>
+    request(app).get('/api/workspace').set('authorization', `Bearer ${tokens[role]}`);
+
+  it('answers the search with every group, whatever the role', async () => {
+    for (const role of ['Admin', 'Sales', 'Warehouse']) {
+      if (!tokens[role]) continue;
+      const res = await search(role);
+      expect(res.status, role).toBe(200);
+      // Every key present, so a group somebody may not see reads exactly like
+      // a group with no matches. The client cannot tell them apart, and that
+      // is the point.
+      for (const key of ['customers', 'suppliers', 'companies', 'products', 'batches']) {
+        expect(Array.isArray(res.body.data[key]), `${role}.${key}`).toBe(true);
+      }
+    }
+  });
+
+  it('does not search customers for a role that may not see them', async () => {
+    if (!tokens.Warehouse) return;
+    const res = await search('Warehouse');
+
+    // Warehouse handles goods. It holds no customer.view, so the box that
+    // could once enumerate the customer list now returns nothing from it.
+    expect(res.body.data.customers).toEqual([]);
+    expect(res.body.data.suppliers).toEqual([]);
+    expect(res.body.data.companies).toEqual([]);
+    // What it does handle, it still finds.
+    expect(res.body.data.products.length + res.body.data.batches.length).toBeGreaterThan(0);
+  });
+
+  it('does not search suppliers for a role that only sells', async () => {
+    if (!tokens.Sales) return;
+    const res = await search('Sales');
+
+    expect(res.body.data.suppliers).toEqual([]);
+    expect(res.body.data.companies).toEqual([]);
+    // Sales keeps the customer list, which is theirs to keep.
+    expect(res.body.data.customers.length).toBeGreaterThan(0);
+  });
+
+  it('does not search customers for a role that only buys', async () => {
+    if (!tokens.Purchase) return;
+    const res = await search('Purchase');
+
+    expect(res.body.data.customers).toEqual([]);
+    expect(res.body.data.suppliers.length).toBeGreaterThan(0);
+  });
+
+  it('finds everything for a role that may see everything', async () => {
+    const res = await search('Admin');
+    const found = Object.values(res.body.data).reduce((t, rows) => t + rows.length, 0);
+    expect(found).toBeGreaterThan(0);
+    expect(res.body.data.customers.length).toBeGreaterThan(0);
+    expect(res.body.data.suppliers.length).toBeGreaterThan(0);
+  });
+
+  it('will not search on nothing', async () => {
+    const res = await request(app)
+      .get('/api/search?q=')
+      .set('authorization', `Bearer ${tokens.Admin}`);
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses an unauthenticated search', async () => {
+    const res = await request(app).get('/api/search?q=rahman');
+    expect(res.status).toBe(401);
+  });
+
+  /* --------------------------------------------------------- the workspace */
+
+  it('does not hand the whole customer master to a warehouse clerk', async () => {
+    if (!tokens.Warehouse) return;
+    const res = await workspace('Warehouse');
+    expect(res.status).toBe(200);
+
+    // This is the payload every screen boots from, so a list left in it is a
+    // list the browser has whether or not a screen ever shows it.
+    expect(res.body.data.customers).toEqual([]);
+    expect(res.body.data.suppliers).toEqual([]);
+    expect(res.body.data.companies).toEqual([]);
+  });
+
+  it('keeps the payload one shape whatever the role', async () => {
+    const admin = await workspace('Admin');
+    const warehouse = tokens.Warehouse ? await workspace('Warehouse') : null;
+    if (!warehouse) return;
+
+    // Same keys, different contents: a screen reading one finds an empty list
+    // rather than undefined.
+    expect(Object.keys(warehouse.body.data).sort()).toEqual(Object.keys(admin.body.data).sort());
+  });
+
+  it('still gives every role what its own screens need', async () => {
+    if (tokens.Sales) {
+      const sales = (await workspace('Sales')).body.data;
+      // Sales raises dealer invoices and crop sales, so it needs the customers
+      // and the buyer companies those are made out to.
+      expect(sales.customers.length).toBeGreaterThan(0);
+      expect(sales.products.length).toBeGreaterThan(0);
+      expect(sales.buyers.length).toBeGreaterThan(0);
+    }
+
+    if (tokens.Purchase) {
+      const purchase = (await workspace('Purchase')).body.data;
+      // Purchase buys from farmers and principals.
+      expect(purchase.suppliers.length).toBeGreaterThan(0);
+      expect(purchase.companies.length).toBeGreaterThan(0);
+    }
+
+    if (tokens.Warehouse) {
+      const warehouse = (await workspace('Warehouse')).body.data;
+      // Warehouse moves stock, so it needs the goods and where they are.
+      expect(warehouse.products.length).toBeGreaterThan(0);
+      expect(warehouse.warehouses.length).toBeGreaterThan(0);
+      expect(warehouse.units.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('gives Accounts the parties whose money it handles', async () => {
+    if (!tokens.Accounts) return;
+    const accounts = (await workspace('Accounts')).body.data;
+
+    expect(accounts.customers.length).toBeGreaterThan(0);
+    expect(accounts.suppliers.length).toBeGreaterThan(0);
+    // And the cash books a payment moves through.
+    expect(accounts.accounts.length).toBeGreaterThan(0);
+  });
+});

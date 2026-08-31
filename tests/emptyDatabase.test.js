@@ -177,3 +177,88 @@ describe('transaction forms on an empty database', () => {
     expect(app.state.dp.inv).toBe('');
   });
 });
+
+/**
+ * The working set of a role that may not see every master.
+ *
+ * The workspace hands back one payload for every screen, so a list a role may
+ * not see comes back empty rather than absent. That is a different shape from
+ * an empty database — products and stock are there, the parties are not — and
+ * it is the shape a warehouse clerk actually boots into.
+ */
+describe('a role that may not see every master', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+  });
+
+  /** Everything a warehouse clerk gets: goods and stock, no parties. */
+  async function mountScoped(props = {}) {
+    const repository = new InMemoryRepository({ latency: 0 });
+    const full = await repository.load();
+    const data = { ...full, customers: [], suppliers: [], companies: [], buyers: [] };
+
+    const root = document.createElement('div');
+    document.body.append(root);
+    const app = new BusinessApp(
+      {
+        role: 'Warehouse',
+        showProfit: false,
+        approvalLimit: 500000,
+        repository,
+        permissions: [
+          'dashboard.view',
+          'product.view',
+          'inventory.view',
+          'inventory.adjust',
+          'inventory.transfer',
+          'crop.view',
+        ],
+        ...props,
+      },
+      data
+    );
+    app.mount(root, appTemplate, { DataTable: dataTableTemplate, FormModal: formModalTemplate });
+    return { app, root };
+  }
+
+  it('visits every screen without reading a party that is not there', async () => {
+    const { app, root } = await mountScoped();
+
+    for (const screen of SCREENS) {
+      app.go(screen)();
+      app.renderNow();
+      // The render is one pass, so one screen reaching for "the first
+      // customer" takes the whole app down, not just its own panel.
+      expect(root.querySelector('h1'), screen).not.toBeNull();
+    }
+  });
+
+  it('searches only what it was given', async () => {
+    const { app } = await mountScoped();
+    app.setState({ q: 'a' });
+
+    const groups = app.renderVals().sr.groups.map((g) => g.g);
+    // The header box reads the payload, so a list the server withheld cannot
+    // be searched here either.
+    expect(groups).not.toContain('Customers');
+    expect(groups).not.toContain('Suppliers');
+  });
+
+  it('still shows the goods and the stock it does handle', async () => {
+    const { app } = await mountScoped();
+    app.go('inventory')();
+    app.renderNow();
+
+    expect(app.data.products.length).toBeGreaterThan(0);
+    expect(app.renderVals().inv.kpis.length).toBeGreaterThan(0);
+  });
+
+  it('offers only the screens the role may reach', async () => {
+    const { app } = await mountScoped();
+    const labels = app.renderVals().nav.flatMap((g) => g.items.map((i) => i.label));
+
+    expect(labels).toContain('Inventory');
+    expect(labels).not.toContain('Customers');
+    expect(labels).not.toContain('Accounts & Outstanding');
+  });
+});

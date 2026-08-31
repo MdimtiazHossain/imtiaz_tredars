@@ -457,6 +457,60 @@ router.get(
 
 /* ------------------------------------------------------------------ search */
 
+/**
+ * What the header search box looks across, and what each of them needs.
+ *
+ * The box searched every master with no check at all, which made it the one
+ * way round the permission model: a warehouse clerk who cannot open the
+ * Customers screen could type a name into the header and read the customer
+ * list back, matched on mobile number. Each source is now gated by the same
+ * permission as the screen behind it.
+ */
+const SEARCH_SOURCES = [
+  {
+    key: 'customers',
+    permission: 'customer.view',
+    sql: `SELECT code, name, district FROM customers
+           WHERE org_id = $1 AND is_active
+             AND (name ILIKE $2 OR code ILIKE $2 OR mobile ILIKE $2)
+           LIMIT 5`,
+  },
+  {
+    key: 'suppliers',
+    permission: 'supplier.view',
+    sql: `SELECT code, name, district FROM suppliers
+           WHERE org_id = $1 AND is_active
+             AND (name ILIKE $2 OR code ILIKE $2 OR mobile ILIKE $2)
+           LIMIT 5`,
+  },
+  {
+    key: 'companies',
+    permission: 'company.view',
+    sql: `SELECT code, name, role FROM companies
+           WHERE org_id = $1 AND (name ILIKE $2 OR code ILIKE $2) LIMIT 5`,
+  },
+  {
+    key: 'products',
+    permission: 'product.view',
+    sql: `SELECT code, name FROM products
+           WHERE org_id = $1 AND is_active AND (name ILIKE $2 OR code ILIKE $2) LIMIT 5`,
+  },
+  {
+    key: 'batches',
+    permission: 'inventory.view',
+    sql: `SELECT b.batch_no, c.name AS crop, b.quantity_remaining
+            FROM crop_batches b JOIN crops c ON c.id = b.crop_id
+           WHERE b.org_id = $1 AND b.quantity_remaining > 0
+             AND (b.batch_no ILIKE $2 OR c.name ILIKE $2) LIMIT 5`,
+    shape: (rows) =>
+      rows.map((b) => ({
+        batchNo: b.batch_no,
+        crop: b.crop,
+        remaining: num(b.quantity_remaining),
+      })),
+  },
+];
+
 /** Backs the header search box; one round trip across every master. */
 router.get(
   '/search',
@@ -464,49 +518,22 @@ router.get(
     const q = parseQuery(z.object({ q: z.string().trim().min(1).max(80) }), req);
     const term = `%${q.q}%`;
 
-    const [customers, suppliers, companies, products, batches] = await Promise.all([
-      query(
-        `SELECT code, name, district FROM customers
-          WHERE org_id = $1 AND is_active AND (name ILIKE $2 OR code ILIKE $2 OR mobile ILIKE $2)
-          LIMIT 5`,
-        [req.orgId, term]
-      ),
-      query(
-        `SELECT code, name, district FROM suppliers
-          WHERE org_id = $1 AND is_active AND (name ILIKE $2 OR code ILIKE $2 OR mobile ILIKE $2)
-          LIMIT 5`,
-        [req.orgId, term]
-      ),
-      query(
-        `SELECT code, name, role FROM companies
-          WHERE org_id = $1 AND (name ILIKE $2 OR code ILIKE $2) LIMIT 5`,
-        [req.orgId, term]
-      ),
-      query(
-        `SELECT code, name FROM products
-          WHERE org_id = $1 AND is_active AND (name ILIKE $2 OR code ILIKE $2) LIMIT 5`,
-        [req.orgId, term]
-      ),
-      query(
-        `SELECT b.batch_no, c.name AS crop, b.quantity_remaining
-           FROM crop_batches b JOIN crops c ON c.id = b.crop_id
-          WHERE b.org_id = $1 AND b.quantity_remaining > 0
-            AND (b.batch_no ILIKE $2 OR c.name ILIKE $2) LIMIT 5`,
-        [req.orgId, term]
-      ),
-    ]);
+    // A source this session may not see is never queried, rather than fetched
+    // and filtered afterwards: what was not read cannot leak.
+    const allowed = SEARCH_SOURCES.filter((source) =>
+      req.user.permissions.includes(source.permission)
+    );
+    const results = await Promise.all(allowed.map((source) => query(source.sql, [req.orgId, term])));
 
-    ok(res, {
-      customers: customers.rows,
-      suppliers: suppliers.rows,
-      companies: companies.rows,
-      products: products.rows,
-      batches: batches.rows.map((b) => ({
-        batchNo: b.batch_no,
-        crop: b.crop,
-        remaining: num(b.quantity_remaining),
-      })),
+    // Every key is present whatever the permissions, so a client reading one
+    // finds an empty list rather than undefined -- and a group somebody may
+    // not see reads exactly like a group with no matches, which is the point.
+    const payload = Object.fromEntries(SEARCH_SOURCES.map((source) => [source.key, []]));
+    allowed.forEach((source, i) => {
+      payload[source.key] = source.shape ? source.shape(results[i].rows) : results[i].rows;
     });
+
+    ok(res, payload);
   })
 );
 
