@@ -19,9 +19,18 @@ const LABEL_STYLE =
  *
  * @param {HTMLElement} root
  * @param {(username: string, password: string) => Promise<object>} onSubmit
+ * @param {{name?: string, systemName?: string}} [org]
+ *   who the installation belongs to. The card names the business, so the name
+ *   comes from the organisation record rather than being written into this
+ *   screen; without it the card still works and carries the system name alone.
  * @returns {Promise<object>} the authenticated user
  */
-export function renderSignIn(root, onSubmit) {
+export function renderSignIn(root, onSubmit, org) {
+  const orgName = (org && org.name) || '';
+  const systemName = (org && org.systemName) || 'Business Suite';
+  // The monogram is the first letter of whoever this is, not a fixed M.
+  const initial = (orgName || systemName).trim().charAt(0).toUpperCase() || 'B';
+
   return new Promise((resolve) => {
     root.replaceChildren();
 
@@ -39,10 +48,10 @@ export function renderSignIn(root, onSubmit) {
       <div style="display:flex;align-items:center;gap:11px;margin-bottom:20px">
         <div style="width:36px;height:36px;flex:none;border-radius:9px;background:#8A2233;
                     color:#fff;display:flex;align-items:center;justify-content:center;
-                    font-weight:700;font-size:16px">M</div>
+                    font-weight:700;font-size:16px">${initial}</div>
         <div>
-          <div style="font-size:15px;font-weight:700;letter-spacing:-0.01em">Meghna Agro Enterprise</div>
-          <div style="font-size:11.5px;color:#8C877F">Business Suite</div>
+          <div style="font-size:15px;font-weight:700;letter-spacing:-0.01em">${orgName || systemName}</div>
+          <div style="font-size:11.5px;color:#8C877F">${orgName ? systemName : 'Sign in to continue'}</div>
         </div>
       </div>
 

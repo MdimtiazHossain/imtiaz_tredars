@@ -49,6 +49,12 @@ function readProps(user, workspace) {
   };
 }
 
+/** Put the organisation's name on the browser tab. */
+function applyIdentity(org) {
+  if (!org || !org.name) return;
+  document.title = `${org.name} — ${org.systemName || 'Business Suite'}`;
+}
+
 function showBoot(root, message = 'Loading business data…') {
   root.innerHTML =
     '<div class="app-boot"><div class="app-boot-spinner"></div><div></div></div>';
@@ -92,6 +98,9 @@ async function mountApp(root, user) {
   const data = await repository.load();
   root.replaceChildren();
 
+  // With no backend the company comes from the bundled set instead.
+  applyIdentity({ name: data.company?.name, systemName: data.company?.sys });
+
   const app = new BusinessApp(readProps(user, data), data);
   app.mount(root, appTemplate, {
     DataTable: dataTableTemplate,
@@ -112,11 +121,18 @@ export async function start(root) {
     if (!needsAuth) return await mountApp(root, null);
 
     showBoot(root, 'Restoring your session…');
+    // Who this installation belongs to, so the tab and the sign-in card name
+    // the business rather than whoever the demo data described.
+    const org = await repository.context();
+    applyIdentity(org);
+
     let user = await repository.restore().catch(() => null);
 
     if (!user) {
-      user = await renderSignIn(root, (username, password) =>
-        repository.login(username, password)
+      user = await renderSignIn(
+        root,
+        (username, password) => repository.login(username, password),
+        org
       );
     }
 

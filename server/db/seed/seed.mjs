@@ -15,121 +15,18 @@ import { hashPassword } from '../../src/services/authService.js';
 import { createCropPurchase } from '../../src/services/cropPurchaseService.js';
 import { createCropSale } from '../../src/services/cropSaleService.js';
 import { createDealerPurchase, createDealerSale } from '../../src/services/dealerService.js';
+import {
+  installAccessControl,
+  installBusinessTypes,
+  installOrganization,
+  installFiscalYear,
+  installNumbering,
+  installApprovalRules,
+  installNotificationRules,
+  installUnits,
+} from '../foundation.mjs';
 
 const DEFAULT_PASSWORD = process.env.SEED_PASSWORD || 'ChangeMe!2026';
-
-/* ------------------------------------------------------------- permissions */
-
-const PERMISSIONS = [
-  ['dashboard.view', 'See the dashboard'],
-  ['customer.view', 'View customers'], ['customer.create', 'Create customers'],
-  ['customer.edit', 'Edit customers'],
-  ['supplier.view', 'View suppliers'], ['supplier.create', 'Create suppliers'],
-  ['company.view', 'View companies'],
-  ['product.view', 'View products'],
-  ['dealer.purchase.view', 'View dealer purchases'],
-  ['dealer.purchase.create', 'Create dealer purchases'],
-  ['dealer.purchase.post', 'Post dealer purchases'],
-  ['dealer.purchase.cancel', 'Cancel dealer purchases'],
-  ['dealer.sale.view', 'View dealer sales'],
-  ['dealer.sale.create', 'Create dealer sales'],
-  ['dealer.sale.post', 'Post dealer sales'],
-  ['dealer.sale.cancel', 'Cancel dealer sales'],
-  ['crop.purchase.view', 'View crop purchases'],
-  ['crop.purchase.create', 'Create crop purchases'],
-  ['crop.purchase.post', 'Post crop purchases'],
-  ['crop.purchase.cancel', 'Cancel crop purchases'],
-  ['crop.sale.view', 'View crop sales'],
-  ['crop.sale.create', 'Create crop sales'],
-  ['crop.sale.post', 'Post crop sales'],
-  ['crop.sale.cancel', 'Cancel crop sales'],
-  ['inventory.view', 'View stock'], ['inventory.adjust', 'Adjust stock'],
-  ['inventory.transfer', 'Transfer stock'],
-  ['payment.view', 'View payments'], ['payment.create', 'Record payments'],
-  ['expense.view', 'View expenses'], ['expense.create', 'Record expenses'],
-  ['approval.view', 'View the approval queue'],
-  ['approval.decide', 'Approve or reject requests'],
-  ['report.view', 'View reports'], ['report.profit', 'See profit figures'],
-  ['employee.view', 'View employees'],
-  ['settings.view', 'View settings'], ['settings.edit', 'Change settings'],
-  ['audit.view', 'View the audit trail'],
-];
-
-/**
- * Role -> permissions, mirroring the permission matrix on the Settings screen.
- *
- * The codes listed here are the ones this file also creates. Later migrations
- * add more -- master-data maintenance, payment methods, role administration --
- * and grant them to the roles that should have them. A fresh database runs
- * every migration before this seed, so those rows already exist by the time
- * this runs: Admin is granted the whole `permissions` table rather than this
- * list, and the extras each other role is meant to hold are named below, so a
- * database built from scratch ends up where a migrated one is.
- */
-const ROLE_PERMISSIONS = {
-  Admin: PERMISSIONS.map(([code]) => code),
-  Management: [
-    'dashboard.view', 'customer.view', 'supplier.view', 'company.view', 'product.view',
-    'dealer.purchase.view', 'dealer.sale.view', 'crop.purchase.view', 'crop.sale.view',
-    'inventory.view', 'payment.view', 'expense.view',
-    'approval.view', 'approval.decide',
-    'report.view', 'report.profit', 'employee.view', 'settings.view', 'audit.view',
-  ],
-  Sales: [
-    'dashboard.view', 'customer.view', 'customer.create', 'customer.edit', 'product.view',
-    'dealer.sale.view', 'dealer.sale.create', 'dealer.sale.post',
-    'crop.sale.view', 'crop.sale.create', 'crop.sale.post',
-    'inventory.view', 'payment.view', 'payment.create', 'report.view',
-  ],
-  Purchase: [
-    'dashboard.view', 'supplier.view', 'supplier.create', 'company.view', 'product.view',
-    'dealer.purchase.view', 'dealer.purchase.create',
-    'crop.purchase.view', 'crop.purchase.create',
-    'inventory.view', 'report.view',
-  ],
-  Accounts: [
-    'dashboard.view', 'customer.view', 'supplier.view', 'company.view', 'product.view',
-    'dealer.purchase.view', 'dealer.sale.view', 'crop.purchase.view', 'crop.sale.view',
-    'inventory.view', 'payment.view', 'payment.create', 'expense.view', 'expense.create',
-    'approval.view', 'report.view', 'report.profit', 'audit.view',
-  ],
-  Warehouse: [
-    'dashboard.view', 'product.view', 'inventory.view', 'inventory.adjust',
-    'inventory.transfer', 'dealer.purchase.view', 'crop.purchase.view',
-    'dealer.sale.view', 'crop.sale.view',
-  ],
-};
-
-/** What each role is for, shown on the roles panel of the Settings screen. */
-const ROLE_DESCRIPTIONS = {
-  Admin: 'Everything, including roles, logins and settings',
-  Management: 'Sees the whole business and decides approvals',
-  Sales: 'Raises sales, collects payment, keeps the customer list',
-  Purchase: 'Raises purchases and keeps the procurement master',
-  Accounts: 'Money in, money out, and the books behind it',
-  Warehouse: 'Stock in the godowns, and the movements between them',
-};
-
-/**
- * Grants the later migrations make, restated for a database built from
- * scratch. Migrations 010 to 013 add these codes and hand them out; on a fresh
- * install they run before any role exists, so the handing out has to happen
- * here instead.
- */
-const MIGRATED_ROLE_PERMISSIONS = {
-  Management: ['crop.view', 'warehouse.create', 'warehouse.edit', 'employee.create', 'employee.edit'],
-  Sales: ['crop.view'],
-  Purchase: [
-    'crop.view', 'supplier.edit', 'company.create', 'company.edit',
-    'crop.create', 'crop.edit', 'product.create', 'product.edit',
-  ],
-  Accounts: [
-    'crop.view', 'account.create', 'account.edit',
-    'expense.category.create', 'expense.category.edit',
-    'payment.method.create', 'payment.method.edit',
-  ],
-  Warehouse: ['crop.view'],
-};
 
 /* ------------------------------------------------------------------ masters */
 
@@ -222,60 +119,32 @@ async function seed() {
       );
     }
 
-    /* ---- organisation ---- */
-    const { rows: orgRows } = await client.query(
-      `INSERT INTO organizations
-         (code, name, system_name, trade_licence_no, bin_no, head_office, mobile, email,
-          default_district)
-       VALUES ('MEGHNA','Meghna Agro Enterprise','Business Suite','BOG-TL-2019-04471',
-               '003912847-0201','Sherpur Road, Bogura Sadar, Bogura','01711-330099',
-               'accounts@meghnaagro.com.bd','Bogura')
-       RETURNING id`,
-      []
-    );
-    const orgId = Number(orgRows[0].id);
+    /* ---- the foundation every install needs ---- */
+    const orgId = await installOrganization(client, {
+      code: 'MEGHNA',
+      name: 'Meghna Agro Enterprise',
+      tradeLicenceNo: 'BOG-TL-2019-04471',
+      binNo: '003912847-0201',
+      headOffice: 'Sherpur Road, Bogura Sadar, Bogura',
+      mobile: '01711-330099',
+      email: 'accounts@meghnaagro.com.bd',
+      defaultDistrict: 'Bogura',
+    });
 
+    await installFiscalYear(client, orgId, {
+      code: 'FY 2026-27', startsOn: '2026-07-01', endsOn: '2027-06-30',
+    });
+    // The demo has history behind it, so the two years before it are closed.
     await client.query(
       `INSERT INTO fiscal_years (org_id, code, starts_on, ends_on, is_current, is_closed)
-       VALUES ($1,'FY 2026-27','2026-07-01','2027-06-30',true,false),
-              ($1,'FY 2025-26','2025-07-01','2026-06-30',false,true),
+       VALUES ($1,'FY 2025-26','2025-07-01','2026-06-30',false,true),
               ($1,'FY 2024-25','2024-07-01','2025-06-30',false,true)`,
       [orgId]
     );
 
-    await client.query(
-      `INSERT INTO business_types (code, name, description) VALUES
-         ('DEALER','Dealer Business','Company to dealer to customer'),
-         ('BULK_CROP','Bulk Crop Business','Farmer to us to buyer company')`
-    );
-
-    /* ---- settings the Settings screen maintains ---- */
-
-    // Migration 015 backfills these for an organisation that already exists.
-    // A fresh database is seeded after every migration has run, so the same
-    // rows are inserted here or a new install would open with an empty
-    // numbering panel and no notification rules.
-    await client.query(
-      `INSERT INTO document_number_formats (org_id, doc_type, prefix, padding) VALUES
-         ($1,'crop_purchase','PC',3), ($1,'crop_sale','SC',3),
-         ($1,'dealer_purchase','DP',3), ($1,'dealer_sale','DS',3),
-         ($1,'crop_batch','BC',3), ($1,'receipt','RC',3),
-         ($1,'payment','PY',3), ($1,'expense','EXP',3),
-         ($1,'adjustment','ADJ',3), ($1,'transfer','TRF',3),
-         ($1,'movement','MOV',3), ($1,'approval','AP',4)`,
-      [orgId]
-    );
-
-    await client.query(
-      `INSERT INTO notification_rules (org_id, code, name, description, threshold) VALUES
-         ($1,'CUSTOMER_OVERDUE','Customer payment overdue','daily 9:00 am for invoices past due date',NULL),
-         ($1,'SUPPLIER_DUE','Supplier payment due','fires {value} days before the due date',2),
-         ($1,'LOW_STOCK','Low stock','when quantity falls below minimum stock',NULL),
-         ($1,'DEAD_STOCK','Dead stock','a crop batch still held after {value} days',60),
-         ($1,'LARGE_TRANSACTION','Large transaction','any single transaction above {value}',2000000),
-         ($1,'EXPENSE_THRESHOLD','Expense threshold','an expense above {value}',50000)`,
-      [orgId]
-    );
+    await installBusinessTypes(client);
+    await installNumbering(client, orgId);
+    await installNotificationRules(client, orgId);
 
     const warehouses = await insertMany(
       client,
@@ -292,47 +161,7 @@ async function seed() {
     );
 
     /* ---- roles and permissions ---- */
-
-    // Migrations have already inserted the permissions they introduced, so
-    // these go in beside them rather than over them.
-    await insertMany(
-      client,
-      `INSERT INTO permissions (code, description) VALUES ($1,$2)
-       ON CONFLICT (code) DO NOTHING`,
-      PERMISSIONS
-    );
-
-    // These six are the roles the system is set up around: `is_system` is what
-    // stops one being deleted from the Settings screen, leaving a user holding
-    // a role that no longer exists.
-    const roles = await insertMany(
-      client,
-      `INSERT INTO roles (code, name, description, is_system)
-       VALUES ($1,$2,$3,true) RETURNING id, code`,
-      Object.keys(ROLE_PERMISSIONS).map((r) => [r, r, ROLE_DESCRIPTIONS[r] || null])
-    );
-    const roleByCode = new Map(roles.map((r) => [r.code, Number(r.id)]));
-
-    // Admin holds the whole table, whatever is in it. Written as a join rather
-    // than as a list so a permission added by a migration after this file was
-    // last touched is still held by somebody -- which is the difference
-    // between an Admin who can administer and one who cannot.
-    await client.query(
-      `INSERT INTO role_permissions (role_id, permission_id)
-       SELECT $1, p.id FROM permissions p ON CONFLICT DO NOTHING`,
-      [roleByCode.get('Admin')]
-    );
-
-    for (const [roleCode, codes] of Object.entries(ROLE_PERMISSIONS)) {
-      if (roleCode === 'Admin') continue;
-      const wanted = codes.concat(MIGRATED_ROLE_PERMISSIONS[roleCode] || []);
-      await client.query(
-        `INSERT INTO role_permissions (role_id, permission_id)
-         SELECT $1, p.id FROM permissions p WHERE p.code = ANY($2::text[])
-         ON CONFLICT DO NOTHING`,
-        [roleByCode.get(roleCode), wanted]
-      );
-    }
+    const roleByCode = await installAccessControl(client);
 
     /* ---- employees and users ---- */
     const passwordHash = await hashPassword(DEFAULT_PASSWORD);
@@ -365,25 +194,7 @@ async function seed() {
     const admin = employees[0];
 
     /* ---- lookups ---- */
-    const units = await insertMany(
-      client,
-      'INSERT INTO units (code, name, factor) VALUES ($1,$2,$3) RETURNING id, code',
-      [
-        ['MT', 'Metric Tonne', 1],
-        ['Maund', 'Maund', 0.037324],
-        ['Kg', 'Kilogram', 0.001],
-        ['Bag', 'Bag (50 kg)', 0.05],
-        ['Pcs', 'Piece', 1],
-      ]
-    );
-    const unitByCode = new Map(units.map((u) => [u.code, Number(u.id)]));
-
-    // The crop units are fractions of a tonne; saying so on the row is what
-    // lets the Settings screen derive '1 MT = 1,000 Kg' rather than print it.
-    await client.query(
-      `UPDATE units SET base_unit_id = $1 WHERE code IN ('Maund','Kg','Bag')`,
-      [unitByCode.get('MT')]
-    );
+    const unitByCode = await installUnits(client);
 
     const categories = await insertMany(
       client,
@@ -492,20 +303,7 @@ async function seed() {
     );
 
     /* ---- approval rules ---- */
-    await insertMany(
-      client,
-      `INSERT INTO approval_rules
-         (org_id, code, name, entity_type, business_type, condition_type, threshold)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [
-        [orgId, 'CROP_PUR_LIMIT', 'Purchase value above ৳5,00,000', 'crop_purchases', 'BULK_CROP', 'AMOUNT_ABOVE', 500000],
-        [orgId, 'DEALER_PUR_LIMIT', 'Purchase value above ৳5,00,000', 'dealer_purchases', 'DEALER', 'AMOUNT_ABOVE', 500000],
-        [orgId, 'CROP_SALE_LIMIT', 'Credit sale above ৳20,00,000', 'crop_sales', 'BULK_CROP', 'AMOUNT_ABOVE', 2000000],
-        [orgId, 'DISCOUNT_CEILING', 'Discount above the 5% ceiling', 'dealer_sales', 'DEALER', 'DISCOUNT_PCT_ABOVE', 5],
-        [orgId, 'STOCK_ADJ', 'Stock adjustment always requires approval', 'stock_adjustments', null, 'ALWAYS', null],
-        [orgId, 'EXPENSE_LIMIT', 'Expense above ৳50,000', 'expenses', null, 'AMOUNT_ABOVE', 50000],
-      ]
-    );
+    await installApprovalRules(client, orgId);
 
     return {
       orgId,

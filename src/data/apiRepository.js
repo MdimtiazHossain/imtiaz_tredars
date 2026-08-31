@@ -61,6 +61,17 @@ export class ApiRepository {
     return this.client.login(username, password);
   }
 
+  /**
+   * Who this installation belongs to, before anyone has signed in.
+   *
+   * The sign-in card names the business, and it cannot read the workspace to
+   * find out -- that needs a token. Answered by a public endpoint carrying
+   * nothing but the name already printed on the company's own invoices.
+   */
+  context() {
+    return this.client.get('/auth/context').then((payload) => payload.data, () => null);
+  }
+
   restore() {
     return this.client.restore();
   }
