@@ -4468,3 +4468,154 @@ describe('the input tax apportionment panel', () => {
     expect(app.renderVals().vatApp.show).toBe(false);
   });
 });
+
+describe('the dashboard against a real business', () => {
+  /**
+   * The eight tiles, the trend, the two business panels and the ageing chart
+   * all have bundled figures behind them, written when the screen was a
+   * prototype. Against a server those figures describe somebody else's
+   * business, and the ways they reached a real dashboard are what these cover.
+   */
+
+  const ZEROED = {
+    businessType: 'ALL',
+    sales: { amount: 0, documents: 0 },
+    purchases: { amount: 0, documents: 0 },
+    receivable: { amount: 0, documents: 0 },
+    payable: { amount: 0, documents: 0 },
+    stock: { cropValue: 0, productValue: 0, totalValue: 0, batches: 0 },
+    cash: { balance: 0, accounts: 0 },
+    aging: {},
+    trend: [],
+    grossProfit: { amount: 0, cost: 0, marginPct: 0 },
+  };
+
+  /** A repository that behaves like the API one, answering as told. */
+  function backend(dashboard) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    // `serverBacked()` keys off this, exactly as ApiRepository does.
+    repository.report = async () => ({ rows: [] });
+    repository.dashboard = dashboard;
+    return repository;
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+
+  /** Mount, then fetch the aggregates the way main.js does after mounting. */
+  async function openDashboard(repository) {
+    const { app } = await mountApp({ repository });
+    app.loadDashboard();
+    return app;
+  }
+
+  it('reports zero for a business that has traded nothing', async () => {
+    const app = await openDashboard(backend(async () => ZEROED));
+    await settle();
+    app.renderNow();
+
+    const kpis = app.renderVals().dash.kpis;
+    expect(kpis.map((k) => k.v)).toEqual(Array(8).fill(money(0)));
+  });
+
+  it('says the figures are unavailable rather than showing the bundled ones', async () => {
+    // A dashboard request that fails used to leave 3.44 crore of demonstration
+    // sales on screen, labelled with a month, and no indication of a problem.
+    const app = await openDashboard(
+      backend(async () => {
+        throw new Error('Could not reach the server.');
+      })
+    );
+    await settle();
+    app.renderNow();
+
+    const dash = app.renderVals().dash;
+    expect(dash.kpis.every((k) => k.v === '—')).toBe(true);
+    expect(dash.kpis[0].up).toContain('Could not reach the server');
+    // Nothing anywhere on the tiles or the panels may read as money.
+    const shown = dash.kpis
+      .flatMap((k) => [k.v, k.sub, k.note, k.up])
+      .concat(dash.panels.flatMap((p) => p.rows.map((r) => r.v)));
+    expect(shown.some((t) => /৳\s*[0-9]/.test(String(t)))).toBe(false);
+    expect(dash.chart).toEqual([]);
+  });
+
+  it('shows no bundled figures while the answer is still on its way', async () => {
+    /** @type {(value: any) => void} */
+    let release = () => {};
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    const app = await openDashboard(backend(() => held));
+    app.renderNow();
+
+    const kpis = app.renderVals().dash.kpis;
+    expect(kpis.every((k) => k.v === '—')).toBe(true);
+    expect(kpis[0].sub).toBe('Loading…');
+
+    release(ZEROED);
+    await settle();
+    app.renderNow();
+    expect(app.renderVals().dash.kpis[0].v).toBe(money(0));
+  });
+
+  it('ages every receivable, not only the ones owed by customers', async () => {
+    // A bulk crop sale is invoiced to a buyer company. Summing the customer
+    // rows left that money out of the chart while the tile above it counted
+    // it, so the two disagreed by the whole crop business.
+    const app = await openDashboard(
+      backend(async () => ({
+        ...ZEROED,
+        receivable: { amount: 4450000, documents: 4 },
+        aging: { '0-30': 4320000, '31-60': 130000, '91-120': 40000, '120+': 60000 },
+      }))
+    );
+    await settle();
+    app.renderNow();
+
+    const dash = app.renderVals().dash;
+    expect(dash.aging.map((b) => b.k)).toEqual([
+      '0 – 30 days', '31 – 60 days', '61 – 90 days', '90+ days',
+    ]);
+    expect(dash.aging[0].v).toBe(money(4320000));
+    expect(dash.aging[1].v).toBe(money(130000));
+    expect(dash.aging[2].v).toBe(money(0));
+    // The server splits past ninety days in two; the design draws one bucket.
+    expect(dash.aging[3].v).toBe(money(100000));
+  });
+
+  it('warns about the stock the business actually holds', async () => {
+    const app = await openDashboard(backend(async () => ZEROED));
+    app.data.products = [
+      { code: 'P-0001', name: 'Test Fungicide 100g', unit: 'Pcs', stock: 30, min: 40 },
+      { code: 'P-0002', name: 'Healthy Product', unit: 'Bag', stock: 90, min: 20 },
+      { code: 'P-0003', name: 'No Minimum Set', unit: 'Pcs', stock: 0, min: 0 },
+    ];
+    app.setState({
+      batches: [
+        { id: 'BC-01', crop: 'Test Maize', rem: 14, age: 73 },
+        { id: 'BC-02', crop: 'Fresh Maize', rem: 20, age: 5 },
+        { id: 'BC-03', crop: 'Sold Out', rem: 0, age: 400 },
+      ],
+    });
+    await settle();
+    app.renderNow();
+
+    const low = app.renderVals().dash.low;
+    expect(low.map((r) => r.n)).toEqual(['Test Fungicide 100g', 'Test Maize — batch BC-01']);
+    expect(low[0].d).toBe('30 of 40 Pcs minimum');
+    expect(low[1].d).toBe('14.00 MT, 73 days old, dead stock risk');
+    // A product at its minimum, a fresh batch and an emptied one are not
+    // problems, and a product with no minimum set has nothing to be under.
+    expect(low).toHaveLength(2);
+  });
+
+  it('warns about nothing when the business holds nothing', async () => {
+    const app = await openDashboard(backend(async () => ZEROED));
+    app.data.products = [];
+    app.setState({ batches: [] });
+    await settle();
+    app.renderNow();
+
+    expect(app.renderVals().dash.low).toEqual([]);
+  });
+});

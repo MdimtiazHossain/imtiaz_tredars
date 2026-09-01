@@ -72,6 +72,15 @@ const BLANK_PRODUCT = {
   code: '', name: '—', cat: '', brand: '', unit: '', pur: 0, sale: 0, stock: 0, min: 0,
 };
 
+/**
+ * How old a crop batch may get before it is treated as dead stock.
+ *
+ * The same sixty days the server flags a batch at, named once here so the
+ * dashboard warning, the inventory status column and the count of items needing
+ * attention cannot drift apart from each other or from the API.
+ */
+const DEAD_STOCK_DAYS = 60;
+
 /** Currencies the app has words for; anything else reads as its own code. */
 const CURRENCY_NAMES = { BDT: 'Bangladeshi Taka (৳)', USD: 'US Dollar ($)', INR: 'Indian Rupee (₹)', EUR: 'Euro (€)' };
 
@@ -198,6 +207,10 @@ export class BusinessApp extends Component {
     this.state = {
       screen:'dashboard', biz:'all', q:'', qOpen:false, notifOpen:false, userOpen:false, toast:null,
       invTab:'all', invSort:'value', acctTab:'receivable', setSec:'company', repSel:'crop-batch-profit', repLoading:false,
+      // The dashboard aggregates as the server reports them. Which of the
+      // three states this is in decides what the tiles may say: loading and
+      // failed both mean the business's own figures are not in hand yet.
+      serverDash:null, dashLoading:false, dashError:'',
       retTab:'returns', returns:[], creditNotes:[], returnableDocs:[], returnsLoading:false, returnsError:'',
       partyStatements:{}, partyStatementLoading:'', partyStatementError:'',
       repFilter:{},
@@ -2642,13 +2655,21 @@ export class BusinessApp extends Component {
     const biz = this.state.biz;
     const businessType = biz === 'dealer' ? 'DEALER' : biz === 'crop' ? 'BULK_CROP' : 'ALL';
 
-    this.setState({ dashLoading: true });
+    this.setState({ dashLoading: true, dashError: '' });
     this.repository.dashboard(businessType).then(
       data => {
         // A stale response from a filter the user has since changed is dropped.
-        if (this.state.biz === biz) this.setState({ serverDash: data, dashLoading: false });
+        if (this.state.biz === biz) {
+          this.setState({ serverDash: data, dashLoading: false, dashError: '' });
+        }
       },
-      () => this.setState({ dashLoading: false })
+      err => this.setState({
+        dashLoading: false,
+        // Kept rather than swallowed. What the tiles fall back to is a
+        // description of a business nobody here trades as, and a dashboard
+        // that failed to load must say so instead of quietly showing it.
+        dashError: err && err.message ? err.message : 'The dashboard could not be loaded.',
+      })
     );
   }
 
@@ -2765,27 +2786,118 @@ export class BusinessApp extends Component {
     return rows;
   }
 
+  /**
+   * The stock that needs attention: below its minimum, or too old to sell well.
+   *
+   * This panel was three lines written into the code -- an Ispahani fertiliser,
+   * an ACI zinc sulphate and a 73-day-old batch of onions. They were on the
+   * dashboard of every installation, so a business that had never carried any
+   * of them was told to go and look at its stock of them, and one that genuinely
+   * had a product running out was not told at all.
+   *
+   * Both halves come from the working set the dashboard already holds: the
+   * product master carries the minimum each product should not fall below, and
+   * every crop batch carries its age. Nothing is fetched for this.
+   *
+   * The bar reads as health, so a shorter one is more urgent: how full a product
+   * is against its minimum, and for a batch how much of its age still falls
+   * inside the window before stock is called dead.
+   */
+  lowStock() {
+    const products = this.data.products || [];
+    const batches = this.state.batches || [];
+
+    const short = products
+      .filter(p => Number(p.min) > 0 && Number(p.stock) < Number(p.min))
+      .map(p => ({
+        n: p.name,
+        d: int(p.stock) + ' of ' + int(p.min) + ' ' + (p.unit || 'units') + ' minimum',
+        // Guarded, because a minimum of nothing is not a minimum to be under.
+        pct: p.min ? (p.stock / p.min) * 100 : 0,
+      }));
+
+    const stale = batches
+      .filter(b => Number(b.age) > DEAD_STOCK_DAYS && Number(b.rem) > 0)
+      .map(b => ({
+        n: b.crop + ' — batch ' + b.id,
+        d: dec2(b.rem) + ' MT, ' + int(b.age) + ' days old, dead stock risk',
+        pct: (DEAD_STOCK_DAYS / b.age) * 100,
+      }));
+
+    // Most urgent first, and only as many as the panel was drawn to hold.
+    return short
+      .concat(stale)
+      .sort((a, b) => a.pct - b.pct)
+      .slice(0, 6)
+      .map(x => ({n:x.n, d:x.d, p:Math.max(0, Math.min(100, x.pct)).toFixed(0) + '%'}));
+  }
+
+  /**
+   * The eight tiles while the server's answer is still on its way, or lost.
+   *
+   * They keep the design's shape and say nothing about money, because there is
+   * nothing yet to say. What they must never do is carry the bundled figures:
+   * those describe a demonstration business, and on a real installation a
+   * failed request would have put another company's sales, receivable and cash
+   * on the owner's dashboard with a period label that made them look like this
+   * morning's.
+   */
+  pendingKpis(state, reason) {
+    return [
+      "Today's Sales", 'This Month Sales', 'This Month Purchase', 'Gross Profit',
+      'Outstanding Receivable', 'Outstanding Payable', 'Current Stock Value',
+      'Cash & Bank Balance',
+      // Why, once. Eight tiles each repeating the same sentence is a wall of
+      // it; the state belongs on every tile and the explanation on one. The
+      // template joins `sub` and `note` with a middle dot, so both carry
+      // something rather than leaving a separator hanging on its own.
+    ].map((k, i) => ({k:k, v:'—', sub:state.label, note:state.note, up:i === 0 ? reason : '', upColor:C.mut}));
+  }
+
   dash() {
     const K = DASHBOARD_KPIS;
     const sd = this.state.serverDash;
-    const kpis = sd ? this.serverKpis(sd) : K.map(x => {
-      const v = x.fix !== undefined ? x.fix : this.bizOf(x);
-      return {k:x.k, v:money(v), sub:lakh(v), note:x.note, up:x.up, upColor:x.good ? C.crop : C.warn};
-    });
+    const S = this.state;
+    // With a server behind the app its figures are the only ones that describe
+    // this business. Until they arrive there is a loading state and, if they
+    // never do, an error -- not a fallback, which is what the Reports screen
+    // already does for the same reason.
+    const awaiting = this.serverBacked() && !sd;
+    const pendingState = S.dashError
+      ? { label: 'Unavailable', note: 'not loaded' }
+      : { label: 'Loading…', note: 'from the server' };
+    const reason = S.dashError || (S.dashLoading ? 'Fetching the figures' : 'Not loaded yet');
+    const kpis = sd
+      ? this.serverKpis(sd)
+      : awaiting
+        ? this.pendingKpis(pendingState, reason)
+        : K.map(x => {
+            const v = x.fix !== undefined ? x.fix : this.bizOf(x);
+            return {k:x.k, v:money(v), sub:lakh(v), note:x.note, up:x.up, upColor:x.good ? C.crop : C.warn};
+          });
     const months = MONTHLY_SERIES;
     const b = this.state.biz;
     const series = months.map(x => { const s = b === 'dealer' ? x.ds : b === 'crop' ? x.cs : x.ds + x.cs; const p = b === 'dealer' ? x.dp : b === 'crop' ? x.cp : x.dp + x.cp; return {l:x.l, s:s, p:p, pr:s - p}; });
     const max = Math.max.apply(null, series.map(x => x.s)) * 1.12;
     const chart = sd && sd.trend
       ? this.serverChart(sd.trend)
-      : series.map(x => ({l:x.l, sH:(x.s / max * 150).toFixed(1) + 'px', pH:(x.p / max * 150).toFixed(1) + 'px',
-          sText:'৳' + x.s.toFixed(1) + ' L', tip:x.l + ' — sales ৳' + x.s.toFixed(1) + ' L · purchase ৳' + x.p.toFixed(1) + ' L · profit ৳' + x.pr.toFixed(1) + ' L'}));
+      : awaiting
+        ? []
+        : series.map(x => ({l:x.l, sH:(x.s / max * 150).toFixed(1) + 'px', pH:(x.p / max * 150).toFixed(1) + 'px',
+            sText:'৳' + x.s.toFixed(1) + ' L', tip:x.l + ' — sales ৳' + x.s.toFixed(1) + ' L · purchase ৳' + x.p.toFixed(1) + ' L · profit ৳' + x.pr.toFixed(1) + ' L'}));
     const byBiz = sd && sd.byBusiness;
+    const pendingPanel = [{k:'Sales', v:'—'}, {k:'Purchase', v:'—'}, {k:'Gross profit', v:'—'},
+      {k:'Outstanding', v:'—'}, {k:'Stock value', v:'—'}, {k:'Margin', v:'—'}];
     const panels = byBiz ? [
       {name:'Dealer Business', color:C.deal, bg:C.dealBg, tag:'Company → Dealer → Customer', screen:'dealer-sales',
         rows:this.businessPanelRows(byBiz.DEALER)},
       {name:'Bulk Crop Business', color:C.crop, bg:C.cropBg, tag:'Farmer → Us → Buyer company', screen:'crop-sales',
         rows:this.businessPanelRows(byBiz.BULK_CROP)}
+    ] : awaiting ? [
+      {name:'Dealer Business', color:C.deal, bg:C.dealBg, tag:'Company → Dealer → Customer', screen:'dealer-sales',
+        rows:pendingPanel},
+      {name:'Bulk Crop Business', color:C.crop, bg:C.cropBg, tag:'Farmer → Us → Buyer company', screen:'crop-sales',
+        rows:pendingPanel}
     ] : [
       {name:'Dealer Business', color:C.deal, bg:C.dealBg, tag:'Company → Dealer → Customer', screen:'dealer-sales',
         rows:[{k:'Sales', v:money(9840000)}, {k:'Purchase', v:money(7210000)}, {k:'Gross profit', v:money(1486000)}, {k:'Outstanding', v:money(1580000)}, {k:'Stock value', v:money(5620000)}, {k:'Margin', v:'15.1%'}]},
@@ -2818,21 +2930,39 @@ export class BusinessApp extends Component {
       .concat((this.state.saleLog || []).map(r => [r.no, r.date, 'Crop sale', r.buyer, 'crop', r.amt, r.status]))
       .slice(0, 6);
 
+    // What is owed, by how late it is.
+    //
+    // The customer rows carry their own ageing, but customers are only half of
+    // who owes the business money: a bulk crop sale is invoiced to a buyer
+    // company, and none of that reached these buckets. So the chart read
+    // 1.30 lakh directly beneath a receivable tile reading 44.50 lakh, on the
+    // same screen, describing the same money. The server ages every receivable
+    // whoever it is against, which is the figure the tile is already built
+    // from; the customer sum is what to use when there is no server behind the
+    // app to ask.
     const bucketOf = key => customers.reduce((t, c) => t + (Number(c[key]) || 0), 0);
-    const aging = this.serverBacked()
+    const served = sd && sd.aging;
+    const aging = served
       ? [
-          { k: '0 – 30 days', v: bucketOf('b30'), c: C.crop },
-          { k: '31 – 60 days', v: bucketOf('b60'), c: C.warn },
-          { k: '61 – 90 days', v: bucketOf('b90'), c: '#C4720F' },
-          { k: '90+ days', v: bucketOf('b90p'), c: C.dngr },
+          { k: '0 – 30 days', v: Number(sd.aging['0-30']) || 0, c: C.crop },
+          { k: '31 – 60 days', v: Number(sd.aging['31-60']) || 0, c: C.warn },
+          { k: '61 – 90 days', v: Number(sd.aging['61-90']) || 0, c: '#C4720F' },
+          // The server splits what the design draws as one bucket.
+          { k: '90+ days', v: (Number(sd.aging['91-120']) || 0) + (Number(sd.aging['120+']) || 0), c: C.dngr },
         ]
-      : AGING_BUCKETS;
+      : this.serverBacked()
+        ? [
+            { k: '0 – 30 days', v: bucketOf('b30'), c: C.crop },
+            { k: '31 – 60 days', v: bucketOf('b60'), c: C.warn },
+            { k: '61 – 90 days', v: bucketOf('b90'), c: '#C4720F' },
+            { k: '90+ days', v: bucketOf('b90p'), c: C.dngr },
+          ]
+        : AGING_BUCKETS;
     const agMax = aging.reduce((m, x) => Math.max(m, x.v), 0);
     return {kpis:kpis, chart:chart, panels:panels, showProfit:this.canProfit(),
       topCust:bar(topCust), topCo:bar(topCo),
       aging:aging.map(x => ({k:x.k, v:money(x.v), w:(agMax ? (x.v / agMax) * 100 : 0).toFixed(1) + '%', c:x.c})),
-      low:[{n:'Ispahani TSP Fertilizer 50kg', d:'74 of 120 bags minimum', p:'62%'}, {n:'ACI Zinc Sulphate 1kg', d:'210 of 250 pcs minimum', p:'84%'},
-        {n:'Onion — batch BC-2606-001', d:'14 MT, 73 days old, dead stock risk', p:'35%'}],
+      low:this.lowStock(),
       // The four money and stock actions now open their form directly instead
       // of only landing the user on the screen that hosts it.
       actions:[
@@ -2880,7 +3010,7 @@ export class BusinessApp extends Component {
           // blank hides it; a dash is at least visible in the column.
           wh:r.warehouse || '—', low:r.flagged}));
     } else {
-      if (t !== 'dealer') rows = rows.concat(S.batches.map(b => ({kind:'crop', name:b.crop, sub:'Batch ' + b.id + ' · ' + b.grade, wh:b.wh, qty:b.rem, unit:'MT', cost:b.cost, val:b.rem * b.cost, age:b.age, date:b.date, low:b.age > 60})));
+      if (t !== 'dealer') rows = rows.concat(S.batches.map(b => ({kind:'crop', name:b.crop, sub:'Batch ' + b.id + ' · ' + b.grade, wh:b.wh, qty:b.rem, unit:'MT', cost:b.cost, val:b.rem * b.cost, age:b.age, date:b.date, low:b.age > DEAD_STOCK_DAYS})));
       if (t !== 'crop') rows = rows.concat(this.data.products.map(p => ({kind:'dealer', name:p.name, sub:p.brand + ' · ' + p.cat, wh:(this.data.warehouses || [])[0] || '—', qty:p.stock, unit:p.unit, cost:p.pur, val:p.stock * p.pur, age:null, date:'—', low:p.stock < p.min})));
     }
     const sort = S.invSort;
@@ -2907,7 +3037,7 @@ export class BusinessApp extends Component {
     const needsAction = served
       ? served.filter(r => r.flagged).length
       : goods.filter(g => g.min && g.qty < g.min).length
-        + S.batches.filter(b => (b.age || 0) > 60).length;
+        + S.batches.filter(b => (b.age || 0) > DEAD_STOCK_DAYS).length;
     return {actions:[
         {l:'Transfer stock', onClick:() => this.openForm('transfer')},
         {l:'Adjust stock', onClick:() => this.openForm('adjustment')}
@@ -2926,7 +3056,7 @@ export class BusinessApp extends Component {
           cell(r.kind === 'crop' ? 'Bulk Crop' : 'Dealer', {badge:true, badgeBg:r.kind === 'crop' ? C.cropBg : C.dealBg, badgeFg:r.kind === 'crop' ? C.crop : C.deal}),
           cell(r.wh, {color:C.mut}), cell(dec2(r.qty) + ' ' + r.unit, {align:'right', mono:true, weight:'600'}),
           cell(money(r.cost), {align:'right', mono:true}), cell(money(r.val), {align:'right', mono:true, weight:'600'}),
-          cell(r.age === null ? '—' : r.age + ' d', {align:'right', mono:true, color:r.age > 60 ? C.dngr : C.mut, sub:r.date}),
+          cell(r.age === null ? '—' : r.age + ' d', {align:'right', mono:true, color:r.age > DEAD_STOCK_DAYS ? C.dngr : C.mut, sub:r.date}),
           cell(r.low ? (r.kind === 'crop' ? 'Ageing' : 'Low stock') : 'Healthy', {align:'center', badge:true, badgeBg:r.low ? C.warnBg : C.cropBg, badgeFg:r.low ? C.warn : C.crop})]})),
         {
           // Three different situations that all draw as an empty grid, and
