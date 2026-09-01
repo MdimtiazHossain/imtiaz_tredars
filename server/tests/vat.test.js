@@ -897,6 +897,166 @@ suite('vat', () => {
       expect(again.body.error.code).toBe('ALREADY_APPORTIONED');
     });
 
+    /**
+     * A period with something actually withheld, journalled for real.
+     *
+     * Every other journalling test here adjusts an empty period, where the
+     * disallowed amount is nil and no entry is written at all. They pass
+     * without the posting path ever running -- which is how a journal that
+     * named a business type the enum does not have reached a browser before
+     * it reached a test.
+     */
+    describe('journalling a period that actually withheld something', () => {
+      /**
+       * A day nobody has adjusted yet, claimed at run time.
+       *
+       * A period can be adjusted once, so a fixed one is only ever journalled
+       * by the first run against a given database; every run after it reads
+       * 422 and falls to asserting the first run's work. That is exactly how
+       * strong this test looked while the posting path was broken -- it
+       * passed against entries an earlier, working run had written.
+       *
+       * So it takes a day of its own, posts the documents that make the ratio
+       * into that day, and journals it for real. Every run exercises the
+       * path; none of them collide.
+       */
+      let period;
+      let on;
+
+      beforeAll(async () => {
+        const { rows: used } = await query(
+          'SELECT period_from FROM tax_apportionments WHERE org_id = $1',
+          [orgId]
+        );
+        const taken = new Set(used.map((r) => String(r.period_from).slice(0, 10)));
+
+        const pad = (n) => String(n).padStart(2, '0');
+        const candidates = [];
+        // Inside the fiscal year, so the document endpoints accept it, and
+        // clear of the months the seed trades in. The seed deliberately buys
+        // in one month and sells in the next, and another suite checks that a
+        // purchase-only month still reaches the dashboard; a sale posted into
+        // that month by this fixture would quietly delete the case it tests.
+        for (const [year, month] of [[2026, 10], [2026, 11], [2026, 12], [2027, 1], [2027, 2]]) {
+          for (let day = 1; day <= 28; day += 1) {
+            candidates.push(`${year}-${pad(month)}-${pad(day)}`);
+          }
+        }
+        on = candidates.find((d) => !taken.has(d));
+        expect(
+          on,
+          'no unadjusted day left in the fiscal year -- reset the test database'
+        ).toBeTruthy();
+        period = { from: on, to: on };
+
+        // A product of this fixture's own, bought and then sold entirely, so
+        // every run ends holding none of it and the shared stock valuation is
+        // exactly where it started. Using a seeded product left units behind
+        // each time until an exact-equality assertion elsewhere drifted a taka.
+        const standard = rates.find((r) => r.code === 'VAT15');
+        const { rows: made } = await query(
+          `INSERT INTO products (org_id, code, name, unit_id, purchase_rate, sale_rate, tax_rate_id)
+           SELECT $1, 'TEST-APPORTION', 'Apportionment fixture', u.id, 100, 150, $2
+             FROM units u WHERE u.org_id = $1 ORDER BY u.id LIMIT 1
+           ON CONFLICT (org_id, code) DO UPDATE SET is_active = true, tax_rate_id = $2
+           RETURNING id`,
+          [orgId, standard.id]
+        );
+        const productId = Number(made[0].id);
+
+        // Bought at the standard rate: input tax, and a credit to lose.
+        await postDocument(app, auth, '/api/dealer/purchases', {
+          txnDate: on,
+          companyId: context.companyId,
+          warehouseId: context.warehouseId,
+          lines: [{ productId, quantity: 200, rate: 100, discountPct: 0 }],
+          action: 'POST',
+        });
+
+        // Sold exempt, and all of it: the supply earns no credit, so the tax
+        // above was not earned either.
+        const exempt = rates.find((r) => r.code === 'EXEMPT');
+        await query('UPDATE products SET tax_rate_id = $1 WHERE id = $2', [exempt.id, productId]);
+        await postDocument(app, auth, '/api/dealer/sales', {
+          txnDate: on,
+          customerId: context.customerId,
+          warehouseId: context.warehouseId,
+          paidAmount: 0,
+          lines: [{ productId, quantity: 200, rate: 150, discountPct: 0 }],
+          action: 'POST',
+        });
+      });
+
+      it('takes the withheld tax out of the receivable and into cost', async () => {
+        const worked = (
+          await request(app).get('/api/tax/apportionment').query(period).set(auth())
+        ).body.data;
+        expect(worked.disallowed).toBeGreaterThan(0);
+
+        const before = {
+          irrecoverable: await balanceOf(LEDGER.IRRECOVERABLE_VAT),
+          inputVat: await balanceOf(LEDGER.INPUT_VAT),
+        };
+
+        const res = await request(app).post('/api/tax/apportionment').set(auth()).send(period);
+        // The period was claimed unadjusted, so this must actually journal.
+        // Accepting 422 here is what hid a posting path that threw on every
+        // run but the first.
+        expect(res.status, JSON.stringify(res.body.error)).toBe(201);
+        expect(res.body.data.disallowed).toBe(worked.disallowed);
+        expect(await balanceOf(LEDGER.IRRECOVERABLE_VAT)).toBe(
+          money(before.irrecoverable + worked.disallowed)
+        );
+        expect(await balanceOf(LEDGER.INPUT_VAT)).toBe(
+          money(before.inputVat - worked.disallowed)
+        );
+
+        const { rows: recorded } = await query(
+          `SELECT id, disallowed FROM tax_apportionments
+            WHERE org_id = $1 AND period_from = $2 AND period_to = $3`,
+          [orgId, period.from, period.to]
+        );
+        expect(recorded).toHaveLength(1);
+        expect(num(recorded[0].disallowed)).toBeGreaterThan(0);
+
+        // The entries exist, name a real business line, and balance. This is
+        // the assertion the empty-period tests could never make.
+        const { rows: entries } = await query(
+          `SELECT business_type, SUM(debit) AS debit, SUM(credit) AS credit
+             FROM ledger_entries
+            WHERE org_id = $1 AND reference_type = 'tax_apportionments'
+              AND reference_id = $2
+            GROUP BY business_type`,
+          [orgId, recorded[0].id]
+        );
+        expect(entries.length).toBeGreaterThan(0);
+        for (const row of entries) {
+          expect(['DEALER', 'BULK_CROP']).toContain(row.business_type);
+        }
+        const debit = entries.reduce((s, r) => s + num(r.debit), 0);
+        const credit = entries.reduce((s, r) => s + num(r.credit), 0);
+        expect(money(debit)).toBe(money(credit));
+        expect(money(debit)).toBe(money(num(recorded[0].disallowed)));
+        expect(await ledgerDifference()).toBe(0);
+      });
+
+      it('charges it to the line whose inputs it was', async () => {
+        const { rows } = await query(
+          `SELECT DISTINCT e.business_type
+             FROM ledger_entries e
+             JOIN tax_apportionments a ON a.id = e.reference_id
+            WHERE e.org_id = $1 AND e.reference_type = 'tax_apportionments'
+              AND a.period_from = $2`,
+          [orgId, period.from]
+        );
+
+        // The tax was paid buying dealer stock, so the cost belongs to the
+        // dealer line. Charging it against both would move profit from a line
+        // that never incurred it.
+        expect(rows.map((r) => r.business_type)).toEqual(['DEALER']);
+      });
+    });
+
     it('will not let a role without the permission journal it', async () => {
       const { rows } = await query(
         `SELECT u.username FROM users u

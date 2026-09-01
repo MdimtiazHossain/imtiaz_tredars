@@ -436,28 +436,39 @@ export async function postApportionment(client, { orgId, user, actor, from, to }
 
   // Nothing to journal where every supply earned its credit, which is the
   // ordinary case for a business making one kind of supply.
+  //
+  // Written per business line rather than as one entry for the organisation:
+  // the cost belongs to the line whose inputs incurred it, and `business_type`
+  // has no value meaning both. Saying 'ALL' failed on the enum, which no test
+  // caught because every one of them journalled a period with nothing in it.
   if (worked.disallowed > 0) {
-    const shared = {
-      orgId,
-      entryDate: to,
-      businessType: 'ALL',
-      narration: `Input VAT not claimable for ${from} to ${to}`,
-      referenceType: 'tax_apportionments',
-      referenceId: apportionmentId,
-      userId: user.id,
-    };
-    await writeLedger(client, {
-      ...shared,
-      coaId: await ledgerAccount(client, orgId, LEDGER.IRRECOVERABLE_VAT),
-      debit: worked.disallowed,
-      credit: 0,
-    });
-    await writeLedger(client, {
-      ...shared,
-      coaId: await ledgerAccount(client, orgId, LEDGER.INPUT_VAT),
-      debit: 0,
-      credit: worked.disallowed,
-    });
+    const irrecoverable = await ledgerAccount(client, orgId, LEDGER.IRRECOVERABLE_VAT);
+    const inputVat = await ledgerAccount(client, orgId, LEDGER.INPUT_VAT);
+
+    for (const line of worked.lines) {
+      if (!(line.disallowed > 0)) continue;
+      const shared = {
+        orgId,
+        entryDate: to,
+        businessType: line.businessType,
+        narration: `Input VAT not claimable for ${from} to ${to}`,
+        referenceType: 'tax_apportionments',
+        referenceId: apportionmentId,
+        userId: user.id,
+      };
+      await writeLedger(client, {
+        ...shared,
+        coaId: irrecoverable,
+        debit: line.disallowed,
+        credit: 0,
+      });
+      await writeLedger(client, {
+        ...shared,
+        coaId: inputVat,
+        debit: 0,
+        credit: line.disallowed,
+      });
+    }
   }
 
   await writeAudit(client, {
