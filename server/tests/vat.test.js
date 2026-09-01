@@ -148,6 +148,26 @@ suite('vat', () => {
     expect(standard.kind).toBe('STANDARD');
   });
 
+  it('gives a credit only where a credit is actually given', async () => {
+    const by = (code) => rates.find((r) => r.code === code);
+
+    // The standard rate carries its input credit, and so does zero-rating --
+    // that is the whole difference between zero-rating an export and exempting
+    // a supply, and an exporter who lost it would be out of pocket.
+    expect(by('VAT15').isReclaimable).toBe(true);
+    expect(by('ZERO').isReclaimable).toBe(true);
+
+    // The truncated rates do not. Charging less than 15% is the settlement,
+    // and the credit is what is given up for it; claiming both is claiming
+    // twice, and the return would ask the NBR for money it does not owe.
+    for (const code of ['VAT10', 'VAT7.5', 'VAT5']) {
+      expect(by(code).isReclaimable, code).toBe(false);
+    }
+
+    // An exempt supply never had any to give.
+    expect(by('EXEMPT').isReclaimable).toBe(false);
+  });
+
   it('has exactly one default, and moving it releases the last', async () => {
     const before = rates.filter((r) => r.isDefault);
     expect(before).toHaveLength(1);

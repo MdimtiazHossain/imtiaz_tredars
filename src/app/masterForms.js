@@ -395,7 +395,14 @@ export function fieldsFor(kind, form, data, on, row) {
         // made rather than offered.
         value: form.kind === 'EXEMPT' ? 'no' : form.isReclaimable ? 'yes' : 'no',
         onChange: on('isReclaimable'),
-        hint: form.kind === 'EXEMPT' ? 'Exempt supplies never reclaim' : '',
+        // A truncated rate is a settlement -- less than 15% charged, and the
+        // credit given up with it -- so the choice is offered but said out
+        // loud, because ticking it claims a rebate the NBR does not owe.
+        hint: form.kind === 'EXEMPT'
+          ? 'Exempt supplies never reclaim'
+          : form.kind === 'REDUCED'
+            ? 'A truncated rate is normally given in exchange for the credit'
+            : '',
       }),
       field('isDefault', 'Default rate', {
         options: [

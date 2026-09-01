@@ -387,14 +387,19 @@ export async function installChartOfAccounts(client, orgId) {
  * and exempt, whose are not. They are ordinary master data: rename them,
  * change them, add the one a new trade uses.
  *
+ * Only the standard and zero rates carry an input credit. A truncated rate is
+ * a settlement -- the trade charges less than 15% and gives up the credit that
+ * would otherwise come with it -- so tax paid at one of them is part of what
+ * the goods cost rather than something to claim back.
+ *
  * A business that is not VAT-registered charges at none of them, which is the
  * default; registering is a settings change rather than a migration.
  */
 export const TAX_RATES = [
   ['VAT15', 'VAT 15%', 'মূসক ১৫%', 'STANDARD', 15, true, true],
-  ['VAT10', 'VAT 10% truncated', 'মূসক ১০%', 'REDUCED', 10, true, false],
-  ['VAT7.5', 'VAT 7.5% truncated', 'মূসক ৭.৫%', 'REDUCED', 7.5, true, false],
-  ['VAT5', 'VAT 5% truncated', 'মূসক ৫%', 'REDUCED', 5, true, false],
+  ['VAT10', 'VAT 10% truncated', 'মূসক ১০%', 'REDUCED', 10, false, false],
+  ['VAT7.5', 'VAT 7.5% truncated', 'মূসক ৭.৫%', 'REDUCED', 7.5, false, false],
+  ['VAT5', 'VAT 5% truncated', 'মূসক ৫%', 'REDUCED', 5, false, false],
   ['ZERO', 'Zero-rated', 'শূন্য হার', 'ZERO', 0, true, false],
   ['EXEMPT', 'Exempt', 'অব্যাহতিপ্রাপ্ত', 'EXEMPT', 0, false, false],
 ];

@@ -3052,7 +3052,7 @@ describe('vat', () => {
     },
     {
       id: 4, code: 'VAT5', name: 'VAT 5% truncated', nameBn: '', kind: 'REDUCED',
-      rate: 5, isReclaimable: true, isDefault: false, active: true, status: 'Active',
+      rate: 5, isReclaimable: false, isDefault: false, active: true, status: 'Active',
       products: 0, crops: 0,
     },
     {
@@ -3198,6 +3198,20 @@ describe('vat', () => {
     expect(sent.body.rate).toBe(0);
     // The NBR does not repay it, so the form cannot claim it will.
     expect(sent.body.isReclaimable).toBe(false);
+  });
+
+  it('warns that a truncated rate is given in exchange for the credit', async () => {
+    const { app } = await openSettingsOn('tax', serving());
+    app.openMaster('taxRate');
+    app.onMasterField('kind')({ target: { value: 'REDUCED' } });
+    app.renderNow();
+
+    const field = app.renderVals().modal.fields.find((f) => f.key === 'isReclaimable');
+    // Offered, not decided -- a trade can be on a truncated rate and still
+    // hold a credit -- but somebody ticking it should know what they are
+    // claiming.
+    expect(field.hint).toContain('in exchange for the credit');
+    expect(field.options.map((o) => o.value)).toEqual(['yes', 'no']);
   });
 
   /* ------------------------------------------------------- what a sale says */
