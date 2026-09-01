@@ -25,7 +25,9 @@ async function signIn(roleCode) {
     `SELECT u.username FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
-      WHERE r.code = $1 LIMIT 1`,
+      -- Oldest first, so this finds the seeded holder of the role rather than
+      -- one an earlier test created with a password of its own.
+      WHERE r.code = $1 ORDER BY u.id LIMIT 1`,
     [roleCode]
   );
   if (!rows.length) return null;

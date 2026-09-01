@@ -1,6 +1,10 @@
 import { query, num } from '../lib/db.js';
 import { col, dateAndBusiness, entityFilters } from './reportHelpers.js';
 import { profitAndLoss } from '../services/statementService.js';
+import { apportionment } from '../services/taxService.js';
+
+/** A ratio as a percentage, for a line somebody reads rather than sums. */
+const percent = (n) => `${(n * 100).toFixed(n * 100 % 1 === 0 ? 0 : 2)}%`;
 
 /**
  * The rest of the Reports Centre.
@@ -615,11 +619,44 @@ export const MORE_REPORTS = {
         return { taxable: num(rows[0].taxable), tax: num(rows[0].tax) };
       };
 
-      const [output, input] = await Promise.all([
+      const [output, input, split] = await Promise.all([
         read('v_output_tax', 'tax_amount'),
         read('v_input_tax', 'reclaimable_tax'),
+        // And how much of that input tax the period's supplies actually earned
+        // the right to. A credit is earned by supplying inside the VAT chain,
+        // so a month that sold exempt produce earned less than all of it.
+        apportionment(null, { orgId: req.orgId, from: q.from, to: q.to }),
       ]);
-      const payable = Math.round((output.tax - input.tax) * 100) / 100;
+      const claimed = split.claimable;
+      const payable = Math.round((output.tax - claimed) * 100) / 100;
+
+      const rows = [
+        { line: 'Output tax — sales, less sale returns', taxable: output.taxable, tax: output.tax },
+        {
+          line: 'Input tax — purchases, less purchase returns',
+          taxable: input.taxable,
+          tax: -input.tax,
+        },
+      ];
+
+      // Shown only where it bites. A business making one kind of supply claims
+      // all of its input tax, and a line reading nothing every month is a line
+      // that stops being read.
+      if (split.disallowed !== 0) {
+        rows.push({
+          line:
+            'Less: not claimable — inputs used for exempt or truncated supply ' +
+            `(${percent(1 - split.ratio)} of the claim)`,
+          taxable: split.totalSupplies - split.creditableSupplies,
+          tax: split.disallowed,
+        });
+      }
+
+      rows.push({
+        line: payable >= 0 ? 'Payable to the NBR' : 'Reclaimable from the NBR',
+        taxable: null,
+        tax: Math.abs(payable),
+      });
 
       return {
         columns: [
@@ -627,22 +664,15 @@ export const MORE_REPORTS = {
           col('taxable', 'Value', 'money'),
           col('tax', 'VAT', 'money'),
         ],
-        rows: [
-          { line: 'Output tax — sales, less sale returns', taxable: output.taxable, tax: output.tax },
-          {
-            line: 'Input tax — purchases, less purchase returns',
-            taxable: input.taxable,
-            tax: -input.tax,
-          },
-          {
-            line: payable >= 0 ? 'Payable to the NBR' : 'Reclaimable from the NBR',
-            taxable: null,
-            tax: Math.abs(payable),
-          },
-        ],
+        rows,
         totals: {
           outputTax: output.tax,
-          inputTax: input.tax,
+          // What may actually be claimed, which is what the books have to show
+          // once the period's apportionment has been journalled.
+          inputTax: claimed,
+          inputTaxBeforeApportionment: input.tax,
+          creditRatio: split.ratio,
+          disallowedInputTax: split.disallowed,
           // Signed: negative is a rebate the business is owed, which happens in
           // any month it buys more than it sells.
           netPayable: payable,

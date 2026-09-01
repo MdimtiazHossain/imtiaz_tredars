@@ -33,7 +33,7 @@ suite('posting integrity', () => {
       `SELECT u.id, u.org_id FROM users u
         JOIN user_roles ur ON ur.user_id = u.id
         JOIN roles r ON r.id = ur.role_id
-       WHERE r.code = 'Admin' LIMIT 1`
+       WHERE r.code = 'Admin' AND u.is_active ORDER BY u.id LIMIT 1`
     );
     if (!users.length) throw new Error('Seed the test database first: npm run db:seed');
 
@@ -612,7 +612,7 @@ suite('stock transfer', () => {
       `SELECT u.id, u.org_id FROM users u
         JOIN user_roles ur ON ur.user_id = u.id
         JOIN roles r ON r.id = ur.role_id
-       WHERE r.code = 'Admin' LIMIT 1`
+       WHERE r.code = 'Admin' AND u.is_active ORDER BY u.id LIMIT 1`
     );
     const orgId = Number(users[0].org_id);
     const [warehouses, supplier, crop, grade, unit] = await Promise.all([

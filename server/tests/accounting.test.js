@@ -53,7 +53,7 @@ suite('the books', () => {
       `SELECT u.username FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-        WHERE r.code = 'Admin' LIMIT 1`
+        WHERE r.code = 'Admin' AND u.is_active ORDER BY u.id LIMIT 1`
     );
     const res = await request(app)
       .post('/api/auth/login')
@@ -330,7 +330,7 @@ suite('the books', () => {
       `SELECT u.username FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-        WHERE r.code = 'Sales' LIMIT 1`
+        WHERE r.code = 'Sales' AND u.is_active ORDER BY u.id LIMIT 1`
     );
     if (!rows.length) return;
     const sales = await request(app)

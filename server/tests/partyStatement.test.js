@@ -48,7 +48,7 @@ suite('party statement', () => {
       `SELECT u.username FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-        WHERE r.code = 'Admin' LIMIT 1`
+        WHERE r.code = 'Admin' AND u.is_active ORDER BY u.id LIMIT 1`
     );
     const res = await request(app)
       .post('/api/auth/login')
@@ -298,7 +298,7 @@ suite('party statement', () => {
       `SELECT u.username FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-        WHERE r.code = 'Warehouse' LIMIT 1`
+        WHERE r.code = 'Warehouse' AND u.is_active ORDER BY u.id LIMIT 1`
     );
     if (!rows.length) return;
     const login = await request(app)

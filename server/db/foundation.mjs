@@ -352,6 +352,10 @@ export const CHART_OF_ACCOUNTS = [
   ['5100', 'Cost of goods sold', 'EXPENSE', false],
   ['5200', 'Operating expenses', 'EXPENSE', false],
   ['5300', 'Selling expenses', 'EXPENSE', false],
+  // Input tax paid on goods that went into supplies outside the VAT chain. It
+  // will not be repaid, so it is a cost rather than the receivable it starts
+  // out looking like.
+  ['5400', 'Irrecoverable input VAT', 'EXPENSE', false],
 ];
 
 export async function installChartOfAccounts(client, orgId) {

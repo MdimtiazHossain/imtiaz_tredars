@@ -27,6 +27,7 @@ import {
 } from '../services/financeService.js';
 import { evaluateRules, requestApproval } from '../services/approvalService.js';
 import { partyStatement } from '../services/partyService.js';
+import { apportionment, postApportionment } from '../services/taxService.js';
 import { badRequest, notFound, forbidden } from '../lib/errors.js';
 import { registerMasterCrud } from './masterCrud.js';
 
@@ -869,5 +870,62 @@ function requirePartyPermission(req, partyType) {
     throw forbidden(`You do not have permission to view ${partyType.toLowerCase()} records.`);
   }
 }
+
+/* ------------------------------------------------------ input tax apportionment */
+
+const periodSchema = z.object({
+  from: z.string().date(),
+  to: z.string().date(),
+});
+
+/**
+ * What share of a period's input tax the business earned, without posting it.
+ *
+ * The figure the return is filed on, so it is readable before anybody commits
+ * the journal that makes the books agree with it.
+ */
+router.get(
+  '/tax/apportionment',
+  requirePermission('tax.view'),
+  handler(async (req, res) => {
+    const period = parseQuery(periodSchema, req);
+    const worked = await apportionment(null, { orgId: req.orgId, ...period });
+
+    const { rows } = await query(
+      `SELECT id, created_at FROM tax_apportionments
+        WHERE org_id = $1 AND period_from = $2 AND period_to = $3`,
+      [req.orgId, period.from, period.to]
+    );
+
+    ok(res, {
+      ...period,
+      ...worked,
+      // Whether the journal has already been written, so the screen can offer
+      // to post it or say that it was.
+      posted: rows.length > 0,
+      postedAt: rows.length ? rows[0].created_at : null,
+    });
+  })
+);
+
+/** Journal the part of a period's input tax that was not earned. */
+router.post(
+  '/tax/apportionment',
+  requirePermission('tax.edit'),
+  handler(async (req, res) => {
+    const period = parseBody(periodSchema, req);
+
+    const result = await withTransaction((client) =>
+      postApportionment(client, {
+        orgId: req.orgId,
+        user: req.user,
+        actor: req.actor,
+        ...period,
+      })
+    );
+
+    created(res, result);
+  })
+);
 
 export default router;

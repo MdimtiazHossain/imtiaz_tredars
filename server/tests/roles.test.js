@@ -25,7 +25,12 @@ async function usernameFor(roleCode) {
     `SELECT u.username FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
-      WHERE r.code = $1 AND u.is_active LIMIT 1`,
+      WHERE r.code = $1 AND u.is_active
+      -- Oldest first, so this finds the seeded holder of the role rather than
+      -- one a test created earlier with a password of its own. Without an
+      -- order the row was whichever the planner reached first, and the suite
+      -- failed on the runs where that was the test's own user.
+      ORDER BY u.id LIMIT 1`,
     [roleCode]
   );
   return rows[0]?.username || null;

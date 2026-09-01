@@ -1,5 +1,7 @@
 import { query, num } from '../lib/db.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, unprocessable } from '../lib/errors.js';
+import { writeLedger, ledgerAccount, LEDGER } from './financeService.js';
+import { writeAudit } from '../lib/audit.js';
 
 /**
  * VAT.
@@ -267,4 +269,205 @@ export async function taxDocument(client, { orgId, input, priced, table, itemIdO
     taxInclusive: inclusive,
     context,
   };
+}
+
+/* ------------------------------------------------------------ apportionment */
+
+/** The period clause both halves of the ratio are measured over. */
+function periodClause(params, { from, to }) {
+  let where = '';
+  if (from) {
+    params.push(from);
+    where += ` AND txn_date >= $${params.length}`;
+  }
+  if (to) {
+    params.push(to);
+    where += ` AND txn_date <= $${params.length}`;
+  }
+  return where;
+}
+
+/**
+ * How much of a period's input tax the business actually earned the right to.
+ *
+ * A credit is earned by making supplies inside the VAT chain, so a business
+ * making both kinds may not claim all of what it paid. The Act asks two
+ * questions in order, and the order is the whole of the difference:
+ *
+ *   1. What is this input attributable to? Input tax wholly used for taxable
+ *      supplies is claimed in full, and input tax wholly used for exempt ones
+ *      is not claimed at all. No ratio is involved in either.
+ *   2. Only what remains -- inputs serving both -- is apportioned, by turnover.
+ *
+ * Doing (2) alone, across the whole business, is the tempting mistake and an
+ * expensive one here. Every taka of this organisation's input tax arises on
+ * the dealer side, whose supplies are standard-rated; the crop side buys from
+ * farmers, which is exempt, and pays no input tax at all. But crop turnover is
+ * the larger part of the business, so a single turnover ratio would disallow
+ * most of a claim that was wholly and properly attributable to taxable supply.
+ *
+ * The business line a document belongs to is what attributes it: crop inputs
+ * make crop supplies and dealer inputs make dealer supplies. So each line is
+ * apportioned by its own supply mix, which is direct attribution between the
+ * lines and turnover apportionment within them.
+ *
+ * Measured on value rather than on tax, because an exempt supply charges no
+ * tax and would weigh nothing in a ratio built on tax -- the opposite of what
+ * it should do to a claim.
+ *
+ * The input tax here is what was already found claimable by its own rate: a
+ * truncated-rate purchase never enters the pool, and is not narrowed twice.
+ */
+export async function apportionment(client, { orgId, from, to }) {
+  const db = client || { query };
+
+  const supplyParams = [orgId];
+  const supplyWhere = periodClause(supplyParams, { from, to });
+  const { rows: supplies } = await db.query(
+    `SELECT business_type,
+            COALESCE(SUM(taxable_value), 0)    AS total,
+            COALESCE(SUM(creditable_value), 0) AS creditable
+       FROM v_output_tax WHERE org_id = $1${supplyWhere}
+      GROUP BY business_type`,
+    supplyParams
+  );
+
+  const inputParams = [orgId];
+  const inputWhere = periodClause(inputParams, { from, to });
+  const { rows: inputs } = await db.query(
+    `SELECT business_type, COALESCE(SUM(reclaimable_tax), 0) AS tax
+       FROM v_input_tax WHERE org_id = $1${inputWhere}
+      GROUP BY business_type`,
+    inputParams
+  );
+
+  const supplyOf = new Map(supplies.map((r) => [r.business_type, r]));
+  const businessTypes = new Set([
+    ...supplies.map((r) => r.business_type),
+    ...inputs.map((r) => r.business_type),
+  ]);
+
+  const lines = [];
+  for (const businessType of [...businessTypes].sort()) {
+    const supply = supplyOf.get(businessType);
+    const total = supply ? num(supply.total) : 0;
+    const creditable = supply ? num(supply.creditable) : 0;
+    const tax = num((inputs.find((r) => r.business_type === businessType) || {}).tax);
+
+    // A line that supplied nothing this period has no mix to be measured by.
+    // Withholding its claim on that basis would punish a business for buying
+    // in one month and selling in the next.
+    const ratio = total > 0 ? Math.min(1, Math.max(0, creditable / total)) : 1;
+    const claimable = paisa(tax * ratio);
+
+    lines.push({
+      businessType,
+      creditableSupplies: paisa(creditable),
+      totalSupplies: paisa(total),
+      ratio,
+      inputTax: paisa(tax),
+      claimable,
+      disallowed: paisa(tax - claimable),
+    });
+  }
+
+  const sum = (key) => paisa(lines.reduce((t, l) => t + l[key], 0));
+  const inputTax = sum('inputTax');
+  const claimable = sum('claimable');
+
+  return {
+    lines,
+    creditableSupplies: sum('creditableSupplies'),
+    totalSupplies: sum('totalSupplies'),
+    // What share of the claim survived, which is not the turnover ratio of any
+    // one line and is the only ratio the return is actually filed on.
+    ratio: inputTax > 0 ? claimable / inputTax : 1,
+    inputTax,
+    claimable,
+    disallowed: paisa(inputTax - claimable),
+  };
+}
+
+/**
+ * Journal a period's disallowed input tax, once.
+ *
+ * The claim is only known at the end of a period -- it depends on what was
+ * sold, which is not knowable when the input was bought -- so input VAT is
+ * posted in full as it arrives and the part that turns out not to have been
+ * earned is taken back out here. Until this runs the input VAT account stands
+ * above what the return may claim, which is the divergence this exists to
+ * close.
+ */
+export async function postApportionment(client, { orgId, user, actor, from, to }) {
+  const { rows: already } = await client.query(
+    `SELECT id FROM tax_apportionments
+      WHERE org_id = $1 AND period_from = $2 AND period_to = $3`,
+    [orgId, from, to]
+  );
+  if (already.length) {
+    throw unprocessable(
+      'ALREADY_APPORTIONED',
+      'This period has already been apportioned. A period is adjusted once.'
+    );
+  }
+
+  const worked = await apportionment(client, { orgId, from, to });
+
+  const { rows } = await client.query(
+    `INSERT INTO tax_apportionments
+       (org_id, period_from, period_to, creditable_supplies, total_supplies,
+        credit_ratio, input_tax, claimable, disallowed, posted_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     RETURNING id`,
+    [
+      orgId,
+      from,
+      to,
+      worked.creditableSupplies,
+      worked.totalSupplies,
+      worked.ratio,
+      worked.inputTax,
+      worked.claimable,
+      worked.disallowed,
+      user.id,
+    ]
+  );
+  const apportionmentId = Number(rows[0].id);
+
+  // Nothing to journal where every supply earned its credit, which is the
+  // ordinary case for a business making one kind of supply.
+  if (worked.disallowed > 0) {
+    const shared = {
+      orgId,
+      entryDate: to,
+      businessType: 'ALL',
+      narration: `Input VAT not claimable for ${from} to ${to}`,
+      referenceType: 'tax_apportionments',
+      referenceId: apportionmentId,
+      userId: user.id,
+    };
+    await writeLedger(client, {
+      ...shared,
+      coaId: await ledgerAccount(client, orgId, LEDGER.IRRECOVERABLE_VAT),
+      debit: worked.disallowed,
+      credit: 0,
+    });
+    await writeLedger(client, {
+      ...shared,
+      coaId: await ledgerAccount(client, orgId, LEDGER.INPUT_VAT),
+      debit: 0,
+      credit: worked.disallowed,
+    });
+  }
+
+  await writeAudit(client, {
+    actor,
+    entityType: 'tax_apportionments',
+    entityId: apportionmentId,
+    action: 'CREATE',
+    newValue: worked,
+    summary: `Input tax apportioned for ${from} to ${to} at ${(worked.ratio * 100).toFixed(2)}%`,
+  });
+
+  return { id: apportionmentId, periodFrom: from, periodTo: to, ...worked };
 }

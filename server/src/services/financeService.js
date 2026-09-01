@@ -55,6 +55,9 @@ export const LEDGER = {
   CROP_SALES: '4200',
   SALES_RETURNS: '4900',
   COST_OF_SALES: '5100',
+  // Input tax the business paid and cannot claim, because it went into making
+  // supplies that sit outside the VAT chain. A cost, not a receivable.
+  IRRECOVERABLE_VAT: '5400',
   OPERATING_EXPENSE: '5200',
   SELLING_EXPENSE: '5300',
 };

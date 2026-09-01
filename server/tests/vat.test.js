@@ -94,7 +94,7 @@ suite('vat', () => {
       `SELECT u.username FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-        WHERE r.code = 'Admin' LIMIT 1`
+        WHERE r.code = 'Admin' AND u.is_active ORDER BY u.id LIMIT 1`
     );
     const res = await request(app)
       .post('/api/auth/login')
@@ -123,16 +123,22 @@ suite('vat', () => {
   });
 
   afterAll(async () => {
-    await query(
-      `UPDATE organizations SET is_vat_registered = false,
-              sale_prices_include_tax = false, purchase_prices_include_tax = false
-        WHERE id = $1`,
-      [orgId]
-    );
-    if (context?.productId) {
-      await query('UPDATE products SET tax_rate_id = NULL WHERE id = $1', [context.productId]);
+    // First and unconditionally: every other suite in the run assumes an
+    // unregistered business, and a registered one silently adds 15% to
+    // everything they post.
+    try {
+      await query(
+        `UPDATE organizations SET is_vat_registered = false,
+                sale_prices_include_tax = false, purchase_prices_include_tax = false
+          WHERE id = $1`,
+        [orgId]
+      );
+      if (context?.productId) {
+        await query('UPDATE products SET tax_rate_id = NULL WHERE id = $1', [context.productId]);
+      }
+    } finally {
+      await closePool();
     }
-    await closePool();
   });
 
   /* --------------------------------------------------------------- the rates */
@@ -571,14 +577,26 @@ suite('vat', () => {
 
   it('agrees with the accounts it was posted to', async () => {
     const res = await request(app).get('/api/reports/vat-return').set(auth());
-    const { outputTax, inputTax } = res.body.data.totals;
+    const { outputTax, inputTaxBeforeApportionment } = res.body.data.totals;
 
     // The return reads the documents and the trial balance reads the journal.
     // If those two disagree, one of them is not what was filed -- and the
     // claim is only ever for tax that actually reached the input account,
     // never for tax that went into the cost of the goods.
     expect(money(outputTax)).toBe(await balanceOf(LEDGER.OUTPUT_VAT));
-    expect(money(inputTax)).toBe(await balanceOf(LEDGER.INPUT_VAT));
+
+    // Apportionment is the one thing that legitimately separates them, and
+    // only until it is journalled: input tax is posted in full as it arrives,
+    // because what share of it was earned is not knowable until the period's
+    // sales are in. Whatever has been adjusted is out of the account.
+    const { rows } = await query(
+      'SELECT COALESCE(SUM(disallowed), 0) AS d FROM tax_apportionments WHERE org_id = $1',
+      [orgId]
+    );
+    const journalled = money(num(rows[0].d));
+    expect(money(inputTaxBeforeApportionment - journalled)).toBe(
+      await balanceOf(LEDGER.INPUT_VAT)
+    );
   });
 
   it('does not claim back tax that was never reclaimable', async () => {
@@ -592,7 +610,9 @@ suite('vat', () => {
     expect(paid).toBeGreaterThan(claimable);
 
     const ret = await request(app).get('/api/reports/vat-return').set(auth());
-    expect(money(ret.body.data.totals.inputTax)).toBe(claimable);
+    // Before apportionment narrows it further: this test is about the rate's
+    // own credit, and the two narrowings are separate questions.
+    expect(money(ret.body.data.totals.inputTaxBeforeApportionment)).toBe(claimable);
   });
 
   it('lists every supply made, with the buyer and their BIN', async () => {
@@ -642,7 +662,7 @@ suite('vat', () => {
       `SELECT u.username FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-        WHERE r.code = 'Warehouse' LIMIT 1`
+        WHERE r.code = 'Warehouse' AND u.is_active ORDER BY u.id LIMIT 1`
     );
     if (!rows.length) return;
     const login = await request(app)
@@ -661,17 +681,232 @@ suite('vat', () => {
   it('charges nothing at all while the business is unregistered', async () => {
     await chargeProductAt(context.productId, 'VAT15');
     await query('UPDATE organizations SET is_vat_registered = false WHERE id = $1', [orgId]);
-    await buy({ quantity: 10, rate: 1000 });
 
-    const before = await balanceOf(LEDGER.OUTPUT_VAT);
-    const sale = await sell({ quantity: 5, rate: 1000 });
-    await query('UPDATE organizations SET is_vat_registered = true WHERE id = $1', [orgId]);
+    // Registration is org-wide and the suites share the database, so it goes
+    // back on the way out whatever happens in between. A buy that runs out of
+    // stock used to leave the flag as this test set it, and every suite that
+    // ran afterwards was reading a different business from the one it meant.
+    let before;
+    let sale;
+    try {
+      await buy({ quantity: 10, rate: 1000 });
+      before = await balanceOf(LEDGER.OUTPUT_VAT);
+      sale = await sell({ quantity: 5, rate: 1000 });
+    } finally {
+      await query('UPDATE organizations SET is_vat_registered = true WHERE id = $1', [orgId]);
+    }
 
     // The rates still exist; nothing charges at them. Every document reads
     // exactly as it did before VAT was modelled.
     expect(money(sale.totals.tax)).toBe(0);
     expect(money(sale.totals.total)).toBe(money(sale.totals.net));
     expect(await balanceOf(LEDGER.OUTPUT_VAT)).toBe(before);
+  });
+
+  /* ------------------------------------------------ input tax apportionment */
+
+  describe('claiming input tax in the proportion it was earned', () => {
+    /**
+     * A credit is earned by making supplies inside the VAT chain. This
+     * business makes both kinds -- dealer goods at the standard rate, crop
+     * produce exempt -- so only part of what it pays on its inputs was ever
+     * its to claim, whatever rate it paid at.
+     *
+     * The rate test and this one are separate narrowings and both apply: a
+     * truncated-rate purchase never enters the pool at all, and what is left
+     * is then apportioned by what the period actually supplied.
+     */
+    const apportion = (period) =>
+      request(app).get('/api/tax/apportionment').query(period).set(auth());
+
+    const vatReturn = (period) =>
+      request(app).get('/api/reports/vat-return').query(period || {}).set(auth());
+
+    it('measures the share on value, not on tax', async () => {
+      const period = { from: today(), to: today() };
+      const before = (await apportion(period)).body.data;
+
+      // An exempt supply charges no tax at all. On a ratio built from tax it
+      // would weigh nothing and the claim would come out whole, which is the
+      // opposite of what an exempt supply should do to it.
+      const exempt = rates.find((r) => r.code === 'EXEMPT');
+      await chargeProductAt(context.productId, 'VAT15');
+      await buy({ quantity: 200, rate: 100 });
+      await sell({ quantity: 40, rate: 100 });
+
+      await query('UPDATE products SET tax_rate_id = $1 WHERE id = $2', [
+        exempt.id,
+        context.productId,
+      ]);
+      await sell({ quantity: 60, rate: 100 });
+
+      const after = (await apportion(period)).body.data;
+      // 4,000 of standard supply and 6,000 of exempt: the total grows by all
+      // 10,000 and the creditable part by only the 4,000.
+      expect(money(after.totalSupplies - before.totalSupplies)).toBe(10000);
+      expect(money(after.creditableSupplies - before.creditableSupplies)).toBe(4000);
+      expect(after.ratio).toBeLessThan(1);
+    });
+
+    it('claims that share of the input tax and disallows the rest', async () => {
+      const worked = (await apportion({ from: today(), to: today() })).body.data;
+
+      expect(money(worked.claimable + worked.disallowed)).toBe(money(worked.inputTax));
+      for (const line of worked.lines) {
+        expect(money(line.claimable), line.businessType).toBe(
+          money(line.inputTax * line.ratio)
+        );
+        if (line.totalSupplies > 0) {
+          expect(line.ratio, line.businessType).toBeCloseTo(
+            line.creditableSupplies / line.totalSupplies,
+            9
+          );
+        } else {
+          // Nothing supplied is not the same as nothing creditable.
+          expect(line.ratio, line.businessType).toBe(1);
+        }
+      }
+      expect(worked.ratio).toBeCloseTo(worked.claimable / worked.inputTax, 9);
+    });
+
+    it('attributes each line input tax to that line own supplies', async () => {
+      const period = { from: today(), to: today() };
+      const worked = (await apportion(period)).body.data;
+
+      // The crop side sells exempt produce and buys it from farmers, which is
+      // exempt too, so it pays almost no input tax while being much the larger
+      // part of turnover. The dealer side pays the input tax and sells at the
+      // standard rate. One ratio across the whole business would disallow most
+      // of a claim that was wholly and properly attributable to taxable
+      // supply, so each line is measured against what it itself supplied.
+      const { rows } = await query(
+        `SELECT business_type,
+                COALESCE(SUM(taxable_value), 0)    AS total,
+                COALESCE(SUM(creditable_value), 0) AS creditable
+           FROM v_output_tax
+          WHERE org_id = $1 AND txn_date >= $2 AND txn_date <= $3
+          GROUP BY business_type`,
+        [orgId, period.from, period.to]
+      );
+
+      for (const row of rows) {
+        const line = worked.lines.find((l) => l.businessType === row.business_type);
+        if (!line) continue;
+        expect(money(line.totalSupplies), row.business_type).toBe(money(num(row.total)));
+        expect(money(line.creditableSupplies), row.business_type).toBe(
+          money(num(row.creditable))
+        );
+      }
+
+      // And the whole is the sum of the parts rather than a figure of its own.
+      expect(money(worked.inputTax)).toBe(
+        money(worked.lines.reduce((t, l) => t + l.inputTax, 0))
+      );
+      expect(money(worked.claimable)).toBe(
+        money(worked.lines.reduce((t, l) => t + l.claimable, 0))
+      );
+    });
+
+    it('shows what was withheld on the return, and why', async () => {
+      const period = { from: today(), to: today() };
+      const res = await vatReturn(period);
+      const worked = (await apportion(period)).body.data;
+
+      const withheld = res.body.data.rows.find((r) => r.line.startsWith('Less: not claimable'));
+      expect(withheld, 'the return should say what it withheld').toBeTruthy();
+      expect(money(withheld.tax)).toBe(money(worked.disallowed));
+      // Named by the reason rather than left as a bare adjustment.
+      expect(withheld.line).toContain('exempt');
+      expect(res.body.data.totals.netPayable).toBe(
+        money(res.body.data.totals.outputTax - worked.claimable)
+      );
+    });
+
+    it('claims in full when every supply earned its credit', async () => {
+      // A period the business had not started trading in. No supplies means no
+      // ratio to be measured by, and withholding the whole claim on that basis
+      // would be arbitrary rather than cautious.
+      const worked = (await apportion({ from: '2019-01-01', to: '2019-01-31' })).body.data;
+      expect(worked.totalSupplies).toBe(0);
+      expect(worked.ratio).toBe(1);
+      expect(worked.disallowed).toBe(0);
+    });
+
+    /* ------------------------------------------------- journalling the share */
+
+    it('records the period and journals nothing when nothing was withheld', async () => {
+      const period = { from: '2019-02-01', to: '2019-02-28' };
+      const before = await balanceOf(LEDGER.IRRECOVERABLE_VAT);
+
+      const res = await request(app).post('/api/tax/apportionment').set(auth()).send(period);
+      // A quiet period still gets a record, because the record is what says the
+      // period was dealt with rather than forgotten.
+      if (res.status === 201) {
+        expect(res.body.data.disallowed).toBe(0);
+        expect(await balanceOf(LEDGER.IRRECOVERABLE_VAT)).toBe(before);
+      } else {
+        expect(res.body.error.code).toBe('ALREADY_APPORTIONED');
+      }
+
+      const { rows } = await query(
+        'SELECT id FROM tax_apportionments WHERE org_id = $1 AND period_from = $2',
+        [orgId, period.from]
+      );
+      expect(rows).toHaveLength(1);
+    });
+
+    it('adjusts a period once and refuses to do it twice', async () => {
+      const period = { from: '2019-03-01', to: '2019-03-31' };
+      await request(app).post('/api/tax/apportionment').set(auth()).send(period);
+
+      const again = await request(app).post('/api/tax/apportionment').set(auth()).send(period);
+      // Posting it twice would journal the same adjustment twice, and the
+      // ledger cannot take an entry back.
+      expect(again.status).toBe(422);
+      expect(again.body.error.code).toBe('ALREADY_APPORTIONED');
+    });
+
+    it('will not let a role without the permission journal it', async () => {
+      const { rows } = await query(
+        `SELECT u.username FROM users u
+           JOIN user_roles ur ON ur.user_id = u.id
+           JOIN roles r ON r.id = ur.role_id
+          WHERE r.code = 'Sales' AND u.is_active ORDER BY u.id LIMIT 1`
+      );
+      if (!rows.length) return;
+      const login = await request(app)
+        .post('/api/auth/login')
+        .send({ username: rows[0].username, password: PASSWORD });
+      const salesToken = login.body.data && login.body.data.accessToken;
+      if (!salesToken) return;
+
+      // Sales raises invoices; filing the return is the Accounts desk's job,
+      // and this posts to the ledger.
+      const res = await request(app)
+        .post('/api/tax/apportionment')
+        .set({ authorization: `Bearer ${salesToken}` })
+        .send({ from: '2019-04-01', to: '2019-04-30' });
+      expect(res.status).toBe(403);
+    });
+
+    it('takes the disallowed tax out of the receivable and into cost', async () => {
+      const period = { from: '2019-05-01', to: '2019-05-31' };
+      // Nothing was traded then, so this asserts the shape of the posting
+      // rather than a figure that moves with the seed.
+      const res = await request(app).post('/api/tax/apportionment').set(auth()).send(period);
+      if (res.status !== 201) return;
+
+      const { rows } = await query(
+        `SELECT COUNT(*) AS n FROM ledger_entries
+          WHERE org_id = $1 AND reference_type = 'tax_apportionments'
+            AND reference_id = $2`,
+        [orgId, res.body.data.id]
+      );
+      // No disallowed tax, no journal: an entry pair for nothing would be
+      // noise in the ledger for every quiet month.
+      expect(Number(rows[0].n)).toBe(0);
+      expect(await ledgerDifference()).toBe(0);
+    });
   });
 
   /* ------------------------------------- the sales side, at a truncated rate */
@@ -719,7 +954,7 @@ suite('vat', () => {
 
     afterAll(async () => {
       await query('UPDATE products SET tax_rate_id = NULL WHERE id = $1', [context.productId]);
-      await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [truncated]);
+      if (truncated) await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [truncated]);
     });
 
     it('charges the truncated rate and owes every taka of it', async () => {
@@ -813,7 +1048,7 @@ suite('vat', () => {
 
     afterAll(async () => {
       await query('UPDATE products SET tax_rate_id = NULL WHERE id = $1', [context.productId]);
-      await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [truncated]);
+      if (truncated) await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [truncated]);
     });
 
     it('lists what was paid on the register and claims none of it', async () => {
@@ -967,8 +1202,13 @@ suite('vat', () => {
     });
 
     afterAll(async () => {
-      await query('UPDATE crops SET tax_rate_id = $1 WHERE id = $2', [previousCropRate, cropId]);
-      await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [rateId]);
+      // Guarded: if this describe's beforeAll failed there is nothing to put
+      // back, and throwing here would skip the outer restore that switches
+      // registration off for every other suite.
+      if (cropId) {
+        await query('UPDATE crops SET tax_rate_id = $1 WHERE id = $2', [previousCropRate, cropId]);
+      }
+      if (rateId) await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [rateId]);
     });
 
     it('puts it on the batch rather than in a rebate that will never be paid', async () => {
