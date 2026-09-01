@@ -674,6 +674,139 @@ suite('vat', () => {
     expect(await balanceOf(LEDGER.OUTPUT_VAT)).toBe(before);
   });
 
+  /* --------------------------------------- the return, at a truncated rate */
+
+  describe('the VAT return when a rate carries no credit', () => {
+    /**
+     * A truncated rate is charged and paid like any other, so it belongs on
+     * the purchase register -- a Mushak 6.1 lists what was paid. It is not a
+     * rebate, so it must not reach the return. The two reports read the same
+     * view and have to disagree about this one column on purpose.
+     */
+    const report = (id, filters = {}) =>
+      request(app)
+        .get(`/api/reports/${id}`)
+        .query({ from: today(), to: today(), ...filters })
+        .set(auth());
+
+    let truncated;
+
+    beforeAll(async () => {
+      const { rows } = await query(
+        `INSERT INTO tax_rates (org_id, code, name, kind, rate, is_reclaimable, is_default, is_active)
+         VALUES ($1, 'TRUNC-RPT', 'Truncated for the report', 'REDUCED', 10.0, false, false, true)
+         ON CONFLICT (org_id, code) DO UPDATE SET is_active = true, is_reclaimable = false
+         RETURNING id`,
+        [orgId]
+      );
+      truncated = Number(rows[0].id);
+    });
+
+    afterAll(async () => {
+      await query('UPDATE products SET tax_rate_id = NULL WHERE id = $1', [context.productId]);
+      await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [truncated]);
+    });
+
+    it('lists what was paid on the register and claims none of it', async () => {
+      await query('UPDATE products SET tax_rate_id = $1 WHERE id = $2', [
+        truncated,
+        context.productId,
+      ]);
+
+      const before = (await report('vat-purchase-register')).body.data.totals;
+      const beforeReturn = (await report('vat-return')).body.data.rows;
+      const inputBefore = beforeReturn.find((r) => r.line.startsWith('Input tax')).tax;
+
+      await buy({ quantity: 100, rate: 100 });
+
+      const register = (await report('vat-purchase-register')).body.data;
+      const paid = money(register.totals.tax - before.tax);
+      const claimed = money(register.totals.reclaimable - before.reclaimable);
+
+      // 10,000 of goods at 10% was paid, and none of it may be claimed.
+      expect(paid).toBe(1000);
+      expect(claimed).toBe(0);
+
+      // The return therefore does not move. What was paid went into the cost
+      // of the goods; asking the NBR for it would be asking twice.
+      const after = (await report('vat-return')).body.data.rows;
+      expect(money(after.find((r) => r.line.startsWith('Input tax')).tax)).toBe(
+        money(inputBefore)
+      );
+    });
+
+    it('gives back no rebate on returning goods that never earned one', async () => {
+      await query('UPDATE products SET tax_rate_id = $1 WHERE id = $2', [
+        truncated,
+        context.productId,
+      ]);
+
+      const purchase = await buy({ quantity: 50, rate: 100 });
+      const returnable = (
+        await request(app).get(`/api/returnable/dealer_purchases/${purchase.id}`).set(auth())
+      ).body.data;
+
+      const inputBefore = (await report('vat-return')).body.data.rows
+        .find((r) => r.line.startsWith('Input tax')).tax;
+
+      const res = await request(app)
+        .post('/api/returns')
+        .set(auth())
+        .send({
+          txnDate: today(),
+          sourceType: 'dealer_purchases',
+          sourceId: purchase.id,
+          reason: 'Short-dated stock sent back',
+          lines: [{ sourceItemId: returnable.lines[0].sourceItemId, quantity: 50 }],
+          action: 'POST',
+        });
+      expect(res.status, JSON.stringify(res.body.error)).toBe(201);
+
+      // Sending the goods back gives back the tax that was claimed on them,
+      // and nothing was. A return that credits the whole 500 would make the
+      // period's input tax negative by tax the business never reclaimed.
+      const inputAfter = (await report('vat-return')).body.data.rows
+        .find((r) => r.line.startsWith('Input tax')).tax;
+      expect(money(inputAfter)).toBe(money(inputBefore));
+    });
+
+    it('still gives back the whole rebate when the rate carried one', async () => {
+      const standard = rates.find((r) => r.code === 'VAT15');
+      await query('UPDATE products SET tax_rate_id = $1 WHERE id = $2', [
+        standard.id,
+        context.productId,
+      ]);
+
+      const purchase = await buy({ quantity: 50, rate: 100 });
+      const returnable = (
+        await request(app).get(`/api/returnable/dealer_purchases/${purchase.id}`).set(auth())
+      ).body.data;
+
+      const inputBefore = (await report('vat-return')).body.data.rows
+        .find((r) => r.line.startsWith('Input tax')).tax;
+
+      const res = await request(app)
+        .post('/api/returns')
+        .set(auth())
+        .send({
+          txnDate: today(),
+          sourceType: 'dealer_purchases',
+          sourceId: purchase.id,
+          reason: 'Wrong pack size delivered',
+          lines: [{ sourceItemId: returnable.lines[0].sourceItemId, quantity: 50 }],
+          action: 'POST',
+        });
+      expect(res.status, JSON.stringify(res.body.error)).toBe(201);
+
+      // 5,000 of goods at 15% was claimed, so sending all of it back gives the
+      // whole 750 up again. Narrowing what a return credits must not narrow
+      // this one.
+      const inputAfter = (await report('vat-return')).body.data.rows
+        .find((r) => r.line.startsWith('Input tax')).tax;
+      expect(money(inputAfter - inputBefore)).toBe(750);
+    });
+  });
+
   /* ------------------------------------------- tax that cannot be claimed */
 
   describe('input tax the business cannot claim back', () => {

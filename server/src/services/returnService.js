@@ -776,6 +776,36 @@ export async function applyNote(client, { noteId, invoiceTable, invoiceType, inv
  *   purchase return   Dr payable         Cr inventory       goods off the shelf,
  *                                                           and we owe that much less
  */
+/**
+ * How much of a purchase's tax carried a credit.
+ *
+ * A return gives back what the original bill was actually allowed to claim,
+ * and one bill can carry lines at different rates, so this is a share rather
+ * than a flag -- the same share `v_input_tax` reports, so the journal and the
+ * VAT return cannot say different things about the same document.
+ */
+async function reclaimableShare(client, sourceType, sourceId) {
+  const table =
+    sourceType === 'dealer_purchases'
+      ? 'dealer_purchase_items'
+      : sourceType === 'crop_purchases'
+        ? 'crop_purchase_items'
+        : null;
+  // A sales return has no input tax to give back at all.
+  if (!table) return 1;
+
+  const { rows } = await client.query(
+    `SELECT COALESCE(SUM(i.tax_amount) FILTER (WHERE t.is_reclaimable), 0) AS claimable,
+            COALESCE(SUM(i.tax_amount), 0)                                AS charged
+       FROM ${table} i
+       JOIN tax_rates t ON t.id = i.tax_rate_id
+      WHERE i.purchase_id = $1`,
+    [sourceId]
+  );
+  const charged = num(rows[0].charged);
+  return charged > 0 ? num(rows[0].claimable) / charged : 1;
+}
+
 async function writeReturnJournal(client, { orgId, user, kind, header, returnId }) {
   const net = num(header.net_amount);
   const tax = num(header.tax_amount);
@@ -846,20 +876,27 @@ async function writeReturnJournal(client, { orgId, user, kind, header, returnId 
       debit: total,
       credit: 0,
     });
+    // Only the part of the tax that reached the input VAT account comes back
+    // out of it. The rest never went there -- it was landed on the stock when
+    // the goods were bought, so it leaves with them.
+    const share = await reclaimableShare(client, header.source_type, Number(header.source_id));
+    const reclaimed = Math.round(tax * share * 100) / 100;
+    const carried = Math.round((tax - reclaimed) * 100) / 100;
+
     await writeLedger(client, {
       ...shared,
       coaId: await ledgerAccount(client, orgId, LEDGER.INVENTORY),
       narration: `Stock sent back on ${header.txn_no}`,
       debit: 0,
-      credit: net,
+      credit: net + carried,
     });
-    if (tax > 0) {
+    if (reclaimed > 0) {
       await writeLedger(client, {
         ...shared,
         coaId: await ledgerAccount(client, orgId, LEDGER.INPUT_VAT),
         narration: `Input VAT reversed on ${header.txn_no}`,
         debit: 0,
-        credit: tax,
+        credit: reclaimed,
       });
     }
   }
