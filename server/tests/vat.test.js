@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { query, closePool } from '../src/lib/db.js';
@@ -118,6 +118,23 @@ suite('vat', () => {
       `UPDATE organizations SET is_vat_registered = true,
               sale_prices_include_tax = false, purchase_prices_include_tax = false
         WHERE id = $1`,
+      [orgId]
+    );
+  });
+
+  beforeEach(async () => {
+    // Every test here but one needs a registered business, and registration is
+    // a single org-wide flag that plenty of things can switch off: the test of
+    // the unregistered case two hundred lines down, an afterAll a dying worker
+    // never reached, a previous run that ended badly. When it is off, tax comes
+    // out as zero rather than as an error, so the failure surfaces as a wrong
+    // amount in a test that has nothing to say about registration -- which is
+    // exactly how three return tests came to fail with "expected 0 to be 780".
+    //
+    // Asserting it per test costs one statement and removes the whole class.
+    await query(
+      `UPDATE organizations SET is_vat_registered = true
+        WHERE id = $1 AND NOT is_vat_registered`,
       [orgId]
     );
   });
@@ -721,6 +738,13 @@ suite('vat', () => {
 
     const vatReturn = (period) =>
       request(app).get('/api/reports/vat-return').query(period || {}).set(auth());
+
+    afterAll(async () => {
+      // The supply-mix test below leaves the shared product exempt to make its
+      // point. Left that way it persists into the next run, where an earlier
+      // test sells the same product expecting tax and gets none.
+      await query('UPDATE products SET tax_rate_id = NULL WHERE id = $1', [context.productId]);
+    });
 
     it('measures the share on value, not on tax', async () => {
       const period = { from: today(), to: today() };
