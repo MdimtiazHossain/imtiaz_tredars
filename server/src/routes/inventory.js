@@ -95,9 +95,23 @@ router.get(
       [req.orgId]
     );
 
+    // `orderBy` already ends the clause with a direction, so the extra token
+    // that used to follow it built `ORDER BY stock_value ASC DESC`, which
+    // Postgres rejects. The screen asks for no particular sort, so every load
+    // of it was a 500: a full warehouse drawn as "Stock could not be loaded".
+    // Biggest value first is still what an unsorted list means here; a client
+    // that wants the other order asks for sort=value&dir=asc.
+    //
+    // The trailing columns make the order total. Stock is paged through 200 at
+    // a time, and rows tied on the sorted column have no fixed position from
+    // one page to the next, so without them a tie could put the same line on
+    // two pages and leave another off both.
+    const order = `${orderBy(q.sort, q.sort ? q.dir : 'desc', STOCK_SORTS, 'stock_value')},
+                   name, sub, warehouse`;
+
     const { rows } = await query(
       `SELECT * FROM (${unified}) t ${kindFilter}
-        ORDER BY ${orderBy(q.sort, q.dir, STOCK_SORTS, 'stock_value')} ${q.sort ? '' : 'DESC'}
+        ORDER BY ${order}
         LIMIT ${limit} OFFSET ${offset}`,
       [req.orgId]
     );
