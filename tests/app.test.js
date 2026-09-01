@@ -4276,6 +4276,7 @@ describe('the input tax apportionment panel', () => {
     disallowed: 2000,
     posted: false,
     postedAt: null,
+    journallable: true,
   };
 
   const CATALOGUE = [
@@ -4362,14 +4363,30 @@ describe('the input tax apportionment panel', () => {
     expect(app.renderVals().vatApp.postLabel).toBe('Journal the adjustment');
   });
 
-  it('asks for a whole month when the filter bar names no dates', async () => {
+  it('answers for the same period the report above it is showing', async () => {
     const { asked } = await openReturn();
-    const period = asked[0].period;
 
-    // A VAT return is filed for a month. The report will happily cover all
-    // time; a ratio over all time is not one anybody files.
-    expect(period.from).toMatch(/^\d{4}-\d{2}-01$/);
-    expect(period.to.slice(0, 7)).toBe(period.from.slice(0, 7));
+    // No dates on the filter bar means the return covers every posted period,
+    // and the panel has to mean the same thing by it. Answering for the
+    // current month instead put two different spans side by side on one
+    // screen, each looking like it explained the other.
+    expect(asked[0].period).toEqual({});
+  });
+
+  it('reports without offering to journal when no period is set', async () => {
+    const { app } = await openReturn({
+      worked: { ...WORKED, journallable: false },
+    });
+    const panel = app.renderVals().vatApp;
+
+    // The figures are still worth seeing; the adjustment is not, because an
+    // adjustment belongs to the period it adjusts and "everything at once" is
+    // not one that can be filed or reversed.
+    expect(panel.hasFigures).toBe(true);
+    expect(panel.disallowedText).toBe(money(2000));
+    expect(panel.canPost).toBe(false);
+    expect(panel.statusText).toBe('Set a period to journal it');
+    expect(panel.note).toContain('Set a from and to date');
   });
 
   it('follows the dates the filter bar is set to', async () => {

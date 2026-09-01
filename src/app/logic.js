@@ -1423,20 +1423,19 @@ export class BusinessApp extends Component {
   /**
    * The period the apportionment is worked out over.
    *
-   * A VAT return is filed for a month, so the filter bar's dates decide it and
-   * the current month stands in when they are empty. The report itself will
-   * happily cover all time; an apportionment over all time would be a ratio
-   * nobody files.
+   * Whatever the return above it is showing, dates and all -- including no
+   * dates, which is every posted period. The two sit on the same screen and
+   * one of them states the claim the other explains; answering for different
+   * spans would be the panel quietly contradicting the report.
+   *
+   * Journalling is the part that needs a definite month, and asks separately.
    */
   apportionmentPeriod() {
     const chosen = this.state.repFilter || {};
-    if (chosen.from && chosen.to) return { from: chosen.from, to: chosen.to };
-
-    const now = today();
-    const [year, month] = now.split('-').map(Number);
-    const pad = n => String(n).padStart(2, '0');
-    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-    return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(lastDay)}` };
+    const period = {};
+    if (chosen.from) period.from = chosen.from;
+    if (chosen.to) period.to = chosen.to;
+    return period;
   }
 
   /** Fetch what share of the period's input tax may be claimed. */
@@ -1543,16 +1542,27 @@ export class BusinessApp extends Component {
       posted: !!a.posted,
       statusText: a.posted
         ? 'Journalled' + (a.postedAt ? ' on ' + shortDate(String(a.postedAt).slice(0, 10)) : '')
-        : withheld
-          ? 'Not yet journalled'
-          : 'Nothing to journal',
-      note: withheld
-        ? 'Input tax is claimed in full as it is paid, because what share of it '
-          + 'was earned is not known until the period’s sales are in. Journalling '
-          + 'moves the unearned part out of the receivable and into cost.'
-        : 'Every supply this period earned its credit, so the whole of the input '
-          + 'tax may be claimed and there is nothing to move.',
-      canPost: withheld && !a.posted && this.may('tax.edit') && !S.apportionBusy,
+        : !withheld
+          ? 'Nothing to journal'
+          : a.journallable === false
+            ? 'Set a period to journal it'
+            : 'Not yet journalled',
+      note: !withheld
+        ? 'Every supply in this period earned its credit, so the whole of the '
+          + 'input tax may be claimed and there is nothing to move.'
+        : a.journallable === false
+          ? 'Input tax is claimed in full as it is paid, because what share of it '
+            + 'was earned is not known until the period’s sales are in. Set a from '
+            + 'and to date above to journal the unearned part for that month.'
+          : 'Input tax is claimed in full as it is paid, because what share of it '
+            + 'was earned is not known until the period’s sales are in. Journalling '
+            + 'moves the unearned part out of the receivable and into cost.',
+      // An adjustment is made against a stated period. With the report showing
+      // everything at once there is nothing to file it against, so the panel
+      // reports and asks for a month rather than offering a button that would
+      // journal the wrong thing.
+      canPost: withheld && !a.posted && a.journallable !== false
+        && this.may('tax.edit') && !S.apportionBusy,
       busy: !!S.apportionBusy,
       postLabel: S.apportionBusy ? 'Journalling…' : 'Journal the adjustment',
       onPost: () => this.postApportionment(),

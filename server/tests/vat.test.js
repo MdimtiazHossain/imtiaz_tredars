@@ -822,6 +822,37 @@ suite('vat', () => {
       );
     });
 
+    it('answers for every posted period when no dates are given', async () => {
+      // The VAT return has no dates until somebody sets them, and the panel
+      // that explains it must be able to mean the same thing by that. It
+      // reports, but says the figures cannot be journalled: an adjustment
+      // belongs to the period it adjusts.
+      const res = await request(app).get('/api/tax/apportionment').set(auth());
+      expect(res.status).toBe(200);
+
+      const worked = res.body.data;
+      expect(worked.from).toBeNull();
+      expect(worked.to).toBeNull();
+      expect(worked.journallable).toBe(false);
+      expect(worked.posted).toBe(false);
+      expect(worked.inputTax).toBeGreaterThan(0);
+    });
+
+    it('says a stated period could be journalled', async () => {
+      const res = await request(app)
+        .get('/api/tax/apportionment')
+        .query({ from: today(), to: today() })
+        .set(auth());
+
+      expect(res.body.data.journallable).toBe(true);
+    });
+
+    it('still refuses to journal without a period', async () => {
+      const res = await request(app).post('/api/tax/apportionment').set(auth()).send({});
+      // Reading is open-ended; writing is not, and the schema is what says so.
+      expect(res.status).toBe(400);
+    });
+
     it('claims in full when every supply earned its credit', async () => {
       // A period the business had not started trading in. No supplies means no
       // ratio to be measured by, and withholding the whole claim on that basis

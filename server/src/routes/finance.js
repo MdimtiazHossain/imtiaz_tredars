@@ -873,6 +873,16 @@ function requirePartyPermission(req, partyType) {
 
 /* ------------------------------------------------------ input tax apportionment */
 
+// Reading is allowed over whatever period is being looked at, including none
+// at all -- the VAT return itself has no dates until somebody sets them, and
+// the two must not answer for different periods side by side.
+const periodQuerySchema = z.object({
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+});
+
+// Journalling is not. An adjustment belongs to the period it adjusts, and
+// "every period at once" is not one that can be filed or reversed.
 const periodSchema = z.object({
   from: z.string().date(),
   to: z.string().date(),
@@ -888,22 +898,31 @@ router.get(
   '/tax/apportionment',
   requirePermission('tax.view'),
   handler(async (req, res) => {
-    const period = parseQuery(periodSchema, req);
+    const period = parseQuery(periodQuerySchema, req);
     const worked = await apportionment(null, { orgId: req.orgId, ...period });
 
-    const { rows } = await query(
-      `SELECT id, created_at FROM tax_apportionments
-        WHERE org_id = $1 AND period_from = $2 AND period_to = $3`,
-      [req.orgId, period.from, period.to]
-    );
+    // Only a definite period can have been journalled, so an open-ended read
+    // reports the figures without claiming anything about whether they were.
+    const { rows } =
+      period.from && period.to
+        ? await query(
+            `SELECT id, created_at FROM tax_apportionments
+              WHERE org_id = $1 AND period_from = $2 AND period_to = $3`,
+            [req.orgId, period.from, period.to]
+          )
+        : { rows: [] };
 
     ok(res, {
-      ...period,
+      from: period.from ?? null,
+      to: period.to ?? null,
       ...worked,
       // Whether the journal has already been written, so the screen can offer
       // to post it or say that it was.
       posted: rows.length > 0,
       postedAt: rows.length ? rows[0].created_at : null,
+      // And whether it could be: an adjustment is made against a stated
+      // period, never against everything at once.
+      journallable: !!(period.from && period.to),
     });
   })
 );
