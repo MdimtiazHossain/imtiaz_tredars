@@ -51,6 +51,9 @@ export const LEDGER = {
   INPUT_VAT: '1400',
   PAYABLE: '2100',
   OUTPUT_VAT: '2200',
+  // What a purchase owes for its freight and handling, which is owed to the
+  // carrier rather than to the farmer whose crop was carried.
+  PROCUREMENT_ACCRUAL: '2300',
   DEALER_SALES: '4100',
   CROP_SALES: '4200',
   SALES_RETURNS: '4900',

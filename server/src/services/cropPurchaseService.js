@@ -351,12 +351,27 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
     });
   }
 
-  // Anything not paid as an advance becomes payable to the supplier.
   const netAmount = num(header.net_amount);
   const totalAmount = num(header.total_amount) || netAmount;
   const inventoryValue = netAmount + embeddedTax;
   const advance = num(header.advance_paid);
-  const balance = totalAmount - advance;
+
+  // What the farmer sold, and what it cost to bring it in, are owed to
+  // different people.
+  //
+  // The batch is still valued at landed cost -- that is what the crop cost the
+  // business and what it has to be sold above. But the freight, loading and
+  // unloading were bought from a carrier, and crediting them to the farmer's
+  // account made the farmer look owed money the business had no intention of
+  // paying them: settle the invoice in full and a phantom balance stays
+  // against their name for ever.
+  const carriage =
+    num(header.transport_cost) +
+    num(header.loading_cost) +
+    num(header.unloading_cost) +
+    num(header.other_cost);
+  const owedToSupplier = totalAmount - carriage;
+  const balance = owedToSupplier - advance;
 
   if (balance > 0) {
     await createPayable(client, {
@@ -369,7 +384,7 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
       invoiceNo: header.txn_no,
       invoiceDate: header.txn_date,
       dueDate: addDays(header.txn_date, 30),
-      invoiceAmount: totalAmount,
+      invoiceAmount: owedToSupplier,
       paidAmount: advance,
     });
   }
@@ -398,11 +413,29 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
     partyId: Number(header.supplier_id),
     narration: `Payable to ${supplierName} for ${header.txn_no}`,
     debit: 0,
-    credit: totalAmount,
+    credit: owedToSupplier,
     referenceType: 'crop_purchases',
     referenceId: purchaseId,
     userId: user.id,
   });
+
+  // The carriage side of the same purchase, owed to nobody in particular until
+  // the carrier bills for it. It carries no party, so it never reaches a
+  // farmer's statement.
+  if (carriage > 0) {
+    await writeLedger(client, {
+      orgId,
+      coaId: await ledgerAccount(client, orgId, LEDGER.PROCUREMENT_ACCRUAL),
+      entryDate: header.txn_date,
+      businessType: 'BULK_CROP',
+      narration: `Freight and handling on ${header.txn_no}`,
+      debit: 0,
+      credit: carriage,
+      referenceType: 'crop_purchases',
+      referenceId: purchaseId,
+      userId: user.id,
+    });
+  }
 
   // VAT paid to a registered supplier is reclaimable from the NBR rather than
   // part of what the crop cost.

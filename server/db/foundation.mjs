@@ -341,6 +341,11 @@ export const CHART_OF_ACCOUNTS = [
   ['2000', 'Liabilities', 'LIABILITY', true],
   ['2100', 'Accounts payable', 'LIABILITY', false],
   ['2200', 'Output VAT payable', 'LIABILITY', false],
+  // Freight, loading and handling on a purchase. The goods are owed to the
+  // farmer who grew them; the lorry is owed to whoever drove it, and putting
+  // both on the farmer's account leaves them looking owed money nobody means
+  // to pay them.
+  ['2300', 'Accrued procurement costs', 'LIABILITY', false],
   ['3000', 'Equity', 'EQUITY', true],
   ['3100', 'Opening balance equity', 'EQUITY', false],
   ['3200', 'Retained earnings', 'EQUITY', false],
