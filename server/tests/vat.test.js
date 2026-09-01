@@ -674,6 +674,115 @@ suite('vat', () => {
     expect(await balanceOf(LEDGER.OUTPUT_VAT)).toBe(before);
   });
 
+  /* ------------------------------------- the sales side, at a truncated rate */
+
+  describe('the sales register when a rate carries no credit', () => {
+    /**
+     * Reclaimability is a question about tax paid, not tax charged. A supply
+     * at a truncated rate is charged at 10% instead of 15% and every taka of
+     * it is owed to the NBR just the same -- the rate is lower, the liability
+     * is not partial. So the sales side must ignore the flag entirely, and
+     * narrowing what a purchase return gives back must not have narrowed what
+     * a sale return credits.
+     */
+    const report = (id, filters = {}) =>
+      request(app)
+        .get(`/api/reports/${id}`)
+        .query({ from: today(), to: today(), pageSize: 200, ...filters })
+        .set(auth());
+
+    const outputLine = async () =>
+      (await report('vat-return')).body.data.rows
+        .find((r) => r.line.startsWith('Output tax')).tax;
+
+    let truncated;
+
+    beforeAll(async () => {
+      const { rows } = await query(
+        `INSERT INTO tax_rates (org_id, code, name, kind, rate, is_reclaimable, is_default, is_active)
+         VALUES ($1, 'TRUNC-SALE', 'Truncated on sales', 'REDUCED', 10.0, false, false, true)
+         ON CONFLICT (org_id, code) DO UPDATE SET is_active = true, is_reclaimable = false
+         RETURNING id`,
+        [orgId]
+      );
+      truncated = Number(rows[0].id);
+      await setPricing(false, 'SALE');
+      await query('UPDATE products SET tax_rate_id = $1 WHERE id = $2', [
+        truncated,
+        context.productId,
+      ]);
+      // The suites share a database and every run sells some of it, so this
+      // one puts back more than it takes rather than depending on what an
+      // earlier run happened to leave.
+      await buy({ quantity: 400, rate: 80 });
+    });
+
+    afterAll(async () => {
+      await query('UPDATE products SET tax_rate_id = NULL WHERE id = $1', [context.productId]);
+      await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [truncated]);
+    });
+
+    it('charges the truncated rate and owes every taka of it', async () => {
+      const before = (await report('vat-sales-register')).body.data.totals;
+      const outputBefore = await outputLine();
+
+      await sell({ quantity: 100, rate: 100 });
+
+      const register = (await report('vat-sales-register')).body.data;
+      // 10,000 of goods at 10%. The rate is lower than the standard one; the
+      // liability is not partial.
+      expect(money(register.totals.taxableValue - before.taxableValue)).toBe(10000);
+      expect(money(register.totals.tax - before.tax)).toBe(1000);
+
+      // And the return owes the whole of it. Nothing here reads the credit
+      // flag, because there is no credit to read on a supply made.
+      expect(money((await outputLine()) - outputBefore)).toBe(1000);
+    });
+
+    it('has no reclaimable column to confuse it with', async () => {
+      const register = (await report('vat-sales-register')).body.data;
+      // A Mushak 6.2 lists what was charged. Reclaimability belongs to the
+      // 6.1, and a column here would invite the two to be read as a pair.
+      expect(register.columns.map((c) => c.key)).not.toContain('reclaimable');
+      expect(register.totals.reclaimable).toBeUndefined();
+    });
+
+    it('credits the whole of it back when the sale is returned', async () => {
+      const sale = await sell({ quantity: 50, rate: 100 });
+      const returnable = (
+        await request(app).get(`/api/returnable/dealer_sales/${sale.id}`).set(auth())
+      ).body.data;
+      const outputBefore = await outputLine();
+
+      const res = await request(app)
+        .post('/api/returns')
+        .set(auth())
+        .send({
+          txnDate: today(),
+          sourceType: 'dealer_sales',
+          sourceId: sale.id,
+          reason: 'Customer cancelled the order',
+          lines: [{ sourceItemId: returnable.lines[0].sourceItemId, quantity: 50 }],
+          action: 'POST',
+        });
+      expect(res.status, JSON.stringify(res.body.error)).toBe(201);
+
+      // 5,000 at 10% was charged and is no longer owed, so the whole 500 comes
+      // off. Narrowing what a purchase return claims must not touch this: the
+      // business collected this tax and is handing it back.
+      expect(money((await outputLine()) - outputBefore)).toBe(-500);
+    });
+
+    it('leaves the sales register and the output account agreeing', async () => {
+      const totals = (await request(app).get('/api/reports/vat-return').set(auth())).body.data
+        .totals;
+      // The whole period, not just today: the register reads the documents and
+      // the trial balance reads the journal, and a truncated rate must not be
+      // the thing that makes them differ.
+      expect(money(totals.outputTax)).toBe(await balanceOf(LEDGER.OUTPUT_VAT));
+    });
+  });
+
   /* --------------------------------------- the return, at a truncated rate */
 
   describe('the VAT return when a rate carries no credit', () => {
