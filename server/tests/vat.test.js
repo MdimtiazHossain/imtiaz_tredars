@@ -957,7 +957,11 @@ suite('vat', () => {
         const { rows: made } = await query(
           `INSERT INTO products (org_id, code, name, unit_id, purchase_rate, sale_rate, tax_rate_id)
            SELECT $1, 'TEST-APPORTION', 'Apportionment fixture', u.id, 100, 150, $2
-             FROM units u WHERE u.org_id = $1 ORDER BY u.id LIMIT 1
+             -- Units are global and have no org_id. Asking for one errored the
+             -- whole file, which took its afterAll with it and left the
+             -- organisation registered for every suite that ran after it: four
+             -- failures across three files, none of them about tax.
+             FROM units u WHERE u.code = 'Kg' LIMIT 1
            ON CONFLICT (org_id, code) DO UPDATE SET is_active = true, tax_rate_id = $2
            RETURNING id`,
           [orgId, standard.id]
