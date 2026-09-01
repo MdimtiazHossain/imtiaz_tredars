@@ -17,7 +17,8 @@
     "db:seed": "node db/seed/seed.mjs",
     "db:setup": "node db/migrate.mjs reset && node db/seed/seed.mjs",
     "db:fresh": "node db/fresh.mjs",
-    "test": "vitest run",
+    "test": "node tools/run-tests.mjs",
+    "test:raw": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
     "dev:test": "node --env-file=.env.testserver --watch src/index.js"
