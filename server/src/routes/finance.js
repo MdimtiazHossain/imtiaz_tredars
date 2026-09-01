@@ -149,8 +149,13 @@ router.get(
     const q = parseQuery(listQuerySchema.extend(partyFilter), req);
     const { limit, offset } = paginate(q.page, q.pageSize);
 
+    // Read the ageing view rather than the raw subledger: it has already
+    // absorbed anything received on account, oldest invoice first, so what is
+    // listed here is what is genuinely still to collect. An invoice a customer
+    // has already covered with an unmatched payment drops off, which is the
+    // point -- it was being chased.
     const params = [req.orgId];
-    let where = 'r.org_id = $1 AND NOT r.is_settled';
+    let where = 'r.org_id = $1';
     if (q.businessType !== 'ALL') {
       params.push(q.businessType);
       where += ` AND r.business_type = $${params.length}`;
@@ -166,8 +171,8 @@ router.get(
     }
 
     const { rows: countRows } = await query(
-      `SELECT COUNT(*)::int AS total, COALESCE(SUM(balance), 0) AS outstanding
-         FROM receivables r WHERE ${where}`,
+      `SELECT COUNT(*)::int AS total, COALESCE(SUM(r.balance), 0) AS outstanding
+         FROM v_receivable_aging r WHERE ${where}`,
       params
     );
 
@@ -176,12 +181,10 @@ router.get(
               r.invoice_amount, r.paid_amount, r.balance, r.business_type,
               COALESCE(c.name, co.name) AS party,
               COALESCE(c.customer_type, 'Company') AS party_type,
-              a.aging_bucket, a.days_overdue
-         FROM receivables r
+              r.aging_bucket, r.days_overdue
+         FROM v_receivable_aging r
          LEFT JOIN customers c ON r.party_type = 'CUSTOMER' AND c.id = r.party_id
          LEFT JOIN companies co ON r.party_type = 'COMPANY' AND co.id = r.party_id
-         LEFT JOIN v_receivable_aging a
-                ON a.invoice_type = r.invoice_type AND a.invoice_id = r.invoice_id
         WHERE ${where}
         ORDER BY r.due_date ASC
         LIMIT ${limit} OFFSET ${offset}`,
@@ -217,8 +220,11 @@ router.get(
     const q = parseQuery(listQuerySchema.extend(partyFilter), req);
     const { limit, offset } = paginate(q.page, q.pageSize);
 
+    // Net of anything already paid on account, for the same reason the
+    // receivable list is: a bill covered by an unmatched payment is not a bill
+    // still to pay.
     const params = [req.orgId];
-    let where = 'p.org_id = $1 AND NOT p.is_settled';
+    let where = 'p.org_id = $1';
     if (q.businessType !== 'ALL') {
       params.push(q.businessType);
       where += ` AND p.business_type = $${params.length}`;
@@ -234,19 +240,17 @@ router.get(
 
     const { rows: countRows } = await query(
       `SELECT COUNT(*)::int AS total, COALESCE(SUM(p.balance), 0) AS outstanding
-         FROM payables p WHERE ${where}`,
+         FROM v_payable_aging p WHERE ${where}`,
       params
     );
 
     const { rows } = await query(
       `SELECT p.invoice_no, p.invoice_type, p.invoice_id, p.invoice_date, p.due_date,
               p.invoice_amount, p.paid_amount, p.balance, p.business_type, p.party_type,
-              COALESCE(s.name, co.name) AS party, a.aging_bucket
-         FROM payables p
+              COALESCE(s.name, co.name) AS party, p.aging_bucket
+         FROM v_payable_aging p
          LEFT JOIN suppliers s ON p.party_type = 'SUPPLIER' AND s.id = p.party_id
          LEFT JOIN companies co ON p.party_type = 'COMPANY' AND co.id = p.party_id
-         LEFT JOIN v_payable_aging a
-                ON a.invoice_type = p.invoice_type AND a.invoice_id = p.invoice_id
         WHERE ${where}
         ORDER BY p.due_date ASC
         LIMIT ${limit} OFFSET ${offset}`,

@@ -173,9 +173,9 @@ export const MORE_REPORTS = {
       const { rows } = await query(
         `SELECT c.name AS company, c.district, COUNT(*)::int AS bills,
                 COALESCE(SUM(p.net_amount), 0) AS purchase,
-                COALESCE((SELECT SUM(pa.balance) FROM payables pa
-                           WHERE pa.party_type = 'COMPANY' AND pa.party_id = c.id
-                             AND NOT pa.is_settled), 0) AS outstanding
+                COALESCE((SELECT b.payable FROM v_party_balance b
+                           WHERE b.party_type = 'COMPANY' AND b.party_id = c.id
+                             AND b.org_id = c.org_id), 0) AS outstanding
            FROM dealer_purchases p
            JOIN companies c ON c.id = p.company_id
           WHERE p.org_id = $1 AND p.status = 'POSTED' ${where}

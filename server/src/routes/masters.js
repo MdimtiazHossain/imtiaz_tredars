@@ -743,12 +743,12 @@ registerMasterCrud(router, {
   }),
   blockers: [
     {
-      // A company can sit on both sides of the ledger, so both are checked.
-      sql: `SELECT COALESCE((SELECT SUM(balance) FROM payables
-                              WHERE party_type = 'COMPANY' AND party_id = $1 AND org_id = $2), 0)
-                 + COALESCE((SELECT SUM(balance) FROM receivables
-                              WHERE party_type = 'COMPANY' AND party_id = $1 AND org_id = $2), 0)
-                 AS value`,
+      // A company can sit on both sides of the ledger, so both are checked --
+      // net of money paid or received on account, or a company settled in full
+      // by an unallocated payment could never be retired.
+      sql: `SELECT COALESCE((SELECT b.payable + b.receivable FROM v_party_balance b
+                              WHERE b.party_type = 'COMPANY' AND b.party_id = $1
+                                AND b.org_id = $2), 0) AS value`,
       code: 'HAS_OUTSTANDING',
       message: (n) =>
         `${money(n)} is still open with this company. Settle it before retiring them.`,

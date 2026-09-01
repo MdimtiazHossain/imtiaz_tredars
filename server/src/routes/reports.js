@@ -109,18 +109,34 @@ router.get(
               AND ($4::date IS NULL OR txn_date <= $4)`,
           [req.orgId, bt, q.from ?? null, q.to ?? null]
         ),
+        // Less whatever has been received on account, so this tile and the
+        // general ledger's receivable balance are the same number. The credit is
+        // filtered by business line exactly as the invoices are, so All still
+        // comes to Dealer plus Bulk Crop. The document count stays a count of
+        // open invoices: an on-account receipt settles no particular one, so it
+        // does not remove an invoice from the list.
         query(
-          `SELECT COALESCE(SUM(balance), 0) AS amount, COUNT(*)::int AS documents
-             FROM receivables
-            WHERE org_id = $1 AND NOT is_settled
-              AND ($2::business_type IS NULL OR business_type = $2)`,
+          `SELECT COALESCE(SUM(r.balance), 0)
+                    - COALESCE((SELECT SUM(u.amount) FROM v_unapplied_payments u
+                                 WHERE u.org_id = $1 AND u.direction = 'RECEIPT'
+                                   AND ($2::business_type IS NULL OR u.business_type = $2)), 0)
+                    AS amount,
+                  COUNT(*)::int AS documents
+             FROM receivables r
+            WHERE r.org_id = $1 AND NOT r.is_settled
+              AND ($2::business_type IS NULL OR r.business_type = $2)`,
           [req.orgId, bt]
         ),
         query(
-          `SELECT COALESCE(SUM(balance), 0) AS amount, COUNT(*)::int AS documents
-             FROM payables
-            WHERE org_id = $1 AND NOT is_settled
-              AND ($2::business_type IS NULL OR business_type = $2)`,
+          `SELECT COALESCE(SUM(p.balance), 0)
+                    - COALESCE((SELECT SUM(u.amount) FROM v_unapplied_payments u
+                                 WHERE u.org_id = $1 AND u.direction = 'PAYMENT'
+                                   AND ($2::business_type IS NULL OR u.business_type = $2)), 0)
+                    AS amount,
+                  COUNT(*)::int AS documents
+             FROM payables p
+            WHERE p.org_id = $1 AND NOT p.is_settled
+              AND ($2::business_type IS NULL OR p.business_type = $2)`,
           [req.orgId, bt]
         ),
         query(

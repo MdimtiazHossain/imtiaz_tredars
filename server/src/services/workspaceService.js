@@ -151,13 +151,13 @@ async function loadCompanies(orgId) {
   const { rows } = await query(
     `SELECT c.id, c.code, c.name, c.role, c.contact_person, c.mobile, c.district,
             c.credit_limit, c.credit_days, c.is_active,
-            COALESCE((SELECT SUM(balance) FROM payables p
-                       WHERE p.party_type = 'COMPANY' AND p.party_id = c.id
-                         AND NOT p.is_settled), 0) AS payable,
-            COALESCE((SELECT SUM(balance) FROM receivables r
-                       WHERE r.party_type = 'COMPANY' AND r.party_id = c.id
-                         AND NOT r.is_settled), 0) AS receivable
+            -- Net of anything paid or received on account, so a company's
+            -- balance here agrees with its own ledger statement.
+            COALESCE(b.payable, 0)    AS payable,
+            COALESCE(b.receivable, 0) AS receivable
        FROM companies c
+       LEFT JOIN v_party_balance b
+              ON b.org_id = c.org_id AND b.party_type = 'COMPANY' AND b.party_id = c.id
       WHERE c.org_id = $1
       ORDER BY c.code`,
     [orgId]
