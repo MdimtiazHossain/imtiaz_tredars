@@ -30,6 +30,29 @@ let orgId;
 const auth = () => fixture.auth;
 const stock = (qs = '') => request(app).get(`/api/inventory${qs}`).set(auth());
 
+/** The largest page the endpoint will give out, from its own schema. */
+const PAGE_CAP = 200;
+
+/**
+ * Every line, by following the pages.
+ *
+ * A single request returns a page and says how many lines there are in total.
+ * Treating that page as the whole list is the mistake the screen itself once
+ * made, and it holds for exactly as long as the business has less stock than
+ * fits on one page.
+ */
+async function everyStockLine(pageSize = 60) {
+  const rows = [];
+  for (let page = 1; ; page += 1) {
+    const res = await request(app)
+      .get(`/api/inventory?page=${page}&pageSize=${pageSize}`)
+      .set(auth());
+    if (res.status !== 200) throw new Error(`page ${page} -> ${res.status}`);
+    rows.push(...res.body.data);
+    if (rows.length >= res.body.meta.total || !res.body.data.length) return rows;
+  }
+}
+
 /** Something that names a stock line uniquely: one item, in one warehouse. */
 const identify = (r) => `${r.kind}|${r.name}|${r.sub}|${r.warehouse}`;
 
@@ -60,7 +83,7 @@ suite('stock list', () => {
 
   it('answers the request the screen actually makes', async () => {
     // Exactly what the client sends: a page, a size, and no opinion on order.
-    const res = await stock('?page=1&pageSize=200');
+    const res = await stock(`?page=1&pageSize=${PAGE_CAP}`);
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(Array.isArray(res.body.data)).toBe(true);
@@ -73,16 +96,21 @@ suite('stock list', () => {
         WHERE s.org_id = $1 AND s.quantity > 0`,
       [orgId]
     );
-    const res = await stock('?pageSize=200');
+    const res = await stock(`?pageSize=${PAGE_CAP}`);
 
     expect(res.status).toBe(200);
-    // A line per item per warehouse, which is what the stock table holds.
+    // A line per item per warehouse, which is what the stock table holds. The
+    // count is the whole of it; one page is at most a page of it, and asserting
+    // otherwise made this pass only while the database held fewer lines than a
+    // page. It accumulates about seventeen batches a run, so the test would
+    // pass for a week and then start failing on unchanged code, naming a file
+    // that had nothing to do with whatever was last touched.
     expect(res.body.meta.total).toBe(rows[0].lines);
-    expect(res.body.data.length).toBe(rows[0].lines);
+    expect(res.body.data.length).toBe(Math.min(rows[0].lines, PAGE_CAP));
   });
 
   it('puts the most valuable stock first when nothing was chosen', async () => {
-    const res = await stock('?pageSize=200');
+    const res = await stock(`?pageSize=${PAGE_CAP}`);
     const values = res.body.data.map((r) => r.value);
 
     expect(res.status).toBe(200);
@@ -94,14 +122,14 @@ suite('stock list', () => {
     // endpoint documents is asked for rather than a representative one.
     for (const sort of ['name', 'qty', 'value', 'age']) {
       for (const dir of ['asc', 'desc']) {
-        const res = await stock(`?sort=${sort}&dir=${dir}&pageSize=200`);
+        const res = await stock(`?sort=${sort}&dir=${dir}&pageSize=${PAGE_CAP}`);
         expect(res.status, `${sort} ${dir}: ${JSON.stringify(res.body)}`).toBe(200);
       }
     }
   });
 
   it('honours an ascending sort by value, which the default reverses', async () => {
-    const res = await stock('?sort=value&dir=asc&pageSize=200');
+    const res = await stock(`?sort=value&dir=asc&pageSize=${PAGE_CAP}`);
     const values = res.body.data.map((r) => r.value);
 
     expect(res.status).toBe(200);
@@ -109,15 +137,15 @@ suite('stock list', () => {
   });
 
   it('ignores a sort key it does not know rather than failing', async () => {
-    const res = await stock('?sort=whatever&pageSize=200');
+    const res = await stock(`?sort=whatever&pageSize=${PAGE_CAP}`);
     expect(res.status).toBe(200);
   });
 
   it('separates the two kinds of stock', async () => {
     const [crop, dealer, all] = await Promise.all([
-      stock('?kind=crop&pageSize=200'),
-      stock('?kind=dealer&pageSize=200'),
-      stock('?pageSize=200'),
+      stock(`?kind=crop&pageSize=${PAGE_CAP}`),
+      stock(`?kind=dealer&pageSize=${PAGE_CAP}`),
+      stock(`?pageSize=${PAGE_CAP}`),
     ]);
 
     expect(crop.body.data.every((r) => r.kind === 'crop')).toBe(true);
@@ -126,31 +154,36 @@ suite('stock list', () => {
   });
 
   it('totals the valuation over every line, not the page in view', async () => {
-    const [page, everything] = await Promise.all([stock('?pageSize=1'), stock('?pageSize=200')]);
-    const sum = everything.body.data.reduce((t, r) => t + r.value, 0);
+    // The whole list, followed page by page, against what a single line's page
+    // claims the valuation is. Summing one page and calling it the total was
+    // the same mistake this test exists to catch the endpoint making.
+    const everything = await everyStockLine();
+    const sum = everything.reduce((t, r) => t + r.value, 0);
+    const page = await stock('?pageSize=1');
 
     expect(page.body.data.length).toBe(1);
+    expect(page.body.meta.total).toBe(everything.length);
     expect(page.body.meta.totalValue).toBeCloseTo(sum, 2);
-    expect(page.body.meta.totalValue).toBeCloseTo(everything.body.meta.totalValue, 2);
   });
 
   it('pages through the whole list without repeating or losing a line', async () => {
     // Rows tied on the sorted column need a fixed position between pages, or
     // paging shows one line twice and drops another -- which reads as stock the
     // business does not have beside stock it does.
-    const everything = await stock('?pageSize=200');
-    const total = everything.body.meta.total;
-    if (total < 2) return;
+    //
+    // Two page sizes that divide the list differently, so a tie sitting on a
+    // boundary for one of them does not sit on a boundary for the other. A
+    // page of one row was the strictest version of this and also the slowest:
+    // one request per line, on a list that grows every run.
+    const sevens = await everyStockLine(7);
+    const elevens = await everyStockLine(11);
+    if (sevens.length < 2) return;
 
-    const seen = [];
-    for (let page = 1; page <= total; page += 1) {
-      const res = await stock(`?page=${page}&pageSize=1`);
-      expect(res.status).toBe(200);
-      seen.push(...res.body.data.map(identify));
-    }
+    const seen = sevens.map(identify);
+    expect(new Set(seen).size, 'a line appeared on two pages').toBe(seen.length);
+    expect([...seen].sort()).toEqual(elevens.map(identify).sort());
 
-    expect(seen.length).toBe(total);
-    expect(new Set(seen).size).toBe(total);
-    expect([...seen].sort()).toEqual(everything.body.data.map(identify).sort());
+    const { body } = await stock('?pageSize=1');
+    expect(seen.length).toBe(body.meta.total);
   });
 });
