@@ -74,12 +74,31 @@ const get = async (path) => {
   return res.body.data;
 };
 
-/** Clear the approval queue, which anything over the limit lands in. */
-async function releaseApprovals() {
+/** Whatever is waiting for a decision right now, by id. */
+async function pendingApprovals() {
   const queue = await get('/approvals');
   const rows = Array.isArray(queue) ? queue : queue.rows;
-  for (const a of rows.filter((r) => r.status === 'PENDING' || !r.status)) {
-    await post(`/approvals/${a.id}/decide`, { approved: true, comment: 'test' });
+  return new Set(
+    rows.filter((r) => r.status === 'PENDING' || !r.status).map((r) => Number(r.id))
+  );
+}
+
+/**
+ * Release only the approvals this suite's own documents raised.
+ *
+ * Anything over the limit lands in the queue, and other suites leave their own
+ * there. Approving the lot posted their documents too -- a ten-taka sale
+ * somebody else had left pending became a ten-taka receivable in the middle of
+ * this suite's arithmetic, after it had taken the reading it was measuring
+ * against. It passed alone and failed in a full run, which is the worst way for
+ * a test to be wrong.
+ *
+ * @param {Set<number>} before ids already waiting before this suite posted
+ */
+async function releaseOwnApprovals(before) {
+  for (const id of await pendingApprovals()) {
+    if (before.has(id)) continue;
+    await post(`/approvals/${id}/decide`, { approved: true, comment: 'test' });
   }
 }
 
@@ -105,6 +124,7 @@ suite('what a payment on account does to the figures', () => {
     // What the business as a whole was owed before any of this, so the
     // dashboard can be checked by how much it moved on a database that already
     // holds other people's invoices.
+    const queuedAlready = await pendingApprovals();
     const dash = await get('/reports/dashboard');
     before = {
       dashboardReceivable: money(dash.receivable.amount),
@@ -125,7 +145,7 @@ suite('what a payment on account does to the figures', () => {
       lines: [{ productId: fx.product.id, quantity: 20, rate: 1300 }],
       action: 'POST',
     });
-    await releaseApprovals();
+    await releaseOwnApprovals(queuedAlready);
 
     // The receipt the payment screen produces when no invoice line is filled
     // in: money in hand, not yet matched to anything.
@@ -255,6 +275,7 @@ suite('who is owed for a crop purchase', () => {
     });
     supplierId = supplier.id;
 
+    const queuedAlready = await pendingApprovals();
     const created = await post('/crops/purchases', {
       txnDate: DAY,
       supplierId,
@@ -265,7 +286,7 @@ suite('who is owed for a crop purchase', () => {
       action: 'POST',
     });
     purchaseId = created.id;
-    await releaseApprovals();
+    await releaseOwnApprovals(queuedAlready);
   });
 
   /** This purchase's own entries. A seeded database has hundreds of others. */
