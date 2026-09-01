@@ -139,6 +139,9 @@ const STATUS_LABELS = {
 };
 
 /** Screens that price a document, and so need the tax configuration. */
+/** The one report that has an apportionment behind it. */
+const VAT_RETURN = 'vat-return';
+
 const DOCUMENT_SCREENS = new Set([
   'dealer-sales',
   'dealer-purchase',
@@ -1412,6 +1415,147 @@ export class BusinessApp extends Component {
     return identifier => {
       const item = byKey.get(identifier);
       return item && item.taxRateId ? item.taxRateId : null;
+    };
+  }
+
+  /* ------------------------------------------------ input tax apportionment */
+
+  /**
+   * The period the apportionment is worked out over.
+   *
+   * A VAT return is filed for a month, so the filter bar's dates decide it and
+   * the current month stands in when they are empty. The report itself will
+   * happily cover all time; an apportionment over all time would be a ratio
+   * nobody files.
+   */
+  apportionmentPeriod() {
+    const chosen = this.state.repFilter || {};
+    if (chosen.from && chosen.to) return { from: chosen.from, to: chosen.to };
+
+    const now = today();
+    const [year, month] = now.split('-').map(Number);
+    const pad = n => String(n).padStart(2, '0');
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(lastDay)}` };
+  }
+
+  /** Fetch what share of the period's input tax may be claimed. */
+  loadApportionment() {
+    if (!this.repository || typeof this.repository.taxApportionment !== 'function') return;
+
+    const period = this.apportionmentPeriod();
+    this.setState({ apportionLoading: true });
+    this.repository.taxApportionment(period).then(
+      data => {
+        // Ignore an answer for a report or a period the user has left behind.
+        if (this.state.repSel !== VAT_RETURN) return;
+        this.setState({ apportion: { ...period, ...data }, apportionLoading: false });
+      },
+      err => {
+        if (this.state.repSel !== VAT_RETURN) return;
+        this.setState({ apportion: null, apportionLoading: false });
+        if (!err.silent) this.fire(err.message, 'danger');
+      }
+    );
+  }
+
+  /** Journal the part of the period's input tax that was not earned. */
+  postApportionment() {
+    if (!this.repository || typeof this.repository.postTaxApportionment !== 'function') return;
+
+    const period = this.apportionmentPeriod();
+    this.setState({ apportionBusy: true });
+    this.repository.postTaxApportionment(period).then(
+      () => {
+        this.setState({ apportionBusy: false });
+        this.fire('Input tax apportioned for ' + periodLabel(period), 'ok');
+        // Read it back rather than assuming: the journal is what makes the
+        // period adjusted, and the panel should say so from the server.
+        this.loadApportionment();
+      },
+      err => {
+        this.setState({ apportionBusy: false });
+        if (!err.silent) this.fire(err.message, 'danger');
+      }
+    );
+  }
+
+  /**
+   * What the apportionment panel shows beneath the VAT return.
+   *
+   * The return says what may be claimed. This says why: which business line
+   * earned what, and whether the adjustment that makes the books agree has
+   * been journalled yet.
+   */
+  vatApportionment() {
+    const S = this.state;
+    const served = this.repository && typeof this.repository.taxApportionment === 'function';
+    if (S.repSel !== VAT_RETURN || !served) return { show: false, t: table([], []) };
+
+    const a = S.apportion;
+    const period = this.apportionmentPeriod();
+    const pct = n => (n * 100).toFixed(n * 100 % 1 === 0 ? 0 : 2) + '%';
+
+    if (!a) {
+      return { show: true, loading: !!S.apportionLoading, t: table([], []),
+        periodText: periodLabel(period), hasFigures: false };
+    }
+
+    // Built as a table so it reads in the same type and rules as every other
+    // figure on the screen, rather than as a panel of its own invention.
+    const lines = a.lines || [];
+    const rows = lines.map(l => {
+      // A line that paid no input tax has nothing to apportion whatever it
+      // supplied, and greying it stops its ratio reading as an oversight.
+      const idle = l.inputTax === 0;
+      return {cells:[
+        cell(l.businessType === 'BULK_CROP' ? 'Bulk crop' : 'Dealer',
+          {weight:'600', color:idle ? C.mut : '#3D3A36'}),
+        cell(money(l.totalSupplies), {align:'right', mono:true, color:idle ? C.mut : '#3D3A36'}),
+        cell(money(l.creditableSupplies), {align:'right', mono:true, color:idle ? C.mut : '#3D3A36'}),
+        cell(pct(l.ratio), {align:'right', mono:true, color:idle ? C.mut : '#3D3A36'}),
+        cell(money(l.inputTax), {align:'right', mono:true, color:idle ? C.mut : '#3D3A36'}),
+        cell(money(l.claimable), {align:'right', mono:true, weight:'600',
+          color:idle ? C.mut : C.crop}),
+      ]};
+    });
+
+    const withheld = a.disallowed > 0;
+    return {
+      show: true,
+      loading: !!S.apportionLoading,
+      hasFigures: true,
+      t: table(
+        [column('Business line'), column('Supplies', 'right'), column('Earning credit', 'right'),
+         column('Share', 'right'), column('Input tax', 'right'), column('Claimable', 'right')],
+        rows,
+        {footNote: lines.length + (lines.length === 1 ? ' line' : ' lines'),
+         footTotal: 'Claimable ' + money(a.claimable)}
+      ),
+      periodText: periodLabel(period),
+      inputText: money(a.inputTax),
+      claimText: money(a.claimable),
+      disallowedText: money(a.disallowed),
+      ratioText: pct(a.ratio),
+      withheld,
+      // The two states a period can be in, said plainly rather than left to be
+      // inferred from a disabled button.
+      posted: !!a.posted,
+      statusText: a.posted
+        ? 'Journalled' + (a.postedAt ? ' on ' + shortDate(String(a.postedAt).slice(0, 10)) : '')
+        : withheld
+          ? 'Not yet journalled'
+          : 'Nothing to journal',
+      note: withheld
+        ? 'Input tax is claimed in full as it is paid, because what share of it '
+          + 'was earned is not known until the period’s sales are in. Journalling '
+          + 'moves the unearned part out of the receivable and into cost.'
+        : 'Every supply this period earned its credit, so the whole of the input '
+          + 'tax may be claimed and there is nothing to move.',
+      canPost: withheld && !a.posted && this.may('tax.edit') && !S.apportionBusy,
+      busy: !!S.apportionBusy,
+      postLabel: S.apportionBusy ? 'Journalling…' : 'Journal the adjustment',
+      onPost: () => this.postApportionment(),
     };
   }
 
@@ -3176,6 +3320,11 @@ export class BusinessApp extends Component {
 
   selectReport(reportId, page = 0) {
     this.setState({ repSel: reportId, repPage: page, repLoading: true });
+    // The return states a figure; the apportionment says how it was arrived
+    // at, and offers the journal that makes the books agree with it. Only
+    // that one report has anything to do with it.
+    if (reportId === VAT_RETURN) this.loadApportionment();
+    else if (this.state.apportion) this.setState({ apportion: null });
 
     if (!this.repository || typeof this.repository.report !== 'function') {
       clearTimeout(this._r);
@@ -3682,7 +3831,7 @@ export class BusinessApp extends Component {
 
       audit:this.auditTable(),
       invoices:this.invoiceList(),
-      repFilters:this.reportFilters(),
+      repFilters:this.reportFilters(), vatApp:this.vatApportionment(),
       skeleton:[{w:'92%'}, {w:'78%'}, {w:'85%'}, {w:'64%'}, {w:'88%'}, {w:'71%'}],
       // Read from the organisation record rather than restated here: the
       // trade licence and BIN go on invoices and cannot be a second copy.

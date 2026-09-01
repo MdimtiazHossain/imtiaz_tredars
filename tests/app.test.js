@@ -4250,3 +4250,204 @@ describe('vat on the dealer purchase screen', () => {
     expect(text).toContain(`Payable to principal${money(12000)}`);
   });
 });
+
+describe('the input tax apportionment panel', () => {
+  /**
+   * The VAT return states what may be claimed. This panel says how that was
+   * arrived at -- which business line earned what -- and offers the journal
+   * that moves the unearned part out of the receivable.
+   */
+  const WORKED = {
+    lines: [
+      {
+        businessType: 'BULK_CROP', totalSupplies: 865200, creditableSupplies: 0,
+        ratio: 0, inputTax: 0, claimable: 0, disallowed: 0,
+      },
+      {
+        businessType: 'DEALER', totalSupplies: 100000, creditableSupplies: 80000,
+        ratio: 0.8, inputTax: 10000, claimable: 8000, disallowed: 2000,
+      },
+    ],
+    creditableSupplies: 80000,
+    totalSupplies: 965200,
+    ratio: 0.8,
+    inputTax: 10000,
+    claimable: 8000,
+    disallowed: 2000,
+    posted: false,
+    postedAt: null,
+  };
+
+  const CATALOGUE = [
+    {
+      group: 'Finance',
+      items: [
+        { id: 'vat-return', label: 'VAT return', filters: [] },
+        { id: 'fin-pl', label: 'Profit & loss', filters: [] },
+      ],
+    },
+  ];
+
+  function serving({ worked = WORKED } = {}) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    const asked = [];
+    let current = worked;
+    repository.reportCatalogue = async () => CATALOGUE;
+    repository.report = async () => ({
+      columns: [{ key: 'line', label: 'Line', type: 'text' }],
+      rows: [{ line: 'Output tax' }],
+      totals: {},
+      meta: { total: 1 },
+    });
+    repository.taxApportionment = async (period) => {
+      asked.push({ kind: 'get', period });
+      return current;
+    };
+    repository.postTaxApportionment = async (period) => {
+      asked.push({ kind: 'post', period });
+      current = { ...current, posted: true, postedAt: '2026-09-01' };
+      return current;
+    };
+    return { repository, asked };
+  }
+
+  async function openReturn(options = {}) {
+    const { repository, asked } = serving(options);
+    const props = options.permissions ? { permissions: options.permissions } : {};
+    const { app, root } = await mountApp({ repository, ...props });
+    app.go('reports')();
+    await new Promise((r) => setTimeout(r, 40));
+    app.selectReport('vat-return');
+    await new Promise((r) => setTimeout(r, 40));
+    app.renderNow();
+    return { app, root, asked };
+  }
+
+  it('shows what each business line earned, and what it paid', async () => {
+    const { app } = await openReturn();
+    const panel = app.renderVals().vatApp;
+
+    expect(panel.show).toBe(true);
+    expect(panel.t.rows).toHaveLength(2);
+    // The crop line supplied the most and paid no input tax, so it has nothing
+    // to apportion however little of it earned a credit.
+    const crop = panel.t.rows[0].cells.map((c) => c.text);
+    expect(crop[0]).toBe('Bulk crop');
+    expect(crop[4]).toBe(money(0));
+    // The dealer line is where the tax was paid and where the share bites.
+    const dealer = panel.t.rows[1].cells.map((c) => c.text);
+    expect(dealer[0]).toBe('Dealer');
+    expect(dealer[3]).toBe('80%');
+    expect(dealer[5]).toBe(money(8000));
+  });
+
+  it('says what was withheld and what is left to claim', async () => {
+    const { app } = await openReturn();
+    const panel = app.renderVals().vatApp;
+
+    expect(panel.withheld).toBe(true);
+    expect(panel.inputText).toBe(money(10000));
+    expect(panel.disallowedText).toBe(money(2000));
+    expect(panel.claimText).toBe(money(8000));
+    expect(panel.statusText).toBe('Not yet journalled');
+  });
+
+  it('puts it on the screen, not only in the numbers behind it', async () => {
+    const { app, root } = await openReturn();
+    const text = root.textContent;
+
+    expect(text).toContain('Input tax apportionment');
+    expect(text).toContain('Claimable on the return');
+    expect(text).toContain(money(2000));
+    expect(app.renderVals().vatApp.postLabel).toBe('Journal the adjustment');
+  });
+
+  it('asks for a whole month when the filter bar names no dates', async () => {
+    const { asked } = await openReturn();
+    const period = asked[0].period;
+
+    // A VAT return is filed for a month. The report will happily cover all
+    // time; a ratio over all time is not one anybody files.
+    expect(period.from).toMatch(/^\d{4}-\d{2}-01$/);
+    expect(period.to.slice(0, 7)).toBe(period.from.slice(0, 7));
+  });
+
+  it('follows the dates the filter bar is set to', async () => {
+    const { app, asked } = await openReturn();
+    app.setReportFilter('from', '2026-07-01');
+    app.setReportFilter('to', '2026-07-31');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const last = asked.filter((a) => a.kind === 'get').pop();
+    expect(last.period).toEqual({ from: '2026-07-01', to: '2026-07-31' });
+  });
+
+  it('journals the adjustment and reads the result back', async () => {
+    const { app, asked } = await openReturn();
+    app.renderVals().vatApp.onPost();
+    await new Promise((r) => setTimeout(r, 80));
+    app.renderNow();
+
+    expect(asked.some((a) => a.kind === 'post')).toBe(true);
+    // Read back rather than assumed: the journal is what makes the period
+    // adjusted, and the panel should say so from the server.
+    expect(asked.filter((a) => a.kind === 'get').length).toBeGreaterThan(1);
+    expect(app.renderVals().vatApp.posted).toBe(true);
+    expect(app.renderVals().vatApp.statusText).toContain('Journalled');
+    expect(app.renderVals().vatApp.canPost).toBe(false);
+  });
+
+  it('offers nothing to journal when every supply earned its credit', async () => {
+    const whole = {
+      ...WORKED,
+      lines: [
+        {
+          businessType: 'DEALER', totalSupplies: 100000, creditableSupplies: 100000,
+          ratio: 1, inputTax: 10000, claimable: 10000, disallowed: 0,
+        },
+      ],
+      ratio: 1, claimable: 10000, disallowed: 0,
+    };
+    const { app } = await openReturn({ worked: whole });
+    const panel = app.renderVals().vatApp;
+
+    expect(panel.withheld).toBe(false);
+    expect(panel.canPost).toBe(false);
+    expect(panel.statusText).toBe('Nothing to journal');
+    expect(panel.note).toContain('nothing to move');
+  });
+
+  it('does not offer the journal to a role that may not post it', async () => {
+    const { app } = await openReturn({ permissions: ['tax.view', 'dashboard.view'] });
+    // Reading the return is one permission and journalling against the ledger
+    // is another; the panel still explains itself either way.
+    expect(app.renderVals().vatApp.withheld).toBe(true);
+    expect(app.renderVals().vatApp.canPost).toBe(false);
+  });
+
+  it('stays out of the way of every other report', async () => {
+    const { app, root } = await openReturn();
+    app.selectReport('fin-pl');
+    await new Promise((r) => setTimeout(r, 40));
+    app.renderNow();
+
+    expect(app.renderVals().vatApp.show).toBe(false);
+    expect(root.textContent).not.toContain('Input tax apportionment');
+  });
+
+  it('shows nothing at all without a server to ask', async () => {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.reportCatalogue = async () => CATALOGUE;
+    repository.taxApportionment = undefined;
+    const { app } = await mountApp({ repository });
+    app.go('reports')();
+    await new Promise((r) => setTimeout(r, 40));
+    app.selectReport('vat-return');
+    await new Promise((r) => setTimeout(r, 40));
+    app.renderNow();
+
+    // The demo has no ledger to adjust, so a panel offering to adjust one
+    // would be an offer it cannot keep.
+    expect(app.renderVals().vatApp.show).toBe(false);
+  });
+});

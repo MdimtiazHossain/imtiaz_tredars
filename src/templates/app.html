@@ -1369,6 +1369,37 @@
               </div>
             </sc-if>
             <sc-if value="{{ rep.has }}" hint-placeholder-val="{{ true }}"><dc-import name="DataTable" t="{{ rep.t }}" hint-size="100%,420px"></dc-import></sc-if>
+            <sc-if value="{{ vatApp.show }}">
+              <div style="margin-top:14px;background:#fff;border:1px solid #E3E0DA;border-radius:10px;overflow:hidden">
+                <div style="padding:13px 16px;border-bottom:1px solid #F0EEE9;display:flex;justify-content:space-between;align-items:center;gap:12px">
+                  <div>
+                    <div style="font-size:13.5px;font-weight:700">Input tax apportionment</div>
+                    <div style="font-size:12px;color:#8C877F;margin-top:2px">{{ vatApp.periodText }}</div>
+                  </div>
+                  <div style="font-size:12px;font-weight:600;color:#6E6A64">{{ vatApp.statusText }}</div>
+                </div>
+                <sc-if value="{{ vatApp.hasFigures }}">
+                  <div style="padding:6px 16px 14px">
+                    <dc-import name="DataTable" t="{{ vatApp.t }}" hint-size="100%,180px"></dc-import>
+                    <div style="display:flex;justify-content:space-between;padding:11px 0 9px;border-bottom:1px solid #F5F3EF;margin-top:10px">
+                      <span style="font-size:12.5px;color:#6E6A64">Input tax paid, at rates that carry a credit</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600">{{ vatApp.inputText }}</span>
+                    </div>
+                    <sc-if value="{{ vatApp.withheld }}">
+                      <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F5F3EF">
+                        <span style="font-size:12.5px;color:#6E6A64">Not earned — inputs used for exempt or truncated supply</span><span style="font-family:'Roboto Mono',monospace;font-size:13px;font-weight:600;color:#B3261E">{{ vatApp.disallowedText }}</span>
+                      </div>
+                    </sc-if>
+                    <div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:2px solid #E3E0DA">
+                      <span style="font-size:13px;font-weight:700">Claimable on the return</span><span style="font-family:'Roboto Mono',monospace;font-size:15px;font-weight:700">{{ vatApp.claimText }}</span>
+                    </div>
+                    <div style="font-size:12px;color:#8C877F;margin-top:11px;line-height:1.55">{{ vatApp.note }}</div>
+                    <sc-if value="{{ vatApp.canPost }}">
+                      <button onClick="{{ vatApp.onPost }}" style="margin-top:12px;padding:9px 15px;border:none;border-radius:7px;background:#7A1F2B;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#5F1822">{{ vatApp.postLabel }}</button>
+                    </sc-if>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
             <sc-if value="{{ rep.none }}">
               <div style="background:#fff;border:1px solid #E3E0DA;border-radius:10px;padding:60px 24px;text-align:center">
                 <div style="width:46px;height:46px;margin:0 auto 14px;border-radius:11px;border:1px dashed #D6D1C8;display:flex;align-items:center;justify-content:center">

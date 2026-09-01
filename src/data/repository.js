@@ -34,6 +34,8 @@ import { ApiRepository } from './apiRepository.js';
  * | `updateApprovalRule(...)`  | move an approval limit, or switch a rule off  |
  * | `updateNotificationRule()` | move or switch off an alert                   |
  * | `audit(filters)`           | the recorded history of every change          |
+ * | `taxApportionment(period)` | what share of input tax the period earned     |
+ * | `postTaxApportionment(p)`  | journal the share that was not earned         |
  * | `roles()`                  | the roles, their grants and the permissions   |
  * | `createRole(role)`         | add a role, optionally with grants            |
  * | `updateRole(id, changes)`  | rename one, or say what it is for             |

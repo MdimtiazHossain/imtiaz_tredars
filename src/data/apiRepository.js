@@ -581,6 +581,22 @@ export class ApiRepository {
   }
 
   /** Which reports the server can actually serve, grouped for the sidebar. */
+  /**
+   * What share of a period's input tax may actually be claimed.
+   *
+   * Read separately from the VAT return because the return states the figure
+   * and this says how it was arrived at -- which business line earned what,
+   * and whether the adjustment has been journalled yet.
+   */
+  async taxApportionment(period) {
+    return (await this.client.get('/tax/apportionment', period)).data;
+  }
+
+  /** Journal the part of a period's input tax that was not earned. */
+  async postTaxApportionment(period) {
+    return (await this.client.post('/tax/apportionment', period)).data;
+  }
+
   async reportCatalogue() {
     const payload = await this.client.get('/reports/catalogue');
     return payload.data;
