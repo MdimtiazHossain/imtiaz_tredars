@@ -201,14 +201,27 @@ export function reclaimableTax(context, lines) {
   let embedded = 0;
 
   for (const line of lines) {
-    const amount = num(line.taxAmount);
-    if (!amount) continue;
-    const rate = line.taxRateId ? context.byId.get(Number(line.taxRateId)) : null;
-    if (rate && rate.isReclaimable === false) embedded += amount;
-    else reclaimable += amount;
+    const carried = embeddedTaxOf(context, line);
+    embedded += carried;
+    reclaimable += num(line.taxAmount) - carried;
   }
 
   return { reclaimable: paisa(reclaimable), embedded: paisa(embedded) };
+}
+
+/**
+ * The part of one line's tax that the goods themselves have to carry.
+ *
+ * Nothing where the rate can be claimed back, the whole of it where it cannot.
+ * Asked per line rather than per document because it has to reach the batch
+ * that line becomes: stock valued without it would leave the inventory account
+ * standing above the batches it is supposed to be the sum of.
+ */
+export function embeddedTaxOf(context, line) {
+  const amount = num(line.taxAmount);
+  if (!amount) return 0;
+  const rate = line.taxRateId ? context.byId.get(Number(line.taxRateId)) : null;
+  return rate && rate.isReclaimable === false ? paisa(amount) : 0;
 }
 
 /**

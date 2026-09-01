@@ -3843,6 +3843,11 @@ describe('vat on the crop screens', () => {
       id: 6, code: 'EXEMPT', name: 'Exempt', kind: 'EXEMPT', rate: 0,
       isReclaimable: false, isDefault: false, active: true,
     },
+    {
+      // A truncated-rate supply: tax is charged, and no credit comes with it.
+      id: 7, code: 'TRUNC', name: 'VAT 15% truncated', kind: 'REDUCED', rate: 15,
+      isReclaimable: false, isDefault: false, active: true,
+    },
   ];
 
   /** Settings that say how this business is registered, with crops on file. */
@@ -3974,14 +3979,15 @@ describe('vat on the crop screens', () => {
     const cp = app.renderVals().cp;
     expect(cp.showVat).toBe(true);
     expect(cp.vatText).toBe(money(1500));
-    // The transport is this business's own cost, paid to somebody else, so it
-    // belongs to the landed cost and to no part of the farmer's bill. The
-    // farmer is owed their goods and their tax, and nothing else.
+    // The incidental costs are on the supplier's bill, which is what the
+    // server records: its net_amount is the goods and those costs, and the
+    // payable it raises is that plus the whole of the tax. A screen promising
+    // a different figure from the one the ledger records is worse than either.
     expect(cp.totalText).toBe(money(10500));
-    expect(cp.owedText).toBe(money(11500));
+    expect(cp.owedText).toBe(money(12000));
   });
 
-  it('does not put this business own costs on the farmer bill', async () => {
+  it('says the same balance the ledger will record', async () => {
     const app = await openCrop('crop-purchase', serving({ cropRateId: 6 }));
     app.setState({
       cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 500,
@@ -3990,10 +3996,9 @@ describe('vat on the crop screens', () => {
     app.renderNow();
 
     const cp = app.renderVals().cp;
-    // 10,000 of crop less a 2,000 advance. The 500 of transport is arranged
-    // and paid by this business, and a farmer asked to carry it would be
-    // underpaid by exactly that.
-    expect(cp.balText).toBe(money(8000));
+    // 10,000 of crop and 500 of costs is the 10,500 the server bills, less a
+    // 2,000 advance.
+    expect(cp.balText).toBe(money(8500));
     expect(cp.totalText).toBe(money(10500));
   });
 
@@ -4034,7 +4039,7 @@ describe('vat on the crop screens', () => {
 
     const text = panelText(app);
     expect(text).toContain(`VAT 15%${money(1500)}`);
-    expect(text).toContain(`Payable to supplier${money(11500)}`);
+    expect(text).toContain(`Payable to supplier${money(12000)}`);
     // The landed cost keeps its own chain, and the reclaimable tax stays out
     // of it, so the two totals are readable side by side.
     expect(text).toContain(`Total landed cost${money(10500)}`);
@@ -4053,7 +4058,42 @@ describe('vat on the crop screens', () => {
     expect(cp.totalText).toBe(money(10000));
   });
 
-  it('reads each side of the trade on its own basis', async () => {
+  it('carries tax it cannot claim back into what the crop cost', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 7 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 500,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    app.renderNow();
+
+    const cp = app.renderVals().cp;
+    // Nothing will be repaid, so the 1,500 is part of what the crop cost: the
+    // landed cost is 10,000 of crop, 500 of freight and the 1,500, and the
+    // unit cost rises with it. A batch valued without it would report a
+    // margin on every sale that the business never actually made.
+    expect(cp.totalText).toBe(money(12000));
+    expect(cp.cpuText).toBe(money(1200));
+    // The supplier is owed the same either way -- they charged it.
+    expect(cp.owedText).toBe(money(12000));
+  });
+
+  it('keeps tax it can claim back out of what the crop cost', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 1 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 1000, transport: 500,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    app.renderNow();
+
+    const cp = app.renderVals().cp;
+    // The same purchase at a claimable rate: the tax is a receivable from the
+    // NBR, so the crop costs what it cost and the supplier is owed the same.
+    expect(cp.totalText).toBe(money(10500));
+    expect(cp.cpuText).toBe(money(1050));
+    expect(cp.owedText).toBe(money(12000));
+  });
+
+    it('reads each side of the trade on its own basis', async () => {
     // Sells with the tax inside the price, buys with it added on top.
     const repository = serving({ cropRateId: 1, saleInclusive: true, purchaseInclusive: false });
     const purchase = await openCrop('crop-purchase', repository);
@@ -4067,5 +4107,132 @@ describe('vat on the crop screens', () => {
     // the sales side quotes the other way.
     expect(purchase.renderVals().cp.totalText).toBe(money(10000));
     expect(purchase.renderVals().cp.owedText).toBe(money(11500));
+  });
+});
+
+describe('vat on the dealer purchase screen', () => {
+  /**
+   * The screen that had no tax on it at all. A principal's challanpatra
+   * carries VAT, and until now the panel totalled the goods and called that
+   * the bill -- so the company account was short by the tax on every bill and
+   * the stock was valued as though the tax had never been charged.
+   */
+  const RATES = [
+    {
+      id: 1, code: 'VAT15', name: 'VAT 15%', kind: 'STANDARD', rate: 15,
+      isReclaimable: true, isDefault: true, active: true,
+    },
+    {
+      id: 7, code: 'TRUNC', name: 'VAT 15% truncated', kind: 'REDUCED', rate: 15,
+      isReclaimable: false, isDefault: false, active: true,
+    },
+    {
+      id: 6, code: 'EXEMPT', name: 'Exempt', kind: 'EXEMPT', rate: 0,
+      isReclaimable: false, isDefault: false, active: true,
+    },
+  ];
+
+  function serving({ registered = true, productRateId = null, inclusive = false } = {}) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    const base = repository.settings.bind(repository);
+    repository.settings = async () => {
+      const settings = await base();
+      return {
+        ...settings,
+        organization: {
+          ...settings.organization,
+          vatRegistered: registered,
+          salePricesIncludeTax: false,
+          purchasePricesIncludeTax: inclusive,
+        },
+        taxRates: RATES,
+      };
+    };
+    const listMaster = repository.listMaster.bind(repository);
+    repository.listMaster = async (kind, params) => {
+      if (kind !== 'product') return listMaster(kind, params);
+      return [{ id: 1, code: 'P-9001', name: 'Test input', unit: 'bag', taxRateId: productRateId }];
+    };
+    return repository;
+  }
+
+  /** One line, priced so the arithmetic is readable. */
+  async function openPurchase(repository, line = { qty: 10, rate: 1000, disc: 0, free: 0 }) {
+    const mounted = await mountApp({ repository });
+    mounted.app.go('dealer-purchase')();
+    await new Promise((r) => setTimeout(r, 40));
+    mounted.app.setState({
+      dp: {
+        ...mounted.app.state.dp,
+        transport: 500,
+        other: 0,
+        lines: [{ pid: 'P-9001', ...line }],
+      },
+    });
+    mounted.app.renderNow();
+    return Object.assign(mounted.app, { root: mounted.root });
+  }
+
+  it('charges the principal VAT and adds it to what they are owed', async () => {
+    const app = await openPurchase(serving({ productRateId: 1 }));
+    const dp = app.renderVals().dp;
+
+    expect(dp.showVat).toBe(true);
+    expect(dp.vatLabel).toBe('VAT 15%');
+    expect(dp.vatText).toBe(money(1500));
+    // 10,000 of goods and 500 of freight is what the bill is raised on, and
+    // the tax goes on top of it.
+    expect(dp.owedText).toBe(money(12000));
+  });
+
+  it('keeps claimable tax out of what the stock is worth', async () => {
+    const app = await openPurchase(serving({ productRateId: 1 }));
+    // The stock carries the goods and the freight. The tax is a receivable
+    // from the NBR, not a cost of the goods.
+    expect(app.renderVals().dp.netText).toBe(money(10500));
+  });
+
+  it('carries tax it cannot claim back into what the stock is worth', async () => {
+    const app = await openPurchase(serving({ productRateId: 7 }));
+    const dp = app.renderVals().dp;
+
+    // Nothing will be repaid, so the 1,500 is part of what the goods cost.
+    expect(dp.netText).toBe(money(12000));
+    // The principal is owed the same either way.
+    expect(dp.owedText).toBe(money(12000));
+  });
+
+  it('says nothing about tax on an exempt input', async () => {
+    const app = await openPurchase(serving({ productRateId: 6 }));
+    const dp = app.renderVals().dp;
+
+    expect(dp.showVat).toBe(false);
+    expect(dp.netText).toBe(money(10500));
+    expect(dp.owedText).toBe(money(10500));
+  });
+
+  it('says nothing about tax when the business is not registered', async () => {
+    const app = await openPurchase(serving({ registered: false, productRateId: 1 }));
+    expect(app.renderVals().dp.showVat).toBe(false);
+    expect(app.renderVals().dp.owedText).toBe(money(10500));
+  });
+
+  it('grows the company account by the whole bill, tax included', async () => {
+    const app = await openPurchase(serving({ productRateId: 1 }));
+    const dp = app.renderVals().dp;
+    const opening = app.renderVals().dp.coBalText;
+
+    // The account moves by what the principal is owed, which is the bill with
+    // its tax on it -- not the goods alone.
+    expect(dp.payableText).not.toBe(opening);
+    expect(dp.needAppr).toBe(false);
+  });
+
+  it('puts the row on the screen, not only in the numbers behind it', async () => {
+    const app = await openPurchase(serving({ productRateId: 1 }));
+    const text = app.root.textContent;
+
+    expect(text).toContain(`VAT 15%${money(1500)}`);
+    expect(text).toContain(`Payable to principal${money(12000)}`);
   });
 });

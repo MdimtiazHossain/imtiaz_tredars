@@ -1,6 +1,6 @@
 import { num } from '../lib/db.js';
 import { nextDocumentNo } from '../lib/numbering.js';
-import { taxContext, taxDocument, reclaimableTax } from './taxService.js';
+import { taxContext, taxDocument, reclaimableTax, embeddedTaxOf } from './taxService.js';
 import { writeAudit } from '../lib/audit.js';
 import { badRequest, notFound, unprocessable } from '../lib/errors.js';
 import { recordMovement, reverseMovements } from './inventoryService.js';
@@ -280,10 +280,36 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
     (await client.query('SELECT name FROM suppliers WHERE id = $1', [header.supplier_id])).rows[0]
       ?.name;
 
+  // Buying from a farmer is normally exempt, so this is normally nothing. It
+  // is read rather than assumed because a supplier who is registered charges
+  // VAT like anyone else -- and it is read before the batches are made,
+  // because tax the business cannot claim back is part of what the crop cost
+  // and has to reach the batch rather than only the journal.
+  const { rows: taxItems } = await client.query(
+    'SELECT id, tax_amount, tax_rate_id FROM crop_purchase_items WHERE purchase_id = $1',
+    [purchaseId]
+  );
+  const context = await taxContext(orgId, client);
+  const { reclaimable: inputTax, embedded: embeddedTax } = reclaimableTax(
+    context,
+    taxItems.map((i) => ({ taxAmount: i.tax_amount, taxRateId: i.tax_rate_id }))
+  );
+  // Each line carries its own, so there is nothing to apportion: the rate is a
+  // property of the crop on that line.
+  const embeddedByItem = new Map(
+    taxItems.map((i) => [
+      Number(i.id),
+      embeddedTaxOf(context, { taxAmount: i.tax_amount, taxRateId: i.tax_rate_id }),
+    ])
+  );
+
   const batches = [];
 
   for (const { id: itemId, line } of items) {
     const batchNo = await nextDocumentNo(client, orgId, 'crop_batch', header.txn_date);
+    const carried = embeddedByItem.get(Number(itemId)) || 0;
+    const costPerUnit =
+      line.netQuantity > 0 ? line.costPerUnit + carried / line.netQuantity : line.costPerUnit;
 
     const { rows: batchRows } = await client.query(
       `INSERT INTO crop_batches
@@ -302,7 +328,7 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
         line.unitId,
         header.txn_date,
         line.netQuantity,
-        line.costPerUnit,
+        costPerUnit,
       ]
     );
 
@@ -317,7 +343,7 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
       itemType: 'CROP_BATCH',
       batchId,
       quantity: line.netQuantity,
-      unitCost: line.costPerUnit,
+      unitCost: costPerUnit,
       referenceType: 'crop_purchases',
       referenceId: purchaseId,
       movementDate: header.txn_date,
@@ -327,18 +353,6 @@ export async function postCropPurchase(client, { orgId, user, actor, purchaseId,
 
   // Anything not paid as an advance becomes payable to the supplier.
   const netAmount = num(header.net_amount);
-  // Buying from a farmer is normally exempt, so this is normally nothing. It
-  // is read rather than assumed because a supplier who is registered charges
-  // VAT like anyone else.
-  const { rows: taxItems } = await client.query(
-    'SELECT tax_amount, tax_rate_id FROM crop_purchase_items WHERE purchase_id = $1',
-    [purchaseId]
-  );
-  const context = await taxContext(orgId, client);
-  const { reclaimable: inputTax, embedded: embeddedTax } = reclaimableTax(
-    context,
-    taxItems.map((i) => ({ taxAmount: i.tax_amount, taxRateId: i.tax_rate_id }))
-  );
   const totalAmount = num(header.total_amount) || netAmount;
   const inventoryValue = netAmount + embeddedTax;
   const advance = num(header.advance_paid);

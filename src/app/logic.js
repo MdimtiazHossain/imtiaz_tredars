@@ -1354,6 +1354,7 @@ export class BusinessApp extends Component {
 
     let amount = 0;
     let inclusiveAdjustment = 0;
+    let embedded = 0;
     const applied = new Set();
 
     for (const line of lines) {
@@ -1366,20 +1367,28 @@ export class BusinessApp extends Component {
 
       const pct = Number(rate.rate);
       applied.add(pct);
+      let lineTax;
       if (inclusive) {
         // The rate quoted is what the customer pays, so the tax comes out of
         // it rather than being added to it.
         const taxable = Math.round((Number(line.lineNet) / (1 + pct / 100)) * 100) / 100;
-        amount += Math.round((Number(line.lineNet) - taxable) * 100) / 100;
-        inclusiveAdjustment += Math.round((Number(line.lineNet) - taxable) * 100) / 100;
+        lineTax = Math.round((Number(line.lineNet) - taxable) * 100) / 100;
+        inclusiveAdjustment += lineTax;
       } else {
-        amount += Math.round((Number(line.lineNet) * pct) / 100 * 100) / 100;
+        lineTax = Math.round((Number(line.lineNet) * pct) / 100 * 100) / 100;
       }
+      amount += lineTax;
+      // Tax at a rate that cannot be claimed back is not a receivable from the
+      // NBR; it is part of what the goods cost, and the caller has to be able
+      // to put it where costs go.
+      if (rate.isReclaimable === false) embedded += lineTax;
     }
 
     return {
       amount: Math.round(amount * 100) / 100,
       inclusiveAdjustment: Math.round(inclusiveAdjustment * 100) / 100,
+      // The part of that tax the goods themselves have to carry.
+      embedded: Math.round(embedded * 100) / 100,
       // One rate reads as "VAT 15%"; a mixed invoice cannot, and saying so is
       // better than naming whichever rate happened to come first.
       label: applied.size === 1 ? `VAT ${[...applied][0]}%` : 'VAT',
@@ -2204,16 +2213,16 @@ export class BusinessApp extends Component {
       { side:'PURCHASE', rateIdOf:l => cropRate(l.crop) });
     const pv = quotedValue - tax.inclusiveAdjustment;
     const add = (+f.transport || 0) + (+f.loading || 0) + (+f.unloading || 0) + (+f.other || 0);
-    // What the crop cost to get into the godown. Reclaimable tax is not a
-    // cost, so it stays out of the unit cost.
-    const total = pv + add, cpu = net ? total / net : 0;
-    // What the farmer is owed is their goods and their VAT. The transport and
-    // loading are arranged and paid by this business, to other people, so they
-    // are part of the landed cost and no part of the farmer's bill.
-    const owed = pv + tax.amount;
-    // The approval limit is about the size of the commitment, which is every
-    // taka going out on this purchase.
-    const outlay = total + tax.amount;
+    // What the crop cost to get into the godown. Tax the business can claim
+    // back is a receivable rather than a cost and stays out of the unit cost;
+    // tax it cannot claim is part of what the crop cost and has to be in it,
+    // or the batch is undervalued and every sale off it overstates its margin.
+    const total = pv + add + tax.embedded, cpu = net ? total / net : 0;
+    // What the supplier is billed. The incidental costs are on their bill --
+    // `net_amount` on the server is the goods and those costs together, and
+    // the payable it raises is that plus the whole of the tax. The screen has
+    // to say the same number the ledger will record.
+    const owed = pv + add + tax.amount;
     const last = this.data.lastRate[f.crop] || 0, diff = (+f.rate || 0) - last;
     const sup = this.data.suppliers.filter(s => s.code === f.sup)[0] || this.data.suppliers[0] || BLANK_PARTY;
     const adv = +f.advance || 0;
@@ -2222,7 +2231,7 @@ export class BusinessApp extends Component {
       showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), owedText:money(owed),
       cpuText:money(cpu), cpuNum:cpu, perUnitLabel:'per ' + f.unit, lastText:money(last),
       diffText:(diff >= 0 ? '+' : '−') + money(Math.abs(diff)).slice(1) + ' vs last purchase', diffColor:diff > 0 ? C.dngr : C.crop,
-      advText:money(adv), balText:money(owed - adv), needAppr:outlay > this.limit(), limitText:money(this.limit()),
+      advText:money(adv), balText:money(owed - adv), needAppr:owed > this.limit(), limitText:money(this.limit()),
       batchId:'BC-2608-0' + (12 + S.cropLog.length - 4), purNo:'PC-2608-014',
       crops:this.data.crops, grades:this.data.grades, whs:this.data.warehouses, units:this.data.units, sups:this.data.suppliers,
       log:table([column('Purchase No'), column('Date'), column('Supplier'), column('Crop'), column('Qty', 'right'), column('Rate', 'right'), column('Landed cost / unit', 'right'), column('Total', 'right'), column('Status', 'center')],
@@ -2442,13 +2451,27 @@ export class BusinessApp extends Component {
         onRate:e => this.setLine('dp', i, 'rate', e.target.value), onDisc:e => this.setLine('dp', i, 'disc', e.target.value),
         onDel:() => this.setState(s => ({dp:Object.assign({}, s.dp, {lines:s.dp.lines.filter((_, k) => k !== i)})}))};
     });
-    const addl = (+f.transport || 0) + (+f.other || 0), net = gross - discAmt + addl;
+    const addl = (+f.transport || 0) + (+f.other || 0);
+    // A principal charges VAT on their challanpatra like anybody else. What
+    // they charge is owed to them whether or not it can be claimed back; what
+    // cannot be claimed is part of what the goods cost, so it lands on the
+    // stock rather than waiting in a rebate the NBR will never pay.
+    const productRate = this.itemRateLookup('product', 'code');
+    const tax = this.taxOn(
+      f.lines.map(l => ({ productId:l.pid,
+        lineNet:(+l.qty || 0) * (+l.rate || 0) * (1 - (+l.disc || 0) / 100) })),
+      { side:'PURCHASE', rateIdOf:l => productRate(l.productId) }
+    );
+    const goods = gross - discAmt - tax.inclusiveAdjustment;
+    const net = goods + addl + tax.embedded;
+    const owed = goods + addl + tax.amount;
     return {v:f, co:co, cos:this.data.companies, whs:this.data.warehouses, lines:lines, purNo:'DP-2608-072',
       grossText:money(gross), discText:'− ' + money(discAmt).slice(1), addlText:money(addl), netText:money(net),
-      freeText:int(freeQty) + ' pcs free', payableText:money(co.bal + net), coBalText:money(co.bal),
-      needAppr:net > this.limit(), limitText:money(this.limit()),
+      showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), owedText:money(owed),
+      freeText:int(freeQty) + ' pcs free', payableText:money(co.bal + owed), coBalText:money(co.bal),
+      needAppr:owed > this.limit(), limitText:money(this.limit()),
       onAdd:() => this.setState(s => ({dp:Object.assign({}, s.dp, {lines:s.dp.lines.concat([{pid:'P-1002', qty:100, free:0, rate:318, disc:0}])})})),
-      onPost:() => this.postDP(net)};
+      onPost:() => this.postDP(owed)};
   }
 
   /**

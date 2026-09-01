@@ -653,6 +653,137 @@ suite('vat', () => {
     expect(money(sale.totals.total)).toBe(money(sale.totals.net));
     expect(await balanceOf(LEDGER.OUTPUT_VAT)).toBe(before);
   });
+
+  /* ------------------------------------------- tax that cannot be claimed */
+
+  describe('input tax the business cannot claim back', () => {
+    /**
+     * Every rate this system ships with is reclaimable, so this path has no
+     * seeded example -- but a truncated-rate supply is common enough in
+     * Bangladesh that the machinery has to be right before somebody ticks the
+     * box in Settings.
+     *
+     * Where the tax cannot be claimed it is not a receivable from the NBR, it
+     * is part of what the goods cost. It has to reach the batch and not only
+     * the journal, because the batch is what a sale later charges its cost
+     * against and what the inventory account is supposed to be the sum of.
+     */
+    let rateId;
+    let cropId;
+    let previousCropRate;
+    let fixtures;
+
+    beforeAll(async () => {
+      // Upserted, and retired rather than deleted at the end: once a purchase
+      // has been posted at this rate the documents refer to it, and a rate a
+      // document was raised under is not something to remove.
+      const { rows: rateRows } = await query(
+        `INSERT INTO tax_rates (org_id, code, name, kind, rate, is_reclaimable, is_default, is_active)
+         VALUES ($1, 'TRUNC-TEST', 'Truncated, no credit', 'REDUCED', 15.0, false, false, true)
+         ON CONFLICT (org_id, code) DO UPDATE SET is_active = true, is_reclaimable = false
+         RETURNING id`,
+        [orgId]
+      );
+      rateId = Number(rateRows[0].id);
+
+      const { rows: cropRows } = await query(
+        'SELECT id, tax_rate_id, default_unit_id FROM crops WHERE org_id = $1 ORDER BY id LIMIT 1',
+        [orgId]
+      );
+      cropId = Number(cropRows[0].id);
+      previousCropRate = cropRows[0].tax_rate_id;
+      await query('UPDATE crops SET tax_rate_id = $1 WHERE id = $2', [rateId, cropId]);
+
+      const { rows: supplierRows } = await query(
+        'SELECT id FROM suppliers WHERE org_id = $1 ORDER BY id LIMIT 1',
+        [orgId]
+      );
+      fixtures = {
+        supplierId: Number(supplierRows[0].id),
+        unitId: Number(cropRows[0].default_unit_id),
+      };
+    });
+
+    afterAll(async () => {
+      await query('UPDATE crops SET tax_rate_id = $1 WHERE id = $2', [previousCropRate, cropId]);
+      await query('UPDATE tax_rates SET is_active = false WHERE id = $1', [rateId]);
+    });
+
+    it('puts it on the batch rather than in a rebate that will never be paid', async () => {
+      const before = {
+        inventory: await balanceOf(LEDGER.INVENTORY),
+        inputVat: await balanceOf(LEDGER.INPUT_VAT),
+      };
+
+      const purchase = await postDocument(app, auth, '/api/crops/purchases', {
+        txnDate: today(),
+        supplierId: fixtures.supplierId,
+        warehouseId: context.warehouseId,
+        lines: [
+          { cropId, unitId: fixtures.unitId, grossQuantity: 10, moisturePct: 0, rate: 1000 },
+        ],
+        action: 'POST',
+      });
+      expect(purchase.status).toBe('POSTED');
+
+      const purchaseId = purchase.id;
+      const { rows: batches } = await query(
+        `SELECT b.quantity_received, b.cost_per_unit
+           FROM crop_batches b
+           JOIN crop_purchase_items i ON i.id = b.purchase_item_id
+          WHERE i.purchase_id = $1`,
+        [purchaseId]
+      );
+
+      // 10,000 of crop carrying 1,500 it cannot claim back is 11,500 of stock.
+      expect(batches).toHaveLength(1);
+      expect(money(batches[0].cost_per_unit)).toBe(1150);
+
+      // And the account agrees with the batch it is the sum of. Debiting the
+      // inventory 11,500 while valuing the batch at 10,000 would leave 1,500
+      // stranded there for good: never claimed from the NBR, never charged to
+      // cost when the crop is sold.
+      expect(money((await balanceOf(LEDGER.INVENTORY)) - before.inventory)).toBe(11500);
+      expect(money((await balanceOf(LEDGER.INPUT_VAT)) - before.inputVat)).toBe(0);
+      expect(await ledgerDifference()).toBe(0);
+    });
+
+    it('still claims back a rate that can be claimed back', async () => {
+      const reclaimable = rates.find((r) => r.code === 'VAT15');
+      await query('UPDATE crops SET tax_rate_id = $1 WHERE id = $2', [reclaimable.id, cropId]);
+      const before = {
+        inventory: await balanceOf(LEDGER.INVENTORY),
+        inputVat: await balanceOf(LEDGER.INPUT_VAT),
+      };
+
+      const purchase = await postDocument(app, auth, '/api/crops/purchases', {
+        txnDate: today(),
+        supplierId: fixtures.supplierId,
+        warehouseId: context.warehouseId,
+        lines: [
+          { cropId, unitId: fixtures.unitId, grossQuantity: 10, moisturePct: 0, rate: 1000 },
+        ],
+        action: 'POST',
+      });
+      expect(purchase.status).toBe('POSTED');
+
+      const { rows: batches } = await query(
+        `SELECT b.cost_per_unit FROM crop_batches b
+           JOIN crop_purchase_items i ON i.id = b.purchase_item_id
+          WHERE i.purchase_id = $1`,
+        [purchase.id]
+      );
+
+      // The same purchase at a rate that can be claimed: the crop costs what
+      // it cost, and the tax waits in its own account to be set against
+      // output VAT.
+      expect(money(batches[0].cost_per_unit)).toBe(1000);
+      expect(money((await balanceOf(LEDGER.INVENTORY)) - before.inventory)).toBe(10000);
+      expect(money((await balanceOf(LEDGER.INPUT_VAT)) - before.inputVat)).toBe(1500);
+
+      await query('UPDATE crops SET tax_rate_id = $1 WHERE id = $2', [rateId, cropId]);
+    });
+  });
 });
 
 /** Numbers arrive from the database as strings, on purpose. */
