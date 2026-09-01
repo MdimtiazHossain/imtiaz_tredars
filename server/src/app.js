@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { config } from './lib/config.js';
+import { forbidden } from './lib/errors.js';
 import { requestContext } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { healthcheck } from './lib/db.js';
@@ -28,7 +29,12 @@ export function createApp() {
       origin(origin, callback) {
         // Same-origin and tooling requests arrive without an Origin header.
         if (!origin || config.corsOrigins.includes(origin)) return callback(null, true);
-        callback(new Error('Origin not allowed by CORS policy'));
+        // A plain Error here reached the terminal handler as something
+        // unrecognised, so a browser calling from an origin nobody had listed
+        // was told the server had broken -- a 500, logged as an unhandled
+        // fault, for a request that was simply refused. It is the caller that
+        // is not allowed, and saying so is both true and diagnosable.
+        callback(forbidden(`Origin ${origin} is not allowed by the CORS policy.`));
       },
       credentials: true,
       // Without this the browser hides content-disposition from JavaScript, so

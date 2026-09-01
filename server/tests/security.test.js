@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { pool, query, closePool } from '../src/lib/db.js';
+import { config } from '../src/lib/config.js';
 import { HAS_DB } from './helpers/database.js';
 
 /**
@@ -73,6 +74,28 @@ suite('authentication', () => {
     }
   });
 
+  it('refuses a browser calling from an origin nobody listed, without claiming to have broken', async () => {
+    // A disallowed origin is the caller being refused, not the server falling
+    // over. Handing the CORS middleware a plain Error made it arrive at the
+    // terminal handler as something unrecognised: a 500, logged as an
+    // unhandled fault, for a request that was simply not allowed.
+    const res = await request(app).get('/api/workspace').set('origin', 'http://not-allowed.example');
+
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(res.body.error.message).toContain('not-allowed.example');
+  });
+
+  it('answers a preflight from an allowed origin', async () => {
+    const allowed = config.corsOrigins[0];
+    const res = await request(app)
+      .options('/api/auth/login')
+      .set('origin', allowed)
+      .set('access-control-request-method', 'POST');
+
+    expect(res.status).toBeLessThan(400);
+    expect(res.headers['access-control-allow-origin']).toBe(allowed);
+  });
   it('refuses a malformed token', async () => {
     const res = await request(app)
       .get('/api/workspace')
