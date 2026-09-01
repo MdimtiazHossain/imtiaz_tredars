@@ -4,6 +4,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { query, closePool } from '../src/lib/db.js';
 import { HAS_DB } from './helpers/database.js';
+import { masters } from './helpers/fixture.js';
 
 /**
  * Reading the stock the business is holding.
@@ -22,13 +23,11 @@ import { HAS_DB } from './helpers/database.js';
  */
 const suite = HAS_DB ? describe : describe.skip;
 
-const PASSWORD = process.env.SEED_PASSWORD || 'ChangeMe!2026';
-
 let app;
-let token;
+let fixture;
 let orgId;
 
-const auth = () => ({ authorization: `Bearer ${token}` });
+const auth = () => fixture.auth;
 const stock = (qs = '') => request(app).get(`/api/inventory${qs}`).set(auth());
 
 /** Something that names a stock line uniquely: one item, in one warehouse. */
@@ -37,22 +36,22 @@ const identify = (r) => `${r.kind}|${r.name}|${r.sub}|${r.warehouse}`;
 suite('stock list', () => {
   beforeAll(async () => {
     app = createApp();
-    const { rows } = await query(
-      `SELECT u.username, u.org_id FROM users u
-         JOIN user_roles ur ON ur.user_id = u.id
-         JOIN roles r ON r.id = ur.role_id
-        WHERE r.code = 'Admin' AND u.is_active ORDER BY u.id LIMIT 1`
-    );
-    if (!rows.length) throw new Error('Seed the test database first: npm run db:seed');
-    // The endpoint reads the organisation off the token, so the count this
-    // is checked against has to come from the same user rather than an id
-    // written in here.
-    orgId = Number(rows[0].org_id);
+    // Its own account and its own masters, so this runs against a database
+    // holding only the system foundation as readily as against a seeded one.
+    fixture = await masters(app);
+    orgId = fixture.orgId;
 
-    const res = await request(app)
-      .post('/api/auth/login')
-      .send({ username: rows[0].username, password: PASSWORD });
-    token = res.body.data.accessToken;
+    // A line of stock to read back, bought the way a clerk would buy it.
+    await request(app)
+      .post('/api/dealer/purchases')
+      .set(auth())
+      .send({
+        txnDate: new Date().toISOString().slice(0, 10),
+        companyId: fixture.principal.id,
+        warehouseId: fixture.warehouse.id,
+        lines: [{ productId: fixture.product.id, quantity: 25, rate: 1000 }],
+        action: 'POST',
+      });
   });
 
   afterAll(async () => {
