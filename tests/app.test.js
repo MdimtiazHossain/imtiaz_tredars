@@ -3993,12 +3993,11 @@ describe('vat on the crop screens', () => {
     const cp = app.renderVals().cp;
     expect(cp.showVat).toBe(true);
     expect(cp.vatText).toBe(money(1500));
-    // The incidental costs are on the supplier's bill, which is what the
-    // server records: its net_amount is the goods and those costs, and the
-    // payable it raises is that plus the whole of the tax. A screen promising
-    // a different figure from the one the ledger records is worse than either.
+    // The farmer is owed their goods and their tax. The 500 of transport is
+    // owed to whoever carried the crop; the server accrues it separately, and
+    // it stays in the landed cost without ever reaching the farmer's bill.
     expect(cp.totalText).toBe(money(10500));
-    expect(cp.owedText).toBe(money(12000));
+    expect(cp.owedText).toBe(money(11500));
   });
 
   it('says the same balance the ledger will record', async () => {
@@ -4010,9 +4009,10 @@ describe('vat on the crop screens', () => {
     app.renderNow();
 
     const cp = app.renderVals().cp;
-    // 10,000 of crop and 500 of costs is the 10,500 the server bills, less a
-    // 2,000 advance.
-    expect(cp.balText).toBe(money(8500));
+    // 10,000 of crop less a 2,000 advance. The 500 of transport is arranged
+    // and paid by this business to somebody else, and a farmer asked to carry
+    // it would be shown as owed money nobody means to pay them.
+    expect(cp.balText).toBe(money(8000));
     expect(cp.totalText).toBe(money(10500));
   });
 
@@ -4053,7 +4053,7 @@ describe('vat on the crop screens', () => {
 
     const text = panelText(app);
     expect(text).toContain(`VAT 15%${money(1500)}`);
-    expect(text).toContain(`Payable to supplier${money(12000)}`);
+    expect(text).toContain(`Payable to supplier${money(11500)}`);
     // The landed cost keeps its own chain, and the reclaimable tax stays out
     // of it, so the two totals are readable side by side.
     expect(text).toContain(`Total landed cost${money(10500)}`);
@@ -4087,8 +4087,9 @@ describe('vat on the crop screens', () => {
     // margin on every sale that the business never actually made.
     expect(cp.totalText).toBe(money(12000));
     expect(cp.cpuText).toBe(money(1200));
-    // The supplier is owed the same either way -- they charged it.
-    expect(cp.owedText).toBe(money(12000));
+    // The supplier is owed their goods and their tax either way -- they
+    // charged it, claimable or not. The freight is not theirs.
+    expect(cp.owedText).toBe(money(11500));
   });
 
   it('keeps tax it can claim back out of what the crop cost', async () => {
@@ -4104,7 +4105,7 @@ describe('vat on the crop screens', () => {
     // NBR, so the crop costs what it cost and the supplier is owed the same.
     expect(cp.totalText).toBe(money(10500));
     expect(cp.cpuText).toBe(money(1050));
-    expect(cp.owedText).toBe(money(12000));
+    expect(cp.owedText).toBe(money(11500));
   });
 
     it('reads each side of the trade on its own basis', async () => {

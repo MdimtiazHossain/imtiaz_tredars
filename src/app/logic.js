@@ -2385,11 +2385,12 @@ export class BusinessApp extends Component {
     // tax it cannot claim is part of what the crop cost and has to be in it,
     // or the batch is undervalued and every sale off it overstates its margin.
     const total = pv + add + tax.embedded, cpu = net ? total / net : 0;
-    // What the supplier is billed. The incidental costs are on their bill --
-    // `net_amount` on the server is the goods and those costs together, and
-    // the payable it raises is that plus the whole of the tax. The screen has
-    // to say the same number the ledger will record.
-    const owed = pv + add + tax.amount;
+    // What the farmer is billed: their goods and their tax. The freight and
+    // handling are owed to whoever carried the crop, not to the person who
+    // grew it -- the server accrues that separately now, and a screen that
+    // added it to the farmer's bill would promise them money nobody intends
+    // to pay them and leave it open against their name for ever.
+    const owed = pv + tax.amount;
     const last = this.data.lastRate[f.crop] || 0, diff = (+f.rate || 0) - last;
     const sup = this.data.suppliers.filter(s => s.code === f.sup)[0] || this.data.suppliers[0] || BLANK_PARTY;
     const adv = +f.advance || 0;
@@ -2398,7 +2399,7 @@ export class BusinessApp extends Component {
       showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), owedText:money(owed),
       cpuText:money(cpu), cpuNum:cpu, perUnitLabel:'per ' + f.unit, lastText:money(last),
       diffText:(diff >= 0 ? '+' : '−') + money(Math.abs(diff)).slice(1) + ' vs last purchase', diffColor:diff > 0 ? C.dngr : C.crop,
-      advText:money(adv), balText:money(owed - adv), needAppr:owed > this.limit(), limitText:money(this.limit()),
+      advText:money(adv), balText:money(owed - adv), needAppr:owed + add > this.limit(), limitText:money(this.limit()),
       batchId:'BC-2608-0' + (12 + S.cropLog.length - 4), purNo:'PC-2608-014',
       crops:this.data.crops, grades:this.data.grades, whs:this.data.warehouses, units:this.data.units, sups:this.data.suppliers,
       log:table([column('Purchase No'), column('Date'), column('Supplier'), column('Crop'), column('Qty', 'right'), column('Rate', 'right'), column('Landed cost / unit', 'right'), column('Total', 'right'), column('Status', 'center')],
