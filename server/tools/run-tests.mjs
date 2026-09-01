@@ -38,6 +38,74 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 const TESTS = path.join(ROOT, 'tests');
 const REPORT = path.join(ROOT, 'node_modules', '.vitest-run-report.json');
+const LOCK = path.join(ROOT, 'node_modules', '.vitest-run.lock');
+
+/**
+ * One run at a time, because there is one database.
+ *
+ * The suite posts real documents into a database it shares with every other
+ * copy of itself. Two runs at once is not slow, it is wrong: one run's
+ * documents land in the middle of the other's arithmetic, and `baseline.js`
+ * resets the VAT flag under whichever file is relying on it. What comes out is
+ * a handful of failures spread across unrelated files, different every time,
+ * with magnitudes belonging to no document in the file that failed.
+ *
+ * That is indistinguishable from a real intermittent bug, and it costs far more
+ * than the run does: two sessions on this machine each spent an afternoon
+ * measuring changes, disagreeing, and reverting work on numbers that were
+ * describing each other. Three separate wrong causes were confidently
+ * identified before anyone thought to look at the process list.
+ *
+ * So a second run refuses to start and says who holds it, rather than quietly
+ * producing a number nobody can trust.
+ */
+function takeLock() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = fs.openSync(LOCK, 'wx');
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, since: new Date().toISOString() }));
+      fs.closeSync(fd);
+      return;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+
+      let held;
+      try {
+        held = JSON.parse(fs.readFileSync(LOCK, 'utf8'));
+      } catch {
+        held = null;
+      }
+
+      // A run killed part way through leaves its lock behind. If the process
+      // that wrote it is gone, the lock is rubbish rather than a claim.
+      const alive = held?.pid && isRunning(held.pid);
+      if (!alive) {
+        fs.rmSync(LOCK, { force: true });
+        continue;
+      }
+
+      console.error(
+        '\n  Another test run is already going, started by process ' +
+          `${held.pid} at ${held.since}.\n\n` +
+          '  They share one database, so running both would give each of them\n' +
+          '  the other one\'s documents to trip over, and neither result would\n' +
+          '  mean anything. Wait for that one to finish.\n'
+      );
+      process.exit(1);
+    }
+  }
+}
+
+function isRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+const releaseLock = () => fs.rmSync(LOCK, { force: true });
 
 /** Every test file on disk, as absolute paths. */
 function testFiles(dir = TESTS) {
@@ -57,6 +125,16 @@ const rel = (p) => path.relative(ROOT, p).replace(/\\/g, '/');
 const args = process.argv.slice(2);
 // Anything that is not a flag narrows the run to a subset vitest chooses.
 const filtered = args.some((a) => !a.startsWith('-'));
+
+takeLock();
+// However this process ends, the next run must not find a stale claim.
+process.on('exit', releaseLock);
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(signal, () => {
+    releaseLock();
+    process.exit(1);
+  });
+}
 
 fs.rmSync(REPORT, { force: true });
 
