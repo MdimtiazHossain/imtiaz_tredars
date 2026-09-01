@@ -2391,6 +2391,11 @@ export class BusinessApp extends Component {
     // added it to the farmer's bill would promise them money nobody intends
     // to pay them and leave it open against their name for ever.
     const owed = pv + tax.amount;
+    // The approval warning is a prediction of what the server will do with
+    // this purchase, so it is measured on what the server measures: the goods
+    // and the carriage, no tax. Testing anything else makes the screen warn
+    // about approval on a taxed purchase the server would post, or stay quiet
+    // on one it would hold.
     const last = this.data.lastRate[f.crop] || 0, diff = (+f.rate || 0) - last;
     const sup = this.data.suppliers.filter(s => s.code === f.sup)[0] || this.data.suppliers[0] || BLANK_PARTY;
     const adv = +f.advance || 0;
@@ -2399,7 +2404,7 @@ export class BusinessApp extends Component {
       showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), owedText:money(owed),
       cpuText:money(cpu), cpuNum:cpu, perUnitLabel:'per ' + f.unit, lastText:money(last),
       diffText:(diff >= 0 ? '+' : '−') + money(Math.abs(diff)).slice(1) + ' vs last purchase', diffColor:diff > 0 ? C.dngr : C.crop,
-      advText:money(adv), balText:money(owed - adv), needAppr:owed + add > this.limit(), limitText:money(this.limit()),
+      advText:money(adv), balText:money(owed - adv), needAppr:pv + add > this.limit(), limitText:money(this.limit()),
       batchId:'BC-2608-0' + (12 + S.cropLog.length - 4), purNo:'PC-2608-014',
       crops:this.data.crops, grades:this.data.grades, whs:this.data.warehouses, units:this.data.units, sups:this.data.suppliers,
       log:table([column('Purchase No'), column('Date'), column('Supplier'), column('Crop'), column('Qty', 'right'), column('Rate', 'right'), column('Landed cost / unit', 'right'), column('Total', 'right'), column('Status', 'center')],

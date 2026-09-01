@@ -4016,7 +4016,7 @@ describe('vat on the crop screens', () => {
     expect(cp.totalText).toBe(money(10500));
   });
 
-  it('weighs the whole outlay against the approval limit', async () => {
+  it('warns about approval on what the server will measure', async () => {
     const app = await openCrop('crop-purchase', serving({ cropRateId: 1 }));
     app.setState({
       cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 45000, transport: 0,
@@ -4024,9 +4024,24 @@ describe('vat on the crop screens', () => {
     });
     app.renderNow();
 
-    // 450,000 of crop sits inside a 500,000 limit; with the supplier's VAT the
-    // purchase commits 517,500 and does not. What leaves the business is what
-    // the limit is there to catch.
+    // The warning is a prediction of what happens on posting, and the server
+    // evaluates its rule against net_amount: the goods and the carriage, with
+    // no tax in it. 450,000 of crop is inside a 500,000 limit and posts.
+    // Adding the 67,500 of VAT would have the screen warn about an approval
+    // the server is not going to ask for.
+    expect(app.renderVals().cp.needAppr).toBe(false);
+  });
+
+  it('warns once the goods and carriage together pass the limit', async () => {
+    const app = await openCrop('crop-purchase', serving({ cropRateId: 1 }));
+    app.setState({
+      cp: { ...app.state.cp, crop: 'Maize', qty: 10, moist: 0, rate: 45000, transport: 60000,
+        loading: 0, unloading: 0, other: 0, advance: 0 },
+    });
+    app.renderNow();
+
+    // 450,000 of crop and 60,000 of carriage is 510,000, which is what the
+    // server will weigh, and it is over.
     expect(app.renderVals().cp.needAppr).toBe(true);
   });
 
