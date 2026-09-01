@@ -118,6 +118,38 @@ describe('which database a command resolves', () => {
     expect(target.url).toBe(TEST);
     expect(target.kind).toBe('test');
   });
+
+  it('lets that resolved classification through to the guard', () => {
+    // The guard re-deriving the kind for itself is what stopped db:fresh from
+    // ever resetting the test database: it read DATABASE_ENV=development out of
+    // the shipped .env, called "business_suite_test" the development database,
+    // and advised NODE_ENV=test -- which was already set.
+    const target = resolveTarget({ ...env, NODE_ENV: 'test' });
+    const verdict = checkDestructive(
+      { url: target.url, kind: target.kind, command: 'db:fresh' },
+      { ...env, NODE_ENV: 'test' }
+    );
+    expect(verdict.allowed).toBe(true);
+  });
+
+  it('will not call the development database a test one when there is no test one', () => {
+    // Falling back to DATABASE_URL is a convenience for a machine with one
+    // database. Declaring that fallback 'test' would hand a destructive command
+    // the development database under the test database's name.
+    const target = resolveTarget({
+      DATABASE_URL: DEV,
+      DATABASE_ENV: 'development',
+      NODE_ENV: 'test',
+    });
+    expect(target.url).toBe(DEV);
+    expect(target.kind).toBe('development');
+    expect(checkDestructive({ ...target, command: 'db:fresh' }).allowed).toBe(false);
+  });
+
+  it('protects an unnamed fallback database as production, not test', () => {
+    const target = resolveTarget({ DATABASE_URL: PROD, NODE_ENV: 'test' });
+    expect(target.kind).toBe('production');
+  });
 });
 
 describe('the suite itself', () => {

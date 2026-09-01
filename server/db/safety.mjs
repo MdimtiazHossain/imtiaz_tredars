@@ -46,11 +46,27 @@ export function classify(url, env = process.env) {
   return 'production';
 }
 
-/** The connection a command should act on, given how it was invoked. */
+/**
+ * The connection a command should act on, given how it was invoked.
+ *
+ * `NODE_ENV=test` selects the test database and says so, overriding whatever
+ * DATABASE_ENV declares -- that is what lets a reset of the test database
+ * proceed on a machine whose .env says development.
+ *
+ * It may only say so when TEST_DATABASE_URL is what supplied the connection.
+ * Falling back to DATABASE_URL is a convenience for a machine with a single
+ * database configured, and asserting 'test' over that fallback would hand a
+ * destructive command the development database under the name of the test one
+ * -- which is the accident this module exists because of.
+ */
 export function resolveTarget(env = process.env) {
   const useTest = env.NODE_ENV === 'test';
+  const resolvedTheTestDatabase = useTest && Boolean(env.TEST_DATABASE_URL);
   const url = useTest ? env.TEST_DATABASE_URL || env.DATABASE_URL : env.DATABASE_URL;
-  return { url, kind: classify(url, useTest ? { ...env, DATABASE_ENV: 'test' } : env) };
+  return {
+    url,
+    kind: classify(url, resolvedTheTestDatabase ? { ...env, DATABASE_ENV: 'test' } : env),
+  };
 }
 
 /** A connection string with its password removed, for printing. */

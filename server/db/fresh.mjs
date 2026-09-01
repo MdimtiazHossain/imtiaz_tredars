@@ -44,6 +44,19 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(HERE, '..', '.env');
+const TEST_ENV_PATH = path.join(HERE, '..', '.env.testserver');
+
+/**
+ * The env file that configures the API for the database being reset.
+ *
+ * `.env` is the development configuration; `.env.testserver` is what
+ * `npm run dev:test` reads to serve the test database. Which one this command
+ * may rewrite follows the same rule as which database it may drop: the one it
+ * was pointed at, and no other.
+ */
+function envFileFor(kind) {
+  return kind === 'test' && fs.existsSync(TEST_ENV_PATH) ? TEST_ENV_PATH : ENV_PATH;
+}
 
 /**
  * Issue a new signing secret, so tokens from the old database stop working.
@@ -54,15 +67,23 @@ const ENV_PATH = path.join(HERE, '..', '.env');
  * being signed in, now as the new account. Rotating the secret is what makes
  * "start again" mean it.
  *
- * @returns {boolean} whether the secret was replaced
+ * It is rotated in the env file belonging to the database that was reset.
+ * Rewriting `.env` after resetting the test database was a change to the
+ * development environment this command had refused to touch: it signed every
+ * development session out, and left the secret the test API actually signs
+ * with exactly as it was -- so it did harm in one environment and nothing in
+ * the other.
+ *
+ * @returns {string|null} the file that was rewritten, or null if none was
  */
-function rotateSigningSecret() {
-  if (!fs.existsSync(ENV_PATH)) return false;
-  const source = fs.readFileSync(ENV_PATH, 'utf8');
-  if (!/^JWT_SECRET=.*$/m.test(source)) return false;
+function rotateSigningSecret(kind) {
+  const file = envFileFor(kind);
+  if (!fs.existsSync(file)) return null;
+  const source = fs.readFileSync(file, 'utf8');
+  if (!/^JWT_SECRET=.*$/m.test(source)) return null;
   const secret = crypto.randomBytes(48).toString('base64url');
-  fs.writeFileSync(ENV_PATH, source.replace(/^JWT_SECRET=.*$/m, `JWT_SECRET=${secret}`), 'utf8');
-  return true;
+  fs.writeFileSync(file, source.replace(/^JWT_SECRET=.*$/m, `JWT_SECRET=${secret}`), 'utf8');
+  return path.basename(file);
 }
 
 /** `--name "Imtiaz Traders"` -> {name: 'Imtiaz Traders'} */
@@ -123,8 +144,17 @@ async function main() {
   // Which database this is decides whether it may be destroyed at all. The
   // --force flag below only ever meant "I typed this deliberately"; it never
   // meant "against this database", which is the distinction that matters.
+  //
+  // The classification is the one printed above rather than a second one worked
+  // out here. Leaving the guard to re-derive it meant it read
+  // DATABASE_ENV=development straight out of .env -- the shipped setting -- and
+  // refused every reset of the test database, naming "business_suite_test" and
+  // calling it "the DEVELOPMENT database", then advising NODE_ENV=test, which
+  // is what had just been run. db:reset has always passed it; this is the same
+  // contract.
   guardDestructive({
     url: target.url,
+    kind: target.kind,
     command: 'db:fresh',
     override: args[OVERRIDE_FLAG.slice(2)] !== undefined || process.argv.includes(OVERRIDE_FLAG),
   });
@@ -166,7 +196,7 @@ async function main() {
     return;
   }
 
-  const rotated = rotateSigningSecret();
+  const rotated = rotateSigningSecret(target.kind);
   const password = oneTimePassword();
   const passwordHash = await hashPassword(password);
 
@@ -204,7 +234,7 @@ async function main() {
   console.log(`  units          ${summary.units}`);
   console.log('  numbering, approval limits and notification rules at their defaults');
   if (rotated) {
-    console.log('  a new signing secret, so every session issued before now is dead');
+    console.log(`  a new signing secret in ${rotated}, so every session issued before now is dead`);
   }
   console.log('\nNothing else. No customers, suppliers, companies, products, crops,');
   console.log('warehouses, stock, documents or audit history.');
