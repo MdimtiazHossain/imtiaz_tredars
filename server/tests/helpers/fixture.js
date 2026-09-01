@@ -23,22 +23,32 @@ import { hashPassword } from '../../src/services/authService.js';
  */
 
 const PREFIX = 'ZZ-TEST';
-const PASSWORD = 'FixtureOnly!2026';
+
+/**
+ * The one password the whole suite uses.
+ *
+ * Deliberately the same as the seed's, and not a password of this fixture's
+ * own. Several suites sign in as "the first user holding the Admin role"
+ * without caring which that is, and this account holds it too -- so a fixture
+ * with its own password made those suites fail with a 401 whenever the file
+ * that creates it happened to run first. Vitest's file order is not fixed, so
+ * that surfaced as a suite passing one run and failing the next.
+ */
+const PASSWORD = process.env.SEED_PASSWORD || 'ChangeMe!2026';
 
 /**
  * An administrator this suite knows the password of.
  *
- * Reused across calls: creating one costs a bcrypt hash, and every suite wants
- * the same account.
+ * It adopts the administrator that is already there rather than adding one.
+ * Two suites count them: one refuses a change that would leave nobody able to
+ * administer roles, and an extra Admin makes that condition impossible to
+ * reach. So on a seeded database this finds the seed's own administrator, whose
+ * password is already the one below, and changes nothing at all; on a database
+ * installed by db:fresh it finds that administrator and replaces the one-time
+ * password nobody recorded. Only a database with no administrator gets a new
+ * one, which no installed database is.
  */
 export async function fixtureAdmin() {
-  const username = 'zz_test_admin';
-
-  const { rows: existing } = await query('SELECT id, org_id FROM users WHERE username = $1', [
-    username,
-  ]);
-  if (existing.length) return { username, password: PASSWORD, userId: Number(existing[0].id) };
-
   const { rows: org } = await query('SELECT id FROM organizations ORDER BY id LIMIT 1');
   if (!org.length) throw new Error('No organisation: run `NODE_ENV=test npm run db:fresh -- --force`');
   const orgId = Number(org[0].id);
@@ -46,6 +56,23 @@ export async function fixtureAdmin() {
   const { rows: role } = await query("SELECT id FROM roles WHERE code = 'Admin' LIMIT 1");
   if (!role.length) throw new Error('No Admin role: the database has no foundation installed');
 
+  const { rows: already } = await query(
+    `SELECT u.id, u.username FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+      WHERE ur.role_id = $1 ORDER BY u.id LIMIT 1`,
+    [Number(role[0].id)]
+  );
+  if (already.length) {
+    // must_change_pw is cleared too: db:fresh sets it, and a fixture cannot
+    // answer a password-change prompt.
+    await query(
+      'UPDATE users SET password_hash = $1, is_active = true, must_change_pw = false WHERE id = $2',
+      [await hashPassword(PASSWORD), Number(already[0].id)]
+    );
+    return { username: already[0].username, password: PASSWORD, userId: Number(already[0].id) };
+  }
+
+  const username = 'zz_test_admin';
   const passwordHash = await hashPassword(PASSWORD);
 
   const userId = await withTransaction(async (client) => {
