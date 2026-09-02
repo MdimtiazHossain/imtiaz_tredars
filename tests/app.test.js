@@ -24,6 +24,18 @@ async function mountApp(props = {}) {
   return { app, root };
 }
 
+/**
+ * Fill in the crop purchase form the way a clerk would.
+ *
+ * The form opens empty now -- quantity and rate are things that happened, not
+ * things the screen can assume -- so a test that posts one has to say what it
+ * is buying. These used to rely on the form arriving pre-filled with 100 MT at
+ * 30,000, which was the defect rather than the fixture.
+ */
+function enterCropPurchase(app, over = {}) {
+  app.setState({ cp: { ...app.state.cp, qty: 100, rate: 30000, ...over } });
+}
+
 /** Apply pending state and repaint synchronously. */
 function flush(app) {
   app.renderNow();
@@ -187,6 +199,7 @@ describe('crop purchase posting', () => {
 
   it('adds a batch and a log row when posted', async () => {
     const { app } = await mountApp();
+    enterCropPurchase(app);
     const batches = app.state.batches.length;
     const log = app.state.cropLog.length;
     app.postCP();
@@ -348,6 +361,7 @@ describe('duplicate submission', () => {
       await new Promise((r) => setTimeout(r, 30));
       return payload;
     };
+    enterCropPurchase(app);
 
     app.postCP();
     app.postCP();
@@ -362,6 +376,7 @@ describe('duplicate submission', () => {
       await new Promise((r) => setTimeout(r, 30));
       return payload;
     };
+    enterCropPurchase(app);
 
     app.postCP();
     app.postCP();
@@ -377,6 +392,7 @@ describe('duplicate submission', () => {
       calls += 1;
       return payload;
     };
+    enterCropPurchase(app);
 
     app.postCP();
     await new Promise((r) => setTimeout(r, 20));
@@ -4715,5 +4731,40 @@ describe('what a document form says before anything is posted', () => {
     app.loadDocumentNumbers('2026-12-01');
     await settle();
     expect(asked, 'a different month is').toHaveLength(2);
+  });
+
+  it('opens the crop forms empty rather than pre-filled with a trade', async () => {
+    // The crop sale form opened quoting 34,500 a tonne with 20,000 of selling
+    // cost, so the summary showed a 20,000 loss before anything was entered,
+    // and the purchase form opened holding 100 MT and a 15,00,000 advance.
+    // Filling in what is missing and posting books all of it.
+    const { app } = await mountApp();
+    const { cp, cs } = app.state;
+
+    for (const [field, value] of Object.entries({
+      qty: cp.qty, moist: cp.moist, transport: cp.transport, loading: cp.loading,
+      unloading: cp.unloading, other: cp.other, advance: cp.advance,
+    })) {
+      expect(Number(value) || 0, `crop purchase ${field}`).toBe(0);
+    }
+
+    for (const [field, value] of Object.entries({
+      rate: cs.rate, transport: cs.transport, other: cs.other, target: cs.target,
+    })) {
+      expect(Number(value) || 0, `crop sale ${field}`).toBe(0);
+    }
+
+    // And the summary it draws says nothing was lost on a sale of nothing.
+    expect(app.renderVals().cs.profitText).toBe(money(0));
+  });
+
+  it('opens a crop purchase at the rate the master last recorded', async () => {
+    // The one figure with a real source: the crop master keeps what was last
+    // paid, which is the same reason a dealer line opens at the product's rate.
+    const { app } = await mountApp();
+    const crop = app.state.cp.crop;
+    const expected = app.data.lastRate[crop];
+
+    if (expected) expect(Number(app.state.cp.rate)).toBe(expected);
   });
 });

@@ -221,10 +221,18 @@ export class BusinessApp extends Component {
       supSel:opening(data.suppliers, 'SUP-001', 'code'), supTab:'purchases',
       // The configured costing method, not a default the screen decides on.
       valuation:data.company && data.company.valuation === 'WEIGHTED_AVERAGE' ? 'Weighted Average' : 'FIFO',
+      // What is chosen comes from the records on file; what is *entered* starts
+      // empty. A form that opens holding 100 MT at 30,000 with 70,000 of
+      // carriage and a 15,00,000 advance is describing a purchase nobody made,
+      // and every figure of it posts if the clerk fills in what is missing and
+      // does not think to clear the rest. The rate is the one exception, and
+      // only because the crop master records what was last paid -- the same
+      // reason a dealer line opens at the product's own rate.
       cp:{sup:opening(data.suppliers, 'SUP-001', 'code'), crop:opening(data.crops, 'Maize'),
         grade:opening(data.grades, 'A (Premium)'), wh:opening(data.warehouses, 'Naogaon Central Godown'),
-        date:today(), qty:100, unit:opening(data.units, 'MT'), moist:1.5, rate:30000,
-        transport:50000, loading:12000, unloading:8000, other:0, advance:1500000, note:''},
+        date:today(), qty:'', unit:opening(data.units, 'MT'), moist:0,
+        rate:(data.lastRate || {})[opening(data.crops, 'Maize')] || '',
+        transport:0, loading:0, unloading:0, other:0, advance:0, note:''},
       extraCusts:[], custModal:false, master:null, masterRows:{},
       // Configuration, fetched when Settings is opened; the audit trail, when
       // its screen is. Neither belongs in the workspace every screen boots from.
@@ -244,8 +252,14 @@ export class BusinessApp extends Component {
       newCust:{name:'', bn:'', type:'Dealer', person:'', mobile:'',
         district:opening((data.customers || []).concat(data.suppliers || []), 'Bogura', 'district'),
         upazila:'', limit:500000, days:15, opening:0},
+      // The same, and with no rate to inherit: the crop master records what was
+      // last paid for a crop, not what it sells for, and opening a sale at the
+      // purchase rate would propose selling at cost. The screen already shows
+      // the weighted average cost beside the field, which is the number worth
+      // knowing while quoting. Selling costs start at nothing, so the summary
+      // does not open reading a 20,000 loss on a sale of nothing.
       cs:{buyer:opening(data.buyers, 'PRAN Agro Business Ltd.'), crop:opening(data.crops, 'Maize'),
-        date:today(), rate:34500, transport:15000, other:5000, target:40, alloc:{}},
+        date:today(), rate:'', transport:0, other:0, target:'', alloc:{}},
       ds:{cust:opening(data.customers, 'CUS-002', 'code'), date:today(),
         sp:opening(data.employees, 'Shamim Reza', 'name'), wh:opening(data.warehouses, 'Bogura Depot'),
         terms:'Credit 15 days', paid:0,
