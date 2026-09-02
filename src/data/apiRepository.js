@@ -553,6 +553,18 @@ export class ApiRepository {
   /* ------------------------------------------------------------------ reads */
 
   /**
+   * The number each document type would get if one were posted on `date`.
+   *
+   * A prediction rather than a reservation: opening a form does not consume a
+   * number, so two clerks with the same form open see the same one and whoever
+   * posts first takes it. The date matters because numbers carry the month.
+   */
+  async documentNumbers(date) {
+    const payload = await this.client.get('/workspace/document-numbers', date ? { date } : {});
+    return payload.data.numbers;
+  }
+
+  /**
    * Dashboard aggregates, computed in SQL.
    *
    * Two calls: the running position, and the same figures narrowed to today,

@@ -4635,3 +4635,85 @@ describe('the dashboard against a real business', () => {
     expect(app.renderVals().dash.low).toEqual([]);
   });
 });
+
+describe('what a document form says before anything is posted', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+  });
+
+  /** A repository that answers like the API one, with a live sequence. */
+  function backend(numbers) {
+    const repository = /** @type {any} */ (new Repository({ latency: 0 }));
+    repository.report = async () => ({ rows: [] });
+    repository.documentNumbers = async () => numbers;
+    return repository;
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+
+  const NUMBERS = {
+    crop_purchase: 'PC-2611-007',
+    crop_sale: 'SC-2611-003',
+    dealer_purchase: 'DP-2611-042',
+    dealer_sale: 'DS-2611-118',
+    crop_batch: 'BC-2611-009',
+  };
+
+  it('shows the number the server will actually give the document', async () => {
+    // Every one of these was a constant: the same crop sale number on every
+    // installation, so anyone writing it on a paper file before posting had
+    // recorded a document that would never exist.
+    const { app } = await mountApp({ repository: backend(NUMBERS) });
+    app.loadDocumentNumbers('2026-11-04');
+    await settle();
+
+    expect(app.renderVals().cp.purNo).toBe('PC-2611-007');
+    expect(app.renderVals().cp.batchId).toBe('BC-2611-009');
+    expect(app.renderVals().cs.salesNo).toBe('SC-2611-003');
+    expect(app.renderVals().ds.invNo).toBe('DS-2611-118');
+    expect(app.renderVals().dp.purNo).toBe('DP-2611-042');
+  });
+
+  it('says it does not know rather than guessing', async () => {
+    const repository = backend(NUMBERS);
+    repository.documentNumbers = async () => {
+      throw new Error('offline');
+    };
+    const { app } = await mountApp({ repository });
+    app.loadDocumentNumbers('2026-11-04');
+    await settle();
+
+    for (const shown of [
+      app.renderVals().cp.purNo,
+      app.renderVals().cp.batchId,
+      app.renderVals().cs.salesNo,
+      app.renderVals().ds.invNo,
+      app.renderVals().dp.purNo,
+    ]) {
+      expect(shown).toBe('—');
+      // The specific thing that must never come back: something that looks
+      // like a document number but is not one.
+      expect(shown).not.toMatch(/^[A-Z]{2}-\d{4}-\d+$/);
+    }
+  });
+
+  it('asks again for a date in another month, since numbers carry the month', async () => {
+    const asked = [];
+    const repository = backend(NUMBERS);
+    repository.documentNumbers = async (date) => {
+      asked.push(date);
+      return NUMBERS;
+    };
+    const { app } = await mountApp({ repository });
+
+    app.loadDocumentNumbers('2026-11-04');
+    await settle();
+    app.loadDocumentNumbers('2026-11-27');
+    await settle();
+    expect(asked, 'a date inside the same month is not worth a request').toHaveLength(1);
+
+    app.loadDocumentNumbers('2026-12-01');
+    await settle();
+    expect(asked, 'a different month is').toHaveLength(2);
+  });
+});

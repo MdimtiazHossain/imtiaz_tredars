@@ -211,6 +211,9 @@ export class BusinessApp extends Component {
       // three states this is in decides what the tiles may say: loading and
       // failed both mean the business's own figures are not in hand yet.
       serverDash:null, dashLoading:false, dashError:'',
+      // The next document number per type, as the server's sequence stands,
+      // and the YYYY-MM it was fetched for.
+      docNos:null, docNoFor:'',
       retTab:'returns', returns:[], creditNotes:[], returnableDocs:[], returnsLoading:false, returnsError:'',
       partyStatements:{}, partyStatementLoading:'', partyStatementError:'',
       repFilter:{},
@@ -290,6 +293,9 @@ export class BusinessApp extends Component {
       // the real one is 4%, which is exactly the number somebody decides on.
       if (DOCUMENT_SCREENS.has(id)) {
         this.loadSettings();
+        // The number this screen's next document will be given, for the date
+        // its form is currently set to.
+        this.loadDocumentNumbers(this.formDateFor(id));
         // And the master the lines name, because only the master says which
         // rate an item is charged at. Without it an exempt crop falls back to
         // the default and the screen charges 15% on produce that carries none.
@@ -2405,7 +2411,7 @@ export class BusinessApp extends Component {
       cpuText:money(cpu), cpuNum:cpu, perUnitLabel:'per ' + f.unit, lastText:money(last),
       diffText:(diff >= 0 ? '+' : '−') + money(Math.abs(diff)).slice(1) + ' vs last purchase', diffColor:diff > 0 ? C.dngr : C.crop,
       advText:money(adv), balText:money(owed - adv), needAppr:pv + add > this.limit(), limitText:money(this.limit()),
-      batchId:'BC-2608-0' + (12 + S.cropLog.length - 4), purNo:'PC-2608-014',
+      batchId:this.docNo('crop_batch'), purNo:this.docNo('crop_purchase'),
       crops:this.data.crops, grades:this.data.grades, whs:this.data.warehouses, units:this.data.units, sups:this.data.suppliers,
       log:table([column('Purchase No'), column('Date'), column('Supplier'), column('Crop'), column('Qty', 'right'), column('Rate', 'right'), column('Landed cost / unit', 'right'), column('Total', 'right'), column('Status', 'center')],
         S.cropLog.map(r => ({cells:[cell(r.no, {mono:true, weight:'600'}), cell(r.date, {color:C.mut}), cell(r.sup), cell(r.crop, {dot:C.crop}),
@@ -2418,19 +2424,27 @@ export class BusinessApp extends Component {
   postCP() {
     const c = this.calcCP(), f = this.state.cp;
     if (!c.net) { this.fire('Enter a quantity before posting.', 'danger'); return; }
-    const no = 'PC-2608-0' + (14 + this.state.cropLog.length - 5);
-    const batch = {id:c.batchId, crop:f.crop, grade:f.grade, wh:f.wh, qty:c.net, rem:c.net, cost:c.cpuNum, date:'28 Aug 2026', age:0, sup:c.sup.name};
-    const logRow = {no:no, date:'28 Aug 2026', sup:c.sup.name, crop:f.crop, qty:c.net, unit:f.unit, rate:+f.rate || 0, cpu:c.cpuNum, total:c.total, status:c.needAppr ? 'Pending approval' : 'Posted'};
+    // The number and the date the document will actually carry, rather than a
+    // counter derived from how many rows the log happens to hold and a day in
+    // August that every purchase was stamped with.
+    const no = this.docNo('crop_purchase');
+    const on = shortDate(f.date);
+    const batch = {id:c.batchId, crop:f.crop, grade:f.grade, wh:f.wh, qty:c.net, rem:c.net, cost:c.cpuNum, date:on, age:0, sup:c.sup.name};
+    const logRow = {no:no, date:on, sup:c.sup.name, crop:f.crop, qty:c.net, unit:f.unit, rate:+f.rate || 0, cpu:c.cpuNum, total:c.total, status:c.needAppr ? 'Pending approval' : 'Posted'};
     const intent = {date:f.date, supplierCode:f.sup, crop:f.crop, grade:f.grade, warehouse:f.wh,
       quantity:+f.qty || 0, unit:f.unit, moisture:+f.moist || 0, rate:+f.rate || 0,
       transport:+f.transport || 0, loading:+f.loading || 0, unloading:+f.unloading || 0,
       other:+f.other || 0, advance:+f.advance || 0, note:f.note};
     this.persist('postCropPurchase', {logRow:logRow, batch:batch, intent:intent}).then(saved => {
+      // The server names the document; the optimistic row only stands in until
+      // it answers.
+      const posted = (saved && saved.txnNo) || no;
       this.setState(s => ({
-        batches:[saved.batch].concat(s.batches),
-        cropLog:[saved.logRow].concat(s.cropLog)
+        batches:[saved.batch || batch].concat(s.batches),
+        cropLog:[Object.assign({}, saved.logRow || logRow, {no:posted})].concat(s.cropLog)
       }));
-      this.fire(c.needAppr ? no + ' saved and sent for approval — ' + money(c.total) : no + ' posted · batch ' + c.batchId + ' added to stock', c.needAppr ? 'warn' : 'ok');
+      this.loadDocumentNumbers(f.date, { force: true });
+      this.fire(c.needAppr ? posted + ' saved and sent for approval — ' + money(c.total) : posted + ' posted · batch ' + c.batchId + ' added to stock', c.needAppr ? 'warn' : 'ok');
     }).catch(err => { if (!err.silent) this.fire('Could not post purchase — ' + err.message, 'danger'); });
   }
 
@@ -2458,7 +2472,7 @@ export class BusinessApp extends Component {
     const sales = quoted - tax.inclusiveAdjustment;
     const due = sales + tax.amount;
     const profit = sales - cogs - exp, per = allocQty ? profit / allocQty : 0, margin = sales ? profit / sales * 100 : 0;
-    return {v:f, rows:rows, pool:pool, crops:this.data.crops, buyers:this.data.buyers, salesNo:'SC-2608-052',
+    return {v:f, rows:rows, pool:pool, crops:this.data.crops, buyers:this.data.buyers, salesNo:this.docNo('crop_sale'),
       allocText:dec2(allocQty) + ' MT', allocQty:allocQty, over:over,
       salesText:money(sales), cogsText:'− ' + money(cogs).slice(1), expText:'− ' + money(exp).slice(1),
       showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), dueText:money(due),
@@ -2477,7 +2491,7 @@ export class BusinessApp extends Component {
     const c = this.calcCS(), f = this.state.cs;
     if (c.over) { this.fire('Allocation exceeds remaining stock in one or more batches.', 'danger'); return; }
     if (!c.allocQty) { this.fire('Allocate quantity from at least one batch.', 'danger'); return; }
-    const logRow = {no:c.salesNo, date:'28 Aug 2026', buyer:f.buyer, crop:f.crop, batch:c.rows.filter(r => (+f.alloc[r.id] || 0) > 0).map(r => r.id).join(', '),
+    const logRow = {no:c.salesNo, date:shortDate(f.date), buyer:f.buyer, crop:f.crop, batch:c.rows.filter(r => (+f.alloc[r.id] || 0) > 0).map(r => r.id).join(', '),
       qty:c.allocQty, rate:+f.rate || 0, amt:c.allocQty * (+f.rate || 0), profit:0, status:'Posted'};
     const intent = {date:f.date, buyerName:f.buyer, crop:f.crop, quantity:c.allocQty,
       rate:+f.rate || 0, transport:+f.transport || 0, other:+f.other || 0,
@@ -2485,10 +2499,11 @@ export class BusinessApp extends Component {
     this.persist('postCropSale', {logRow:logRow, allocations:Object.assign({}, f.alloc), intent:intent}).then(saved => {
       this.setState(s => ({
         batches:s.batches.map(b => { const a = +saved.allocations[b.id] || 0; return a ? Object.assign({}, b, {rem:b.rem - a}) : b; }),
-        saleLog:[saved.logRow].concat(s.saleLog),
+        saleLog:[Object.assign({}, saved.logRow || logRow, {no:(saved && saved.txnNo) || c.salesNo})].concat(s.saleLog),
         cs:Object.assign({}, s.cs, {alloc:{}})
       }));
-      this.fire(c.salesNo + ' posted · ' + c.allocText + ' issued, stock and buyer receivable updated', 'ok');
+      this.loadDocumentNumbers(f.date, { force: true });
+      this.fire(((saved && saved.txnNo) || c.salesNo) + ' posted · ' + c.allocText + ' issued, stock and buyer receivable updated', 'ok');
     }).catch(err => { if (!err.silent) this.fire('Could not post sale — ' + err.message, 'danger'); });
   }
 
@@ -2523,7 +2538,8 @@ export class BusinessApp extends Component {
           rate:+l.rate || 0, discount:+l.disc || 0, unit:p.unit}; })};
 
     this.persist('postDealerSale', {intent:intent, customer:cust, due:due}).then(saved => {
-      const no = saved && saved.txnNo ? saved.txnNo : 'DS-2608-222';
+      const no = (saved && saved.txnNo) || this.docNo('dealer_sale');
+      this.loadDocumentNumbers(f.date, { force: true });
       if (saved && saved.status === 'PENDING_APPROVAL') {
         this.fire(no + ' saved and sent for approval', 'warn');
       } else if (due > 0) {
@@ -2549,7 +2565,8 @@ export class BusinessApp extends Component {
         rate:+l.rate || 0, discount:+l.disc || 0}))};
 
     this.persist('postDealerPurchase', {intent:intent, company:co, net:net}).then(saved => {
-      const no = saved && saved.txnNo ? saved.txnNo : 'DP-2608-072';
+      const no = (saved && saved.txnNo) || this.docNo('dealer_purchase');
+      this.loadDocumentNumbers(f.date, { force: true });
       if (saved && saved.status === 'PENDING_APPROVAL') {
         this.fire(no + ' saved, approval requested above ' + money(this.limit()), 'warn');
       } else {
@@ -2588,7 +2605,7 @@ export class BusinessApp extends Component {
     const total = net + tax.amount;
     const paid = +f.paid || 0, due = total - paid;
     const exposure = cust.out + due, avail = cust.limit - exposure;
-    return {v:f, cust:cust, lines:lines, custs:all, whs:this.data.warehouses, invNo:'DS-2608-222',
+    return {v:f, cust:cust, lines:lines, custs:all, whs:this.data.warehouses, invNo:this.docNo('dealer_sale'),
       modal:this.state.custModal, nc:this.state.newCust,
       onNew:() => this.setState({custModal:true}), onCancel:() => this.setState({custModal:false}), onSave:() => this.saveCustomer(),
       types:this.optionsInUse(all, 'type', ['Dealer', 'Retailer', 'Corporate', 'Individual']),
@@ -2638,13 +2655,61 @@ export class BusinessApp extends Component {
     const goods = gross - discAmt - tax.inclusiveAdjustment;
     const net = goods + addl + tax.embedded;
     const owed = goods + addl + tax.amount;
-    return {v:f, co:co, cos:this.data.companies, whs:this.data.warehouses, lines:lines, purNo:'DP-2608-072',
+    return {v:f, co:co, cos:this.data.companies, whs:this.data.warehouses, lines:lines, purNo:this.docNo('dealer_purchase'),
       grossText:money(gross), discText:'− ' + money(discAmt).slice(1), addlText:money(addl), netText:money(net),
       showVat:tax.amount > 0, vatLabel:tax.label, vatText:money(tax.amount), owedText:money(owed),
       freeText:int(freeQty) + ' pcs free', payableText:money(co.bal + owed), coBalText:money(co.bal),
       needAppr:owed > this.limit(), limitText:money(this.limit()),
       onAdd:() => this.setState(s => ({dp:Object.assign({}, s.dp, {lines:s.dp.lines.concat([{pid:'P-1002', qty:100, free:0, rate:318, disc:0}])})})),
       onPost:() => this.postDP(owed)};
+  }
+
+  /** The date the form on a given document screen is currently set to. */
+  formDateFor(screen) {
+    const S = this.state;
+    const form = { 'crop-purchase': S.cp, 'crop-sales': S.cs, 'dealer-sales': S.ds, 'dealer-purchase': S.dp }[screen];
+    return (form && form.date) || today();
+  }
+
+  /**
+   * The number a document type is about to be given, or a dash.
+   *
+   * A dash where the answer is not in hand: while the request is out, if it
+   * failed, and against the bundled data, which has no sequence to read. The
+   * one thing it must never be is a plausible-looking number nobody will
+   * issue.
+   */
+  docNo(docType) {
+    const numbers = this.state.docNos;
+    return (numbers && numbers[docType]) || '—';
+  }
+
+  /**
+   * The number each document form is about to be given.
+   *
+   * The forms showed a constant -- every crop sale was going to be SC-2608-052
+   * -- so a clerk who wrote the number on a paper file before posting had
+   * recorded a document that would never exist. The server knows what the
+   * sequence stands at, and asking costs one small request.
+   *
+   * Numbers carry the month of the document, so this is asked per date: a
+   * purchase back-dated into last month takes last month's series. It is
+   * fetched rather than reserved, so abandoning a form leaves no hole.
+   */
+  loadDocumentNumbers(date, { force = false } = {}) {
+    if (!this.repository || typeof this.repository.documentNumbers !== 'function') return;
+
+    const on = date || today();
+    // The period is all that changes the answer, so a date moving within a
+    // month is not worth a request. Posting is: it takes the number that was
+    // being shown, and the next form must not offer it again.
+    if (!force && this.state.docNoFor === String(on).slice(0, 7)) return;
+
+    this.repository.documentNumbers(on).then(
+      numbers => this.setState({ docNos: numbers, docNoFor: String(on).slice(0, 7) }),
+      // A number nobody could fetch is shown as unknown, never as a guess.
+      () => this.setState({ docNos: null, docNoFor: '' })
+    );
   }
 
   /**
@@ -3913,7 +3978,7 @@ export class BusinessApp extends Component {
         qty:this.h('cp', 'qty', true), unit:this.h('cp', 'unit'), moist:this.h('cp', 'moist', true), rate:this.h('cp', 'rate', true),
         transport:this.h('cp', 'transport', true), loading:this.h('cp', 'loading', true), unloading:this.h('cp', 'unloading', true),
         other:this.h('cp', 'other', true), advance:this.h('cp', 'advance', true), note:this.h('cp', 'note'),
-        post:() => this.postCP(), draft:() => this.fire('Draft PC-2608-014 saved — nothing posted to stock or accounts', 'ok')},
+        post:() => this.postCP(), draft:() => this.fire('Draft ' + this.docNo('crop_purchase') + ' saved — nothing posted to stock or accounts', 'ok')},
       onCS:{buyer:this.h('cs', 'buyer'), crop:this.h('cs', 'crop'), date:this.h('cs', 'date'), rate:this.h('cs', 'rate', true),
         transport:this.h('cs', 'transport', true), other:this.h('cs', 'other', true), target:this.h('cs', 'target', true),
         auto:() => this.autoAlloc(), post:() => this.postCS(), clear:() => this.setState(s => ({cs:Object.assign({}, s.cs, {alloc:{}})}))},
