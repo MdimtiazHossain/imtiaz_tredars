@@ -1,7 +1,10 @@
 node_modules/
 .env
 .env.*
+# The templates carry no secrets and are the only record of which variable
+# names the app actually reads, so they are the exception to the line above.
 !.env.example
+!.env.testserver.example
 *.local
 db/pgadmin-setup.sql
 
