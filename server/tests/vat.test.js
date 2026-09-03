@@ -4,6 +4,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { query, closePool } from '../src/lib/db.js';
 import { HAS_DB } from './helpers/database.js';
+import { masters } from './helpers/fixture.js';
 import { LEDGER } from '../src/services/financeService.js';
 import { postDocument } from './helpers/documents.js';
 
@@ -90,6 +91,11 @@ const buy = ({ quantity, rate }) =>
 suite('vat', () => {
   beforeAll(async () => {
     app = createApp();
+    // The administrator to sign in as, and the masters the lookups below go
+    // looking for. On a seeded database they are already there and this adds
+    // nothing; on an installed one it is what the suite has instead of a
+    // demonstration business.
+    await masters(app);
     const { rows } = await query(
       `SELECT u.username FROM users u
          JOIN user_roles ur ON ur.user_id = u.id

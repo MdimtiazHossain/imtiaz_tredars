@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { query, closePool } from '../src/lib/db.js';
 import { HAS_DB } from './helpers/database.js';
+import { masters } from './helpers/fixture.js';
 
 /**
  * Settings.
@@ -18,6 +19,7 @@ const suite = HAS_DB ? describe : describe.skip;
 const PASSWORD = process.env.SEED_PASSWORD || 'ChangeMe!2026';
 
 let app;
+let fx;
 const tokens = {};
 
 async function signIn(roleCode) {
@@ -42,6 +44,10 @@ const as = (role) => ({ authorization: `Bearer ${tokens[role]}` });
 suite('settings', () => {
   beforeAll(async () => {
     app = createApp();
+    // Somebody to sign in as, and something to trade. On a seeded database
+    // these already exist and this changes nothing; on an installed one it is
+    // the difference between the suite running and a wall of 401s.
+    fx = await masters(app);
     for (const role of ['Admin', 'Sales', 'Purchase']) tokens[role] = await signIn(role);
   });
 
@@ -265,9 +271,39 @@ suite('settings', () => {
     expect(res.body.error.code).toBe('FISCAL_YEAR_OVERLAPS');
   });
 
+  /**
+   * A closed year to try to post into.
+   *
+   * The seed ships one. A database that was installed rather than
+   * demonstrated has only the year it was created with, and that one is open
+   * and current -- so this makes the state the assertion needs, through the
+   * same two endpoints an accountant would use at the end of a year.
+   */
+  async function closedYear() {
+    const read = async () =>
+      (await request(app).get('/api/settings').set(as('Admin'))).body.data.fiscalYears;
+
+    const already = (await read()).find((y) => y.closed);
+    if (already) return already;
+
+    const made = await request(app)
+      .post('/api/settings/fiscal-years')
+      .set(as('Admin'))
+      .send({ code: 'ZZ-TEST FY closed', startsOn: '2019-07-01', endsOn: '2020-06-30' });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+
+    const shut = await request(app)
+      .patch(`/api/settings/fiscal-years/${made.body.data.id}`)
+      .set(as('Admin'))
+      .send({ closed: true });
+    expect(shut.status, JSON.stringify(shut.body)).toBe(200);
+
+    return (await read()).find((y) => y.closed);
+  }
+
   it('locks transactions dated into a closed year', async () => {
-    const settings = (await request(app).get('/api/settings').set(as('Admin'))).body.data;
-    const closed = settings.fiscalYears.find((y) => y.closed);
+    const closed = await closedYear();
+    expect(closed, 'a closed year to post into').toBeTruthy();
     const context = (await request(app).get('/api/reference/context').set(as('Admin'))).body.data;
 
     const res = await request(app)
@@ -276,7 +312,7 @@ suite('settings', () => {
       .send({
         // A day inside the closed year.
         txnDate: closed.startsOn,
-        supplierId: 1,
+        supplierId: fx.supplier.id,
         warehouseId: Object.values(context.warehouseIds)[0],
         lines: [
           {
@@ -392,11 +428,22 @@ suite('settings', () => {
   });
 
   it('refuses a duplicate code', async () => {
-    const listed = (await request(app).get('/api/brands').set(as('Admin'))).body.data;
+    // A code of this test's own rather than whichever brand happens to be
+    // first. The code the system generates for a brand -- BRAND-01 -- is one
+    // its own create endpoint refuses: the generator writes a hyphen and the
+    // validator allows only capitals, digits and underscores. So reading a
+    // code back and posting it returned 400 for the punctuation long before
+    // anything noticed it was a duplicate.
+    const code = 'ZZ_TEST_DUPLICATE';
+    await request(app)
+      .post('/api/brands')
+      .set(as('Admin'))
+      .send({ name: 'ZZ-TEST Held code', code });
+
     const res = await request(app)
       .post('/api/brands')
       .set(as('Admin'))
-      .send({ name: 'Another', code: listed[0].code });
+      .send({ name: 'ZZ-TEST Another', code });
     expect(res.status).toBe(409);
   });
 

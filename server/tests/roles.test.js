@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { query, closePool } from '../src/lib/db.js';
 import { HAS_DB } from './helpers/database.js';
+import { roleUsers } from './helpers/fixture.js';
 
 /**
  * Roles, permissions and logins.
@@ -49,6 +50,7 @@ const moduleNamed = (body, label) => body.data.modules.find((m) => m.label === l
 suite('roles and permissions', () => {
   beforeAll(async () => {
     app = createApp();
+    await roleUsers();
     for (const role of ['Admin', 'Accounts', 'Sales']) {
       const username = await usernameFor(role);
       tokens[role] = username ? await signIn(username) : null;
@@ -280,6 +282,7 @@ suite('user accounts', () => {
 
   beforeAll(async () => {
     app = createApp();
+    await roleUsers();
     for (const role of ['Admin', 'Accounts']) {
       const username = await usernameFor(role);
       tokens[role] = username ? await signIn(username) : null;

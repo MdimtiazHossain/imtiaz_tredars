@@ -25,6 +25,7 @@
  *
  *   node tools/run-tests.mjs              the whole suite, coverage checked
  *   node tools/run-tests.mjs returns      passed through to vitest as a filter
+ *   node tools/run-tests.mjs --fresh      install a clean test database first
  *
  * A filtered run cannot be checked this way -- vitest, not this script, decides
  * what the filter matches -- so the check is skipped and says so.
@@ -122,9 +123,40 @@ function testFiles(dir = TESTS) {
 const key = (p) => path.resolve(p).replace(/\\/g, '/').toLowerCase();
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, '/');
 
-const args = process.argv.slice(2);
+const args = process.argv.slice(2).filter((a) => a !== '--fresh');
 // Anything that is not a flag narrows the run to a subset vitest chooses.
 const filtered = args.some((a) => !a.startsWith('-'));
+
+/**
+ * `--fresh`: start from an installed database rather than the leavings of the
+ * last run.
+ *
+ * The suite posts real documents and clears none of them, so a test database
+ * gains roughly seventeen crop batches a run and never gives one back. That is
+ * mostly harmless and occasionally not: a test that reads one page of stock
+ * and treats it as the whole list passes until the eleventh run, then fails
+ * while naming a file nobody has touched.
+ *
+ * There was no cure for it while the suite needed `db:seed` to run at all --
+ * an empty database was not a state it could start from. Every file now builds
+ * its own fixtures through the API, so it is, and this is the button.
+ *
+ * `db:fresh` decides for itself whether the target may be destroyed, and
+ * refuses anything it does not class as a test database. Nothing here
+ * overrides that.
+ */
+if (process.argv.includes('--fresh')) {
+  console.log('Installing a clean test database first (--fresh)\n');
+  const installed = spawnSync(
+    process.execPath,
+    [path.join(ROOT, 'db', 'fresh.mjs'), '--force'],
+    { stdio: 'inherit', cwd: ROOT, env: { ...process.env, NODE_ENV: 'test' } }
+  );
+  if (installed.status !== 0) {
+    console.error('\nThe database was not installed, so nothing was run.');
+    process.exit(installed.status ?? 1);
+  }
+}
 
 takeLock();
 // However this process ends, the next run must not find a stale claim.

@@ -97,6 +97,82 @@ export async function fixtureAdmin() {
   return { username, password: PASSWORD, userId };
 }
 
+/**
+ * An account holding each of the other roles.
+ *
+ * Most of the suite signs in as "the first user holding Sales", or Purchase,
+ * or Warehouse -- accounts only `db:seed` creates. Against a database that was
+ * installed rather than demonstrated there are none, the sign-in returns no
+ * token, and what follows is a wall of 401s that reads as a broken API. Half
+ * the suite fails that way and another quarter quietly skips itself.
+ *
+ * The password is the seed's, deliberately, as it is for the administrator: a
+ * suite that finds the seeded holder of a role and one that finds this one
+ * both sign in with what they already use, so no suite needs to know which
+ * kind of database it is running against.
+ *
+ * Written directly rather than through `POST /api/users`, for the same reason
+ * the administrator is: a fixture that creates its accounts through the
+ * user-management API makes every suite in the run depend on the feature that
+ * one suite is there to test. When that breaks, everything breaks, and the
+ * failure names the wrong thing.
+ *
+ * Admin is adopted, never added -- see `fixtureAdmin`.
+ */
+export async function roleUsers() {
+  const { rows: org } = await query('SELECT id FROM organizations ORDER BY id LIMIT 1');
+  if (!org.length) throw new Error('No organisation: run `NODE_ENV=test npm run db:fresh -- --force`');
+  const orgId = Number(org[0].id);
+
+  const { rows: roles } = await query("SELECT id, code FROM roles WHERE code <> 'Admin' ORDER BY id");
+  const passwordHash = await hashPassword(PASSWORD);
+  const accounts = { Admin: await fixtureAdmin() };
+
+  for (const role of roles) {
+    const username = `zz_test_${role.code.toLowerCase()}`;
+    const { rows: employee } = await query(
+      `INSERT INTO employees (org_id, code, name, designation, joined_on)
+       VALUES ($1, $2, $3, 'Automated test', CURRENT_DATE)
+       ON CONFLICT (org_id, code) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [orgId, `${PREFIX}-${role.code.toUpperCase()}`, `Fixture ${role.code}`]
+    );
+
+    const { rows: held } = await query('SELECT id FROM users WHERE username = $1', [username]);
+    let userId;
+    if (held.length) {
+      userId = Number(held[0].id);
+      // Back to a usable state whatever the last run left: `roles` disables an
+      // account and resets a password on its way past, and `passwordChange`
+      // sets the flag that would otherwise refuse this account every route.
+      await query(
+        `UPDATE users SET password_hash = $1, is_active = true, must_change_pw = false
+          WHERE id = $2`,
+        [passwordHash, userId]
+      );
+    } else {
+      const { rows: made } = await query(
+        `INSERT INTO users (org_id, employee_id, username, password_hash, must_change_pw)
+         VALUES ($1, $2, $3, $4, false) RETURNING id`,
+        [orgId, Number(employee[0].id), username, passwordHash]
+      );
+      userId = Number(made[0].id);
+    }
+
+    // Exactly the one role, so a suite proving that Sales may not read the
+    // audit trail is testing the grant rather than an accident of setup.
+    await query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
+    await query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [
+      userId,
+      Number(role.id),
+    ]);
+
+    accounts[role.code] = { username, password: PASSWORD, userId };
+  }
+
+  return accounts;
+}
+
 /** Sign in as the fixture administrator and return a bearer header. */
 export async function fixtureToken(app) {
   const admin = await fixtureAdmin();
@@ -134,6 +210,9 @@ const named = (what) => `${PREFIX} ${what}`;
  * @returns the ids a test posts against
  */
 export async function masters(app) {
+  // The accounts first: a suite that calls this needs somebody to sign in as
+  // at least as much as it needs something to trade.
+  const users = await roleUsers();
   const auth = await fixtureToken(app);
 
   const reuse = async (path, name, body) =>
@@ -141,6 +220,14 @@ export async function masters(app) {
 
   const warehouse = await reuse('/warehouses', named('Warehouse'), {
     name: named('Warehouse'),
+    district: 'Test District',
+  });
+
+  // A second one, because a transfer needs somewhere to go. The transfer tests
+  // skipped themselves for want of it, which reads in the summary as six tests
+  // that chose not to run rather than six that could not.
+  const warehouse2 = await reuse('/warehouses', named('Warehouse Two'), {
+    name: named('Warehouse Two'),
     district: 'Test District',
   });
 
@@ -212,17 +299,45 @@ export async function masters(app) {
   const { rows: units } = await query("SELECT id FROM units WHERE code = 'MT'");
   const { rows: org } = await query('SELECT id FROM organizations ORDER BY id LIMIT 1');
 
+  // Grades and departments are reference data with no endpoint of their own:
+  // a crop line names a grade and an employee names a department, the server
+  // resolves both, and nothing creates either. `db:fresh` installs neither, so
+  // an installed database cannot post a crop purchase at all until something
+  // does. Written directly, for want of an API to write them through.
+  const { rows: grades } = await query(
+    `INSERT INTO crop_grades (code, name) VALUES ('A', 'Grade A')
+     ON CONFLICT (code) DO UPDATE SET is_active = true
+     RETURNING id, code, name`
+  );
+  const { rows: department } = await query(
+    `INSERT INTO departments (org_id, name) VALUES ($1, $2)
+     ON CONFLICT DO NOTHING RETURNING id, name`,
+    [Number(org[0].id), named('Department')]
+  );
+  const dept = department.length
+    ? department[0]
+    : (
+        await query('SELECT id, name FROM departments WHERE org_id = $1 AND name = $2', [
+          Number(org[0].id),
+          named('Department'),
+        ])
+      ).rows[0];
+
   return {
     auth,
+    users,
     orgId: Number(org[0].id),
     unitMTId: Number(units[0].id),
     warehouse,
+    warehouse2,
     customer,
     supplier,
     principal,
     buyer,
     category,
     brand,
+    department: dept,
+    grade: grades[0],
     product,
     crop,
     account,

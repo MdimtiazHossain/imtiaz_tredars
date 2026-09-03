@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 import { pool, query, closePool } from '../src/lib/db.js';
 import { config } from '../src/lib/config.js';
 import { HAS_DB } from './helpers/database.js';
+import { masters } from './helpers/fixture.js';
 
 /**
  * Security tests.
@@ -16,24 +17,27 @@ import { HAS_DB } from './helpers/database.js';
 // an unreachable database skips cleanly instead of failing every assertion.
 const suite = HAS_DB ? describe : describe.skip;
 
-const PASSWORD = process.env.SEED_PASSWORD || 'ChangeMe!2026';
-
 let app;
+let fx;
 const tokens = {};
 
+/**
+ * Sign in as the account the fixture holds for this role.
+ *
+ * It used to be "whichever user holds the role, LIMIT 1", with no ordering.
+ * That is fine while the only holders are the seed's, and wrong the moment
+ * anything else holds one: `roles` leaves behind an account it disabled and
+ * gave a password of its own, and picking that one returns no token. Every
+ * assertion after it then reads 401 where it expected a considered 403 --
+ * which looks like the permission check failing rather than the sign-in.
+ */
 async function signIn(roleCode) {
-  const { rows } = await query(
-    `SELECT u.username FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-      WHERE r.code = $1 LIMIT 1`,
-    [roleCode]
-  );
-  if (!rows.length) return null;
+  const account = fx.users[roleCode];
+  if (!account) return null;
 
   const res = await request(app)
     .post('/api/auth/login')
-    .send({ username: rows[0].username, password: PASSWORD });
+    .send({ username: account.username, password: account.password });
 
   return res.status === 200 ? res.body.data.accessToken : null;
 }
@@ -41,6 +45,9 @@ async function signIn(roleCode) {
 suite('authentication', () => {
   beforeAll(async () => {
     app = createApp();
+    // Accounts to sign in as and masters to trade, so the permission checks
+    // below are about permissions rather than about what the seed left behind.
+    fx = await masters(app);
     for (const role of ['Admin', 'Sales', 'Warehouse', 'Accounts', 'Purchase']) {
       tokens[role] = await signIn(role);
     }
@@ -109,7 +116,10 @@ suite('authentication', () => {
       .send({ username: 'nobody-here', password: 'whatever12345' });
     const wrong = await request(app)
       .post('/api/auth/login')
-      .send({ username: 'rakib01', password: 'definitely-wrong' });
+      // An account that exists, against one that does not: naming a seeded
+      // user made both halves unknown on an installed database, and the test
+      // passed while proving nothing.
+      .send({ username: fx.users.Admin.username, password: 'definitely-wrong' });
 
     expect(unknown.status).toBe(401);
     expect(wrong.status).toBe(401);
@@ -556,8 +566,8 @@ suite('master data', () => {
   it('creates a product, resolving the unit, category and brand it was given', async () => {
     const created = await asAdmin('post', '/api/products').send({
       name: 'Amistar Top 325 SC 50ml',
-      cat: 'Agrochemical',
-      brand: 'Syngenta',
+      cat: fx.category.name,
+      brand: fx.brand.name,
       unit: 'Pcs',
       pur: 420,
       sale: 510,
@@ -569,7 +579,7 @@ suite('master data', () => {
     // The screen sent names and a unit code; the row carries the ids.
     const listed = await asAdmin('get', '/api/products?q=Amistar');
     expect(listed.body.data[0]).toMatchObject({
-      id, cat: 'Agrochemical', brand: 'Syngenta', unit: 'Pcs', sale: 510,
+      id, cat: fx.category.name, brand: fx.brand.name, unit: 'Pcs', sale: 510,
     });
 
     await query('DELETE FROM products WHERE id = $1', [id]);
@@ -629,7 +639,7 @@ suite('master data', () => {
     const created = await asAdmin('post', '/api/employees').send({
       name: 'Tanvir Ahmed',
       designation: 'Warehouse Assistant',
-      department: 'Warehouse',
+      department: fx.department.name,
       mobile: '01799001122',
       joined: '2026-08-01',
     });
@@ -690,28 +700,40 @@ suite('master data', () => {
 
   it('names the record already using a code rather than failing on a constraint', async () => {
     const res = await asAdmin('post', '/api/accounts').send({
-      code: 'BANK-IBBL',
+      code: fx.account.code,
       name: 'Duplicate',
       type: 'BANK',
     });
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('CODE_IN_USE');
-    expect(res.body.error.message).toMatch(/Islami Bank/);
+    // The message has to name the record standing in the way, so whoever hit
+    // it knows what to look for. Naming a seeded account meant that on any
+    // other database the code was free, the POST succeeded, and the test left
+    // behind the very row it was written to be refused by.
+    expect(res.body.error.message).toContain(fx.account.name);
   });
 
   it('refuses to close an account that still holds money', async () => {
-    const { rows } = await query(
-      `SELECT a.id FROM accounts a
-        WHERE a.org_id = $1
-          AND a.opening_balance
-              + COALESCE((SELECT SUM(l.debit - l.credit) FROM ledger_entries l
-                           WHERE l.account_id = a.id), 0) <> 0
-        LIMIT 1`,
-      [1]
-    );
-    const res = await asAdmin('delete', `/api/accounts/${rows[0].id}`);
+    // An account with money in it, made here rather than looked for. On a
+    // database that has never traded every account sits at zero, and this had
+    // nothing to try to close: it read the first row of an empty result and
+    // failed on the undefined.
+    const held = await asAdmin('post', '/api/accounts').send({
+      code: 'ZZTESTHELD',
+      name: 'ZZ-TEST Holds money',
+      type: 'CASH',
+      opening: 5000,
+    });
+    expect(held.status, JSON.stringify(held.body)).toBe(201);
+
+    const res = await asAdmin('delete', `/api/accounts/${held.body.data.id}`);
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('HAS_BALANCE');
+
+    // Taken away again: an opening balance with no counter-entry would leave
+    // the trial balance short by exactly this, in a file that never looks at
+    // it, and the suite that does would report the difference as its own.
+    await query('DELETE FROM accounts WHERE id = $1', [held.body.data.id]);
   });
 
   it('maintains expense categories, which are shared and have no org column', async () => {
@@ -738,7 +760,7 @@ suite('master data', () => {
     const created = await asAdmin('post', '/api/payment-methods').send({
       code: 'UPAY',
       name: 'Upay',
-      account: 'bKash Merchant — 01755...',
+      account: fx.account.name,
     });
     expect(created.status).toBe(201);
     expect(created.body.data.accountId).toBeTruthy();
@@ -849,7 +871,12 @@ suite('what a session may look at', () => {
    * into the header and read the customer list back, matched on mobile number.
    */
 
-  const search = (role, term = 'a') =>
+  // A term with a match in every group. It was "a", which finds plenty in a
+  // demonstration business full of Bengali names and nothing whatever in one
+  // whose only records are this suite's -- so the assertion that a warehouse
+  // clerk still finds the goods they handle failed for want of a match rather
+  // than for want of a permission.
+  const search = (role, term = 'ZZ-TEST') =>
     request(app).get(`/api/search?q=${term}`).set('authorization', `Bearer ${tokens[role]}`);
 
   const workspace = (role) =>

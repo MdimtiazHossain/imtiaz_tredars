@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { pool, withTransaction, query, closePool, num } from '../src/lib/db.js';
+import { createApp } from '../src/app.js';
+import { masters } from './helpers/fixture.js';
 import { createCropPurchase, cancelCropPurchase } from '../src/services/cropPurchaseService.js';
 import { createCropSale } from '../src/services/cropSaleService.js';
 import {
@@ -26,44 +28,40 @@ import { HAS_DB } from './helpers/database.js';
 const suite = HAS_DB ? describe : describe.skip;
 
 let ctx;
+let fx;
 
 suite('posting integrity', () => {
   beforeAll(async () => {
+    // These call the services directly rather than through HTTP, but the
+    // records they act on still have to exist. They were looked up by the
+    // codes the demonstration seed happens to allocate -- CROP-04, P-1005,
+    // "the first customer" -- which an installed database has none of, so the
+    // context came out undefined and the file skipped itself almost entirely
+    // while reporting nothing wrong.
+    fx = await masters(createApp());
+
     const { rows: users } = await query(
       `SELECT u.id, u.org_id FROM users u
         JOIN user_roles ur ON ur.user_id = u.id
         JOIN roles r ON r.id = ur.role_id
        WHERE r.code = 'Admin' AND u.is_active ORDER BY u.id LIMIT 1`
     );
-    if (!users.length) throw new Error('Seed the test database first: npm run db:seed');
+    if (!users.length) throw new Error('No administrator: run `NODE_ENV=test npm run db:fresh -- --force`');
 
-    const orgId = Number(users[0].org_id);
-    const [warehouse, supplier, crop, grade, unit, buyer, customer, product, company] =
-      await Promise.all([
-        query('SELECT id FROM warehouses WHERE org_id = $1 ORDER BY id LIMIT 1', [orgId]),
-        query('SELECT id FROM suppliers WHERE org_id = $1 ORDER BY id LIMIT 1', [orgId]),
-        query("SELECT id FROM crops WHERE org_id = $1 AND code = 'CROP-04'", [orgId]),
-        query("SELECT id FROM crop_grades WHERE code = 'A'", []),
-        query("SELECT id FROM units WHERE code = 'MT'", []),
-        query("SELECT id FROM companies WHERE org_id = $1 AND role = 'BUYER' ORDER BY id LIMIT 1", [orgId]),
-        query('SELECT id FROM customers WHERE org_id = $1 ORDER BY id LIMIT 1', [orgId]),
-        query("SELECT id FROM products WHERE org_id = $1 AND code = 'P-1005'", [orgId]),
-        query("SELECT id FROM companies WHERE org_id = $1 AND role = 'PRINCIPAL' ORDER BY id LIMIT 1", [orgId]),
-      ]);
-
+    const orgId = fx.orgId;
     ctx = {
       orgId,
       user: { id: Number(users[0].id) },
       actor: { userId: Number(users[0].id), orgId, ip: null, userAgent: 'vitest' },
-      warehouseId: Number(warehouse.rows[0].id),
-      supplierId: Number(supplier.rows[0].id),
-      cropId: Number(crop.rows[0].id),
-      gradeId: Number(grade.rows[0].id),
-      unitId: Number(unit.rows[0].id),
-      buyerId: Number(buyer.rows[0].id),
-      customerId: Number(customer.rows[0].id),
-      productId: Number(product.rows[0].id),
-      companyId: Number(company.rows[0].id),
+      warehouseId: Number(fx.warehouse.id),
+      supplierId: Number(fx.supplier.id),
+      cropId: Number(fx.crop.id),
+      gradeId: Number(fx.grade.id),
+      unitId: fx.unitMTId,
+      buyerId: Number(fx.buyer.id),
+      customerId: Number(fx.customer.id),
+      productId: Number(fx.product.id),
+      companyId: Number(fx.principal.id),
     };
   });
 
@@ -581,26 +579,74 @@ suite('profit and loss', () => {
 });
 
 suite('dashboard trend', () => {
-  it('includes a month that had purchases but no sales', async () => {
-    // A month of pure procurement must still appear, or its purchases vanish
-    // from the chart and the totals stop agreeing with the headline figures.
+  beforeAll(async () => {
+    fx = await masters(createApp());
+  });
+
+  /** Which months hold purchases, which hold sales, and which hold only the one. */
+  async function months() {
     const purchases = await query(
       `SELECT to_char(txn_date, 'YYYY-MM') AS month FROM v_purchases_by_business
-        WHERE org_id = 1 GROUP BY 1`
+        WHERE org_id = $1 GROUP BY 1`,
+      [fx.orgId]
     );
     const sales = await query(
       `SELECT to_char(txn_date, 'YYYY-MM') AS month FROM v_sales_by_business
-        WHERE org_id = 1 GROUP BY 1`
+        WHERE org_id = $1 GROUP BY 1`,
+      [fx.orgId]
     );
 
-    const saleMonths = new Set(sales.rows.map((r) => r.month));
-    const purchaseOnly = purchases.rows.map((r) => r.month).filter((m) => !saleMonths.has(m));
+    const sold = new Set(sales.rows.map((r) => r.month));
+    const bought = purchases.rows.map((r) => r.month);
+    return { sold, bought, boughtOnly: bought.filter((m) => !sold.has(m)) };
+  }
 
-    // The seed deliberately buys in one month and sells in the next.
-    expect(purchaseOnly.length).toBeGreaterThan(0);
+  it('includes a month that had purchases but no sales', async () => {
+    // A month of pure procurement must still appear, or its purchases vanish
+    // from the chart and the totals stop agreeing with the headline figures.
+    let state = await months();
 
-    const union = new Set([...saleMonths, ...purchases.rows.map((r) => r.month)]);
-    expect(union.size).toBeGreaterThan(saleMonths.size);
+    if (!state.boughtOnly.length) {
+      // The demonstration seed deliberately buys in one month and sells in the
+      // next, and nothing else here does: every document this suite posts is
+      // dated the same day. So rather than assert a shape only the seed makes,
+      // make it -- one purchase, in a month with no sale in it.
+      const month = ['2026-10', '2026-11', '2026-12'].find((m) => !state.sold.has(m));
+      await withTransaction((client) =>
+        createCropPurchase(client, {
+          orgId: fx.orgId,
+          user: ctx.user,
+          actor: ctx.actor,
+          input: {
+            txnDate: `${month}-15`,
+            supplierId: Number(fx.supplier.id),
+            warehouseId: Number(fx.warehouse.id),
+            transportCost: 0,
+            loadingCost: 0,
+            unloadingCost: 0,
+            otherCost: 0,
+            advancePaid: 0,
+            lines: [
+              {
+                cropId: Number(fx.crop.id),
+                gradeId: Number(fx.grade.id),
+                unitId: fx.unitMTId,
+                grossQuantity: 1,
+                moisturePct: 0,
+                rate: 1000,
+              },
+            ],
+            action: 'POST',
+          },
+        })
+      );
+      state = await months();
+    }
+
+    expect(state.boughtOnly.length).toBeGreaterThan(0);
+
+    const union = new Set([...state.sold, ...state.bought]);
+    expect(union.size).toBeGreaterThan(state.sold.size);
   });
 });
 
@@ -608,32 +654,27 @@ suite('stock transfer', () => {
   let tctx;
 
   beforeAll(async () => {
+    fx = await masters(createApp());
     const { rows: users } = await query(
       `SELECT u.id, u.org_id FROM users u
         JOIN user_roles ur ON ur.user_id = u.id
         JOIN roles r ON r.id = ur.role_id
        WHERE r.code = 'Admin' AND u.is_active ORDER BY u.id LIMIT 1`
     );
-    const orgId = Number(users[0].org_id);
-    const [warehouses, supplier, crop, grade, unit] = await Promise.all([
-      query('SELECT id FROM warehouses WHERE org_id = $1 AND is_active ORDER BY id LIMIT 2', [orgId]),
-      query('SELECT id FROM suppliers WHERE org_id = $1 ORDER BY id LIMIT 1', [orgId]),
-      query("SELECT id FROM crops WHERE org_id = $1 AND code = 'CROP-04'", [orgId]),
-      query("SELECT id FROM crop_grades WHERE code = 'A'", []),
-      query("SELECT id FROM units WHERE code = 'MT'", []),
-    ]);
-    if (warehouses.rows.length < 2) throw new Error('Two warehouses are needed to test a transfer');
-
+    const orgId = fx.orgId;
     tctx = {
       orgId,
       user: { id: Number(users[0].id) },
       actor: { userId: Number(users[0].id), orgId, ip: null, userAgent: 'vitest' },
-      fromWarehouseId: Number(warehouses.rows[0].id),
-      toWarehouseId: Number(warehouses.rows[1].id),
-      supplierId: Number(supplier.rows[0].id),
-      cropId: Number(crop.rows[0].id),
-      gradeId: Number(grade.rows[0].id),
-      unitId: Number(unit.rows[0].id),
+      // Two named warehouses rather than "the first two there are": a
+      // foundation-only database has none, and this suite threw for want of a
+      // second one -- which the run reported as six transfer tests skipped.
+      fromWarehouseId: Number(fx.warehouse.id),
+      toWarehouseId: Number(fx.warehouse2.id),
+      supplierId: Number(fx.supplier.id),
+      cropId: Number(fx.crop.id),
+      gradeId: Number(fx.grade.id),
+      unitId: fx.unitMTId,
     };
   });
 
