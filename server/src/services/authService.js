@@ -39,7 +39,7 @@ export function verifyAccessToken(token) {
 /** Load a user with the permission codes their roles grant. */
 export async function loadUser(userId) {
   const { rows } = await query(
-    `SELECT u.id, u.org_id, u.username, u.email, u.is_active,
+    `SELECT u.id, u.org_id, u.username, u.email, u.is_active, u.must_change_pw,
             e.name AS employee_name, e.designation,
             COALESCE(
               array_agg(DISTINCT r.code) FILTER (WHERE r.code IS NOT NULL), '{}'
@@ -66,6 +66,10 @@ export async function loadUser(userId) {
     username: r.username,
     email: r.email,
     isActive: r.is_active,
+    // Set on every account this system creates, and until now read by nothing.
+    // The middleware gates on it and the client acts on it, so the one-time
+    // password db:fresh prints really does stop working once it is used.
+    mustChangePassword: r.must_change_pw,
     name: r.employee_name || r.username,
     designation: r.designation,
     roles: r.roles,

@@ -1,5 +1,5 @@
 import { verifyAccessToken, loadUser } from '../services/authService.js';
-import { unauthorized, forbidden } from '../lib/errors.js';
+import { AppError, unauthorized, forbidden } from '../lib/errors.js';
 
 /**
  * Authentication and authorisation middleware.
@@ -41,6 +41,41 @@ export async function authenticate(req, _res, next) {
   } catch (err) {
     next(err);
   }
+}
+
+/**
+ * Refuse everything until a one-time password has been replaced.
+ *
+ * `must_change_pw` is set on every account this system creates. `db:fresh`
+ * prints a generated password once and tells the operator that "the account is
+ * flagged to force a password change, so this key stops working the moment it
+ * is used" -- and nothing read the flag, so it did not. A password printed to a
+ * terminal, pasted into a chat, or read over a phone stayed a working
+ * credential for as long as the account existed, and the seed flags ten
+ * accounts the same way.
+ *
+ * Hiding a prompt in the client would not fix that: the credential is what is
+ * exposed, so the refusal belongs at the API, where a script using the same
+ * password is refused too.
+ *
+ * Mounted after `authenticate`, so `/auth` stays reachable -- the holder can
+ * still see who they are, change the password, refresh, and sign out. Those are
+ * the only things they can do.
+ */
+export function requirePasswordChange(req, _res, next) {
+  if (req.user?.mustChangePassword) {
+    // Its own code rather than a plain FORBIDDEN: the client has to tell this
+    // apart from "your role does not allow that" to know it should open the
+    // change-password form rather than report a permission problem.
+    return next(
+      new AppError(
+        403,
+        'PASSWORD_CHANGE_REQUIRED',
+        'This account is still using a one-time password. Change it before doing anything else.'
+      )
+    );
+  }
+  next();
 }
 
 /**

@@ -5,7 +5,7 @@ import formModalTemplate from './templates/formModal.html?raw';
 import { BusinessApp } from './app/logic.js';
 import { createRepository } from './data/repository.js';
 import { ApiRepository } from './data/apiRepository.js';
-import { renderSignIn } from './app/signIn.js';
+import { renderSignIn, renderPasswordChange } from './app/signIn.js';
 
 /**
  * Application entry point.
@@ -126,17 +126,40 @@ export async function start(root) {
 
     showBoot(root, 'Restoring your session…');
     let user = await repository.restore().catch(() => null);
+    // Kept in scope because the password-change card names the business too.
+    let context = null;
 
     if (!user) {
       // Ask who this installation belongs to before drawing the card that
       // names them. It is fetched alongside nothing else, so a slow answer
       // delays only the card and never the session that follows it.
-      const context = await repository.context();
+      context = await repository.context();
       user = await renderSignIn(
         root,
         (username, password) => repository.login(username, password),
         context
       );
+    }
+
+    // An account still holding the password it was created with may do nothing
+    // else, and the API says so: every route but /auth answers 403 until it is
+    // replaced. Mounting would show a shell of failed requests, so the change
+    // is asked for here instead, in place of the app.
+    if (user && user.mustChangePassword) {
+      await renderPasswordChange(
+        root,
+        (current, next) => repository.changePassword(current, next),
+        () => {
+          Promise.resolve(repository.logout ? repository.logout() : null)
+            .catch(() => {})
+            .then(() => start(root));
+        },
+        { name: context?.name, username: user.username }
+      );
+      // Changing it revokes every session this user had, including this one's
+      // refresh token, so the sequence starts again and they sign in with the
+      // password they just chose.
+      return await start(root);
     }
 
     return await mountApp(root, user);

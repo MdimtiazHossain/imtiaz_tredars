@@ -128,7 +128,17 @@ suite('authentication', () => {
     const res = await request(app)
       .get('/api/auth/me')
       .set('authorization', `Bearer ${tokens.Admin}`);
-    expect(JSON.stringify(res.body)).not.toMatch(/password/i);
+
+    // Not "the word password never appears": an account has to be told whether
+    // it is still holding the one-time password it was issued, and that flag
+    // has to be named something. What may never appear is the material. Named
+    // outright, under either spelling, and as a bcrypt digest however it got
+    // there -- which the old wording would have missed if the field carrying
+    // it were called anything else.
+    const body = JSON.stringify(res.body);
+    expect(body).not.toMatch(/password_?hash/i);
+    expect(body).not.toMatch(/\$2[aby]\$\d{2}\$/);
+    expect(res.body.data).not.toHaveProperty('password');
   });
 });
 

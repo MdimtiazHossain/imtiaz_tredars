@@ -445,7 +445,10 @@ export class BusinessApp extends Component {
       error,
       busy,
       submitLabel: 'Change password',
-      note: 'Other sessions stay signed in; sign out of them separately',
+      // What the server actually does. `changePassword` revokes every session
+      // this user has, this one included, so the old note -- "other sessions
+      // stay signed in" -- promised the opposite of the behaviour.
+      note: 'Signs out every device, including this one',
       onSubmit: () => this.submitPassword(),
       onCancel: () => this.closePassword(),
     });

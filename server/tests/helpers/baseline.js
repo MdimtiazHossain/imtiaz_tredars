@@ -46,6 +46,16 @@ beforeAll(async () => {
            OR sale_prices_include_tax
            OR purchase_prices_include_tax`
     );
+
+    // The suites are written against an installation in ordinary use, where
+    // the people holding these accounts replaced the passwords they were
+    // issued with long ago. The seed flags every account it creates
+    // `must_change_pw` -- rightly, it hands out one-time passwords -- and the
+    // API now refuses a flagged account everything but its own password. Left
+    // set, every suite that signs in with the seed password would be testing
+    // that gate instead of whatever it is actually about. The file that is
+    // about the gate sets the flag on an account of its own, per case.
+    await client.query(`UPDATE users SET must_change_pw = false WHERE must_change_pw`);
   } catch {
     // Nothing to do: the suite itself will skip or fail with a better message.
   } finally {

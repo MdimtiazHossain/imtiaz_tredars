@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requirePasswordChange } from '../middleware/auth.js';
 import authRoutes from './auth.js';
 import workspaceRoutes from './workspace.js';
 import masterRoutes from './masters.js';
@@ -26,6 +26,10 @@ const router = Router();
 router.use('/auth', authRoutes);
 
 router.use(authenticate);
+
+// An account still holding the password it was created with may do nothing but
+// replace it. `/auth` is mounted above this, so changing it is still reachable.
+router.use(requirePasswordChange);
 
 router.use('/workspace', workspaceRoutes);
 router.use('/', masterRoutes);

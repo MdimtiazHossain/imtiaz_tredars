@@ -67,6 +67,10 @@ router.post(
         roles: result.user.roles,
         permissions: result.user.permissions,
         designation: result.user.designation,
+        // Signing in succeeds, but nothing else will until this is cleared.
+        // The client opens the change-password form on it; the API refuses
+        // regardless, so a caller that ignores it gets nowhere either.
+        mustChangePassword: result.user.mustChangePassword,
       },
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
@@ -86,6 +90,7 @@ router.post(
         name: result.user.name,
         role: result.user.role,
         permissions: result.user.permissions,
+        mustChangePassword: result.user.mustChangePassword,
       },
       accessToken: result.accessToken,
     });
@@ -114,6 +119,7 @@ router.get(
       roles: req.user.roles,
       permissions: req.user.permissions,
       designation: req.user.designation,
+      mustChangePassword: req.user.mustChangePassword,
     });
   })
 );
